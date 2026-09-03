@@ -262,6 +262,9 @@ export interface ContratoLocacao {
   scoreMotorista?: 'A' | 'B' | 'C' | 'D';
   provisaoDevedorDuvidoso?: number; // PDD
   extratoContaCorrente?: LancamentoContaMotorista[];
+  contaCorrenteMotorista?: LancamentoContaMotorista[];
+  checklistRetiradaId?: string;
+  checklistDevolucaoId?: string;
   fechamentoCaucao?: FechamentoCaucaoResumo;
   pagamentos: PagamentoAluguel[];
 }
@@ -533,6 +536,7 @@ export interface Veiculo {
   ano: number; // Ano de referência principal
   anoFabricacao?: number; // Ano de fabricação (ex: 2023)
   anoModelo?: number; // Ano do modelo (ex: 2024)
+  tipoOperacao?: 'Venda' | 'Locacao' | 'Misto'; // Discriminador de Operação: Venda, Locação ou Misto
   tipoPropriedade?: TipoPropriedadeVeiculo; // 'proprio' (Frota Própria / Comprado) ou 'consignado' (Consignação)
   proprietarioAnterior?: {
     nome?: string;
@@ -649,6 +653,36 @@ export interface LaudoVistoriaEntrada {
   observacoesGerais?: string;
   statusGeral: 'Aprovado' | 'Aprovado com Apontamentos' | 'Reprovado / Requer Oficina';
   avariasIdentificadas?: string[];
+  createdAt: string;
+}
+
+export interface ChecklistLocacao {
+  id: string;
+  contratoId?: string;
+  veiculoId: string;
+  placa: string;
+  modelo: string;
+  motoristaNome: string;
+  tipo: 'Retirada' | 'Devolucao'; // Check-in ou Check-out
+  data: string; // YYYY-MM-DD ou ISO
+  km: number;
+  nivelCombustivel: 'Reserva' | '1/4' | '1/2' | '3/4' | 'Cheio';
+  estadoPneus: 'Novos' | 'Bons' | 'Meia-vida' | 'Desgastados' | 'Troca Urgente';
+  estepe: boolean;
+  macacoChaveRoda: boolean;
+  documentoVeiculo: boolean;
+  trianguloSinalizacao: boolean;
+  limpeza: 'Impecável' | 'Padrão' | 'Sujo' | 'Requer Higienização';
+  avarias: {
+    item: string;
+    descricao: string;
+    cobrarDoMotorista?: boolean;
+    valorAvaria?: number;
+  }[];
+  fotos?: string[];
+  observacoes?: string;
+  responsavelVistoria: string;
+  assinaturaMotoristaConcordou?: boolean;
   createdAt: string;
 }
 

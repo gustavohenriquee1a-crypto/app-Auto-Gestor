@@ -250,10 +250,15 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
     setTimeout(() => setExportToast(null), 3500);
   };
 
-  // Filtro de estoque ativo de pátio por chassi: lista apenas carros em pátio, em trânsito ou em preparação
-  // Veículos já vendidos (status === 'Vendido' ou com registro na aba de vendas) são estritamente excluídos do estoque ativo
+  // Filtro de estoque ativo de pátio por chassi: lista apenas carros comerciais para venda
+  // 1. Veículos já vendidos (status === 'Vendido' ou com registro na aba de vendas) são estritamente excluídos do estoque ativo
+  // 2. Veículos dedicados à Frota de Locação/Alugados são tratados como unidade de negócio independente no módulo de Locação
   const veiculosEstoqueAtivo = useMemo(() => {
-    return veiculos.filter((v) => !checkIsVeiculoVendido(v, vendas));
+    return veiculos.filter((v) => {
+      if (checkIsVeiculoVendido(v, vendas)) return false;
+      if (v.tipoOperacao === 'Locacao' || v.status === 'Alugado' || !!v.contratoAtivo) return false;
+      return true;
+    });
   }, [veiculos, vendas]);
 
   // Dynamic Brand & Color options with stock counts
@@ -381,7 +386,6 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
     return {
       todos: veiculosEstoqueAtivo.length,
       disponivel: veiculosEstoqueAtivo.filter((v) => v.status === 'Disponível').length,
-      alugado: veiculosEstoqueAtivo.filter((v) => v.status === 'Alugado').length,
       preparacao: veiculosEstoqueAtivo.filter((v) => v.status === 'Em Preparação').length,
       manutencao: veiculosEstoqueAtivo.filter((v) => v.status === 'Em Manutenção').length,
     };
@@ -636,23 +640,6 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
           </button>
 
           <button
-            onClick={() => setStatusFilter('Alugado')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer flex items-center gap-1.5 ${
-              statusFilter === 'Alugado'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'bg-[#16171f] text-slate-400 hover:text-blue-400 border border-white/5'
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-blue-400" />
-            <span>Alugados</span>
-            <span className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-              statusFilter === 'Alugado' ? 'bg-blue-700 text-white' : 'bg-blue-500/10 text-blue-400'
-            }`}>
-              {statusCounts.alugado}
-            </span>
-          </button>
-
-          <button
             onClick={() => setStatusFilter('Em Preparação')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer flex items-center gap-1.5 ${
               statusFilter === 'Em Preparação'
@@ -717,7 +704,6 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
             >
               <option value="Todos">Status: Todos</option>
               <option value="Disponível">Disponível</option>
-              <option value="Alugado">Alugado</option>
               <option value="Em Preparação">Em Preparação</option>
               <option value="Em Manutenção">Em Manutenção</option>
             </select>
@@ -1151,22 +1137,13 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
                           </button>
                         )}
                         {v.status === 'Disponível' && (
-                          <>
-                            <button
-                              onClick={() => onOpenNovoContrato(v)}
-                              className="p-1.5 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition cursor-pointer"
-                              title="Criar Contrato de Locação"
-                            >
-                              <Key size={16} />
-                            </button>
-                            <button
-                              onClick={() => onOpenVenda(v)}
-                              className="p-1.5 text-purple-400 hover:bg-purple-500/20 rounded-lg transition cursor-pointer"
-                              title="Registrar Venda"
-                            >
-                              <Tag size={16} />
-                            </button>
-                          </>
+                          <button
+                            onClick={() => onOpenVenda(v)}
+                            className="p-1.5 text-purple-400 hover:bg-purple-500/20 rounded-lg transition cursor-pointer"
+                            title="Registrar Venda do Veículo"
+                          >
+                            <Tag size={16} />
+                          </button>
                         )}
                         <button
                           onClick={() => onEditVeiculo(v)}

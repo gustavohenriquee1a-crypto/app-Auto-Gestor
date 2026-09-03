@@ -71,7 +71,7 @@ interface SubMenuItem {
 }
 
 interface AccordionCategory {
-  id: 'comercial' | 'estoque_frota' | 'operacional' | 'financeiro' | 'administracao';
+  id: 'crm_vendas' | 'estoque_operacoes' | 'financeiro' | 'administracao';
   title: string;
   icon: React.ElementType;
   items: SubMenuItem[];
@@ -173,33 +173,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Definição estruturada dos Menus e Submenus categorizados
   const categories: AccordionCategory[] = useMemo(() => {
     return [
-      // 1. Comercial
+      // 1. CRM & Vendas
       {
-        id: 'comercial',
-        title: 'Comercial',
+        id: 'crm_vendas',
+        title: 'CRM & Vendas',
         icon: Briefcase,
         items: [
           {
             id: 'catalogo',
-            label: 'Catálogo de Vendas',
+            label: 'Catálogo / Showroom',
             icon: Sparkles,
             badge: `${counts.disponiveis} no pátio`,
             badgeColor: 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30',
             visible: perms.verCatalogo !== undefined ? perms.verCatalogo : perms.verEstoque !== false,
           },
           {
-            id: 'crm-analytics',
-            label: 'CRM & Inteligência de Vendas',
-            icon: Target,
-            badge: 'Leads & Niver',
-            badgeColor: 'bg-pink-500/20 text-pink-300 font-bold border border-pink-500/30',
-            visible: perms.verCrmAnalytics !== undefined 
-              ? perms.verCrmAnalytics 
-              : !isVendedor && (perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false),
-          },
-          {
             id: 'vendedor-dash',
-            label: 'Dashboard do Vendedor',
+            label: 'Painel do Vendedor',
             icon: LayoutDashboard,
             badge: `${currentUser?.comissaoPadraoPercent || 1.5}% Comis.`,
             badgeColor: 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30',
@@ -207,7 +197,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           },
           {
             id: 'comissoes',
-            label: isVendedor ? 'Minhas Vendas & Comissões' : 'Comissões de Vendas',
+            label: isVendedor ? 'Minhas Vendas & Comissões' : 'Vendas & Comissões',
             icon: Award,
             badge: (counts.comissoesPendentes || 0) > 0 ? `${counts.comissoesPendentes} pendentes` : isVendedor ? 'Extrato' : 'Ranking',
             badgeColor: (counts.comissoesPendentes || 0) > 0 ? 'bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30 animate-pulse' : 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30',
@@ -215,62 +205,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
             visible: perms.verComissoes !== undefined ? perms.verComissoes : true,
           },
           {
-            id: 'bancos',
-            label: 'Bancos & Financiamento',
-            icon: ShieldCheck,
-            badge: (counts.totalBancos ?? 0) > 0 ? `${counts.totalBancos}` : 'TAC',
-            badgeColor: 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30',
-            visible: perms.verBancos !== undefined 
-              ? perms.verBancos 
-              : (perms.gerenciarBancos !== false || perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false) && !isVendedor,
+            id: 'crm-analytics',
+            label: 'CRM Analytics',
+            icon: Target,
+            badge: 'Leads & Niver',
+            badgeColor: 'bg-pink-500/20 text-pink-300 font-bold border border-pink-500/30',
+            visible: perms.verCrmAnalytics !== undefined 
+              ? perms.verCrmAnalytics 
+              : !isVendedor && (perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false),
           },
         ],
       },
 
-      // 2. Estoque & Frota
+      // 2. Estoque & Operações
       {
-        id: 'estoque_frota',
-        title: 'Estoque & Frota',
+        id: 'estoque_operacoes',
+        title: 'Estoque & Operações',
         icon: Car,
         items: [
           {
             id: 'estoque',
-            label: 'Estoque / Por Chassi',
+            label: 'Estoque Ativo por Chassi',
             icon: Car,
             badge: counts.totalVeiculos,
             badgeColor: 'bg-slate-700 text-slate-200 font-bold',
             visible: perms.verEstoque !== undefined ? perms.verEstoque : !isVendedor,
           },
           {
-            id: 'aging',
-            label: 'Aging de Estoque (Giro)',
-            icon: Clock,
-            badge: counts.alertasAging > 0 ? `${counts.alertasAging} crítico` : null,
-            badgeColor: 'bg-rose-500 text-white font-bold animate-pulse',
-            alertCount: counts.alertasAging || 0,
-            visible: perms.verAging !== undefined ? perms.verAging : !isVendedor && perms.verEstoque !== false,
-          },
-          {
-            id: 'locacao-contratos',
-            label: 'Locação & Motoristas',
-            icon: Key,
-            badge: counts.alertasPagamento > 0 ? `${counts.alertasPagamento} pendentes` : `${counts.alugados} ativos`,
-            badgeColor: counts.alertasPagamento > 0 ? 'bg-amber-500 text-white font-bold animate-pulse' : 'bg-emerald-600/80 text-white',
-            alertCount: counts.alertasPagamento || 0,
-            visible: perms.verLocacaoContratos !== undefined ? perms.verLocacaoContratos : perms.gerenciarLocacao !== false,
-          },
-        ],
-      },
-
-      // 3. Operacional
-      {
-        id: 'operacional',
-        title: 'Operacional',
-        icon: Wrench,
-        items: [
-          {
             id: 'funil-preparacao',
-            label: 'Funil de Preparação (Kanban)',
+            label: 'Funil de Preparação Kanban',
             icon: SlidersHorizontal,
             badge: 'Kanban Pátio',
             badgeColor: 'bg-orange-500/20 text-orange-300 font-bold border border-orange-500/30',
@@ -279,19 +242,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               : perms.gerenciarRevisoes !== false || currentUser?.role === 'admin' || currentUser?.role === 'gestor',
           },
           {
-            id: 'logistica',
-            label: 'Logística & Trânsito',
-            icon: Truck,
-            badge: (counts.emTransito ?? 0) > 0 ? `${counts.emTransito} em viagem` : null,
-            badgeColor: (counts.emTransito ?? 0) > 0 ? 'bg-indigo-500 text-white font-black animate-pulse' : 'bg-indigo-500/20 text-indigo-300 font-bold border border-indigo-500/30',
-            alertCount: counts.emTransito || 0,
-            visible: perms.verLogistica !== undefined 
-              ? perms.verLogistica 
-              : (perms.gerenciarLogistica !== false && perms.verEstoque !== false && !isVendedor),
-          },
-          {
             id: 'revisoes',
-            label: 'Revisões & Manutenção',
+            label: 'Revisões & Oficinas',
             icon: Wrench,
             badge: counts.alertasRevisao > 0 ? `${counts.alertasRevisao} urgente` : null,
             badgeColor: 'bg-red-600 text-white font-bold animate-pulse',
@@ -311,12 +263,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ],
       },
 
-      // 4. Financeiro
+      // 3. Financeiro
       {
         id: 'financeiro',
         title: 'Financeiro',
         icon: DollarSign,
         items: [
+          {
+            id: 'financeiro',
+            label: 'DRE Executivo',
+            icon: DollarSign,
+            badge: 'DRE',
+            badgeColor: 'bg-blue-900 text-blue-200',
+            visible: perms.verFinanceiroDRE !== undefined 
+              ? perms.verFinanceiroDRE 
+              : !isVendedor && perms.verFinanceiroDRE !== false,
+          },
           {
             id: 'contas-pagar',
             label: 'Contas a Pagar',
@@ -340,43 +302,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
               : !isVendedor && perms.verFinanceiroDRE !== false,
           },
           {
-            id: 'financeiro',
-            label: 'Financeiro & DRE',
-            icon: DollarSign,
-            badge: 'DRE',
-            badgeColor: 'bg-blue-900 text-blue-200',
-            visible: perms.verFinanceiroDRE !== undefined 
-              ? perms.verFinanceiroDRE 
-              : !isVendedor && perms.verFinanceiroDRE !== false,
+            id: 'bancos',
+            label: 'Bancos Parceiros',
+            icon: ShieldCheck,
+            badge: (counts.totalBancos ?? 0) > 0 ? `${counts.totalBancos}` : 'TAC',
+            badgeColor: 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30',
+            visible: perms.verBancos !== undefined 
+              ? perms.verBancos 
+              : (perms.gerenciarBancos !== false || perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false) && !isVendedor,
           },
         ],
       },
 
-      // 5. Administração
+      // 4. Administração (Acesso Restrito)
       {
         id: 'administracao',
         title: 'Administração',
         icon: FolderCog,
         items: [
-          {
-            id: 'dash',
-            label: 'Painel Executivo',
-            icon: LayoutDashboard,
-            badge: null,
-            visible: perms.verPainelExecutivo !== undefined 
-              ? perms.verPainelExecutivo 
-              : !isVendedor && (perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false),
-          },
-          {
-            id: 'dashboard-executivo',
-            label: 'Dashboard Executivo Avançado',
-            icon: BarChart3,
-            badge: 'Gráficos & ROI',
-            badgeColor: 'bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30',
-            visible: perms.verDashboardExecutivo !== undefined 
-              ? perms.verDashboardExecutivo 
-              : !isVendedor && (perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false),
-          },
           {
             id: 'usuarios-item',
             label: 'Gestão de Usuários',
@@ -407,22 +350,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const findCategoryForTab = (tab: string): string => {
     for (const cat of categories) {
       const match = cat.items.some(
-        (item) => item.id === tab || (item.id === 'locacao-contratos' && (tab === 'locacao' || tab.startsWith('locacao-')))
+        (item) => item.id === tab
       );
       if (match) return cat.id;
     }
-    return 'comercial';
+    return 'crm_vendas';
   };
 
   // Estado dos Accordions abertos/fechados (guarda múltiplos ou abre a categoria correspondente)
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
     const initialCategory = findCategoryForTab(activeTab);
     return {
-      comercial: true,
-      estoque_frota: true,
-      operacional: true,
+      crm_vendas: true,
+      estoque_operacoes: true,
       financeiro: true,
-      administracao: true,
+      administracao: false,
       [initialCategory]: true,
     };
   });
@@ -521,6 +463,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Navegação Vertical com Menus Expansíveis (Accordions) */}
       <nav className="flex-1 px-2.5 xl:px-3 space-y-2 overflow-y-auto pt-2 pb-4 scrollbar-thin scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
+        {/* 📊 Dashboard Central (Torre de Controle Global) */}
+        {(perms.verPainelExecutivo !== undefined ? perms.verPainelExecutivo : !isVendedor || perms.verFinanceiroDRE !== false) && (
+          <button
+            id="nav-item-torre-controle"
+            type="button"
+            onClick={() => setActiveTab('dash')}
+            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all mb-2 cursor-pointer ${
+              activeTab === 'dash'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25 border border-blue-400/40'
+                : 'text-slate-300 bg-white/[0.03] hover:bg-white/[0.06] hover:text-white border border-white/5'
+            }`}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className={`p-1.5 rounded-xl shrink-0 ${activeTab === 'dash' ? 'bg-white/20 text-white' : 'bg-blue-500/15 text-blue-400'}`}>
+                <LayoutDashboard size={15} />
+              </div>
+              <div className="text-left truncate">
+                <div className="font-bold text-xs truncate">Dashboard Central</div>
+                <div className={`text-[10px] font-normal truncate ${activeTab === 'dash' ? 'text-blue-100' : 'text-slate-400'}`}>
+                  Torre de Controle Global
+                </div>
+              </div>
+            </div>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${
+              activeTab === 'dash' ? 'bg-white/25 text-white' : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+            }`}>
+              Torre
+            </span>
+          </button>
+        )}
+
         {categories.map((category) => {
           const visibleItems = category.items.filter((item) => item.visible);
           // Oculta a categoria inteira caso não haja nenhuma rota autorizada para o perfil (RBAC)
@@ -536,7 +509,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           // Verifica se algum item interno está atualmente ativo
           const isAnyChildActive = visibleItems.some((item) => {
-            return activeTab === item.id || (item.id === 'locacao-contratos' && (activeTab === 'locacao' || activeTab.startsWith('locacao-')));
+            return activeTab === item.id;
           });
 
           return (
@@ -585,9 +558,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="px-1.5 pb-2 pt-0.5 space-y-0.5 animate-in fade-in duration-150">
                   {visibleItems.map((item) => {
                     const SubIcon = item.icon;
-                    const isActive = 
-                      activeTab === item.id || 
-                      (item.id === 'locacao-contratos' && (activeTab === 'locacao' || activeTab.startsWith('locacao-')));
+                    const isActive = activeTab === item.id;
 
                     return (
                       <button
@@ -634,6 +605,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           );
         })}
+
+        {/* 🔑 Locadora & Frota (Módulo Mini-ERP Independente) */}
+        {(perms.verLocacaoContratos !== undefined ? perms.verLocacaoContratos : perms.gerenciarLocacao !== false) && (
+          <button
+            id="nav-item-locadora-frota"
+            type="button"
+            onClick={() => setActiveTab('locacao')}
+            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all mt-2 cursor-pointer ${
+              activeTab === 'locacao' || activeTab.startsWith('locacao-')
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/25 border border-amber-400/40'
+                : 'text-slate-300 bg-white/[0.03] hover:bg-white/[0.06] hover:text-white border border-white/5'
+            }`}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className={`p-1.5 rounded-xl shrink-0 ${activeTab === 'locacao' || activeTab.startsWith('locacao-') ? 'bg-white/20 text-white' : 'bg-amber-500/15 text-amber-400'}`}>
+                <Key size={15} />
+              </div>
+              <div className="text-left truncate">
+                <div className="font-bold text-xs truncate">Locadora & Frota</div>
+                <div className={`text-[10px] font-normal truncate ${activeTab === 'locacao' || activeTab.startsWith('locacao-') ? 'text-amber-100' : 'text-slate-400'}`}>
+                  Mini-ERP Locação App
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              {counts.alertasPagamento > 0 ? (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-bold animate-pulse">
+                  {counts.alertasPagamento} pendentes
+                </span>
+              ) : (
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                  activeTab === 'locacao' || activeTab.startsWith('locacao-') ? 'bg-white/25 text-white' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                }`}>
+                  {counts.alugados} ativos
+                </span>
+              )}
+            </div>
+          </button>
+        )}
       </nav>
 
       {/* Perfil do Usuário & Sair */}

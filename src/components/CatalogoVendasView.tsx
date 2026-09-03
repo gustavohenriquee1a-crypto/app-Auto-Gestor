@@ -119,8 +119,8 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
         return false;
       }
 
-      // 2. Veículos 'Em Trânsito' ou 'Alugado' não entram no Catálogo Comercial de Vendas
-      if (v.status_estoque === 'Em Trânsito' || v.status === 'Alugado') {
+      // 2. Veículos 'Em Trânsito', 'Alugado', com contrato ativo ou destinados exclusivamente à Locação/Frota não entram no Catálogo Comercial de Vendas
+      if (v.status_estoque === 'Em Trânsito' || v.status === 'Alugado' || v.tipoOperacao === 'Locacao' || !!v.contratoAtivo) {
         return false;
       }
 

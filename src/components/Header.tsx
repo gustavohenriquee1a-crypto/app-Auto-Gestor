@@ -9,6 +9,7 @@ import {
   Wrench,
   CheckCircle2,
   Users,
+  User,
   LogOut,
   ChevronDown,
   Shield,
@@ -36,6 +37,7 @@ interface HeaderProps {
   onSelectTab?: (tab: string) => void;
   currentUser?: Usuario | null;
   onOpenUsuarios?: () => void;
+  onOpenMeuPerfil?: () => void;
   onLogout?: () => void;
 }
 
@@ -49,6 +51,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   currentUser,
   onOpenUsuarios,
+  onOpenMeuPerfil,
   onLogout,
 }) => {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -304,6 +307,20 @@ export const Header: React.FC<HeaderProps> = ({
                     )}
                   </div>
                 </div>
+
+                {onOpenMeuPerfil && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      onOpenMeuPerfil();
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-slate-300 hover:text-white hover:bg-white/5 rounded-xl transition cursor-pointer"
+                  >
+                    <User size={15} className="text-purple-400" />
+                    <span>Meu Perfil & RH</span>
+                  </button>
+                )}
 
                 {currentUser.permissoes?.gerenciarUsuarios !== false && onOpenUsuarios && (
                   <button

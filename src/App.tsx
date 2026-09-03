@@ -76,6 +76,7 @@ import { ContasReceberView } from './components/ContasReceberView';
 import { ModalNovoBanco } from './components/ModalNovoBanco';
 import { bancosService } from './services/bancosService';
 import { UsuariosModal } from './components/UsuariosModal';
+import { ModalMeuPerfil } from './components/ModalMeuPerfil';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
@@ -129,6 +130,8 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<Usuario | null>(null);
   const [isUsuariosModalOpen, setIsUsuariosModalOpen] = useState<boolean>(false);
+  const [isMeuPerfilOpen, setIsMeuPerfilOpen] = useState<boolean>(false);
+  const [targetUserPerfil, setTargetUserPerfil] = useState<Usuario | null>(null);
   const [allUsersList, setAllUsersList] = useState<Usuario[]>([]);
 
   // --- Persistent States ---
@@ -2407,6 +2410,10 @@ export default function App() {
           onOpenNovoLancamento={() => setIsNovoLancamentoGlobalOpen(true)}
           currentUser={currentUserProfile}
           onOpenUsuarios={() => setIsUsuariosModalOpen(true)}
+          onOpenMeuPerfil={() => {
+            setTargetUserPerfil(null);
+            setIsMeuPerfilOpen(true);
+          }}
           onOpenBackup={() => setIsBackupModalOpen(true)}
           onLogout={handleLogout}
         />
@@ -2481,6 +2488,10 @@ export default function App() {
           onSelectTab={setActiveTab}
           currentUser={currentUserProfile}
           onOpenUsuarios={() => setIsUsuariosModalOpen(true)}
+          onOpenMeuPerfil={() => {
+            setTargetUserPerfil(null);
+            setIsMeuPerfilOpen(true);
+          }}
           onLogout={handleLogout}
         />
 
@@ -2723,9 +2734,26 @@ export default function App() {
               veiculos={veiculos}
               vendas={vendas}
               despesasFixas={despesasFixas}
+              usuarios={allUsersList}
               currentUser={currentUserProfile}
               onOpenNovaDespesaFixa={() => setIsNovaDespesaFixaOpen(true)}
               onOpenNovaDespesaChassi={() => openNovaDespesa()}
+              onOpenMeuPerfil={() => {
+                setTargetUserPerfil(null);
+                setIsMeuPerfilOpen(true);
+              }}
+              onUpdateVenda={(updatedVenda) => {
+                setVendas((prev) => prev.map((v) => (v.id === updatedVenda.id ? updatedVenda : v)));
+              }}
+              onSaveDespesaFixa={(newDespesa) => {
+                setDespesasFixas((prev) => {
+                  const exists = prev.some((d) => d.id === newDespesa.id);
+                  if (exists) {
+                    return prev.map((d) => (d.id === newDespesa.id ? newDespesa : d));
+                  }
+                  return [newDespesa, ...prev];
+                });
+              }}
             />
           )}
 
@@ -2746,6 +2774,26 @@ export default function App() {
           isOpen={isUsuariosModalOpen}
           onClose={() => setIsUsuariosModalOpen(false)}
           currentUser={currentUserProfile}
+        />
+      )}
+
+      {isMeuPerfilOpen && (
+        <ModalMeuPerfil
+          isOpen={isMeuPerfilOpen}
+          onClose={() => {
+            setIsMeuPerfilOpen(false);
+            setTargetUserPerfil(null);
+          }}
+          currentUser={currentUserProfile}
+          targetUser={targetUserPerfil}
+          onSaveSuccess={(updated) => {
+            if (currentUserProfile?.uid === updated.uid) {
+              setCurrentUserProfile(updated);
+            }
+            setAllUsersList((prev) =>
+              prev.map((u) => (u.uid === updated.uid ? { ...u, ...updated } : u))
+            );
+          }}
         />
       )}
 

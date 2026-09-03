@@ -18,15 +18,18 @@ import {
   Trash2,
   FileCheck,
   Printer,
-  FolderOpen
+  FolderOpen,
+  ArrowRightLeft
 } from 'lucide-react';
 import { VendaVeiculo, Usuario, Veiculo } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { ModalDetalhesVendaComissao } from './ModalDetalhesVendaComissao';
+import { ModalTransferirVenda } from './ModalTransferirVenda';
 
 interface ComissoesVendasViewProps {
   vendas: VendaVeiculo[];
   veiculos?: Veiculo[];
+  usuarios?: Usuario[];
   currentUser: Usuario | null;
   onOpenDossie?: (veiculo: Veiculo) => void;
   onUpdateVendaComissao?: (vendaId: string, novoStatus: 'Pendente' | 'Paga') => void;
@@ -37,6 +40,7 @@ interface ComissoesVendasViewProps {
 export const ComissoesVendasView: React.FC<ComissoesVendasViewProps> = ({
   vendas,
   veiculos = [],
+  usuarios = [],
   currentUser,
   onOpenDossie,
   onUpdateVendaComissao,
@@ -48,6 +52,7 @@ export const ComissoesVendasView: React.FC<ComissoesVendasViewProps> = ({
   const [vendedorFilter, setVendedorFilter] = useState<string>('Todos');
   const [selectedVendaDetails, setSelectedVendaDetails] = useState<VendaVeiculo | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [vendaParaTransferir, setVendaParaTransferir] = useState<VendaVeiculo | null>(null);
 
   const isAdminOrGestor = currentUser?.role === 'admin' || currentUser?.role === 'gestor';
 
@@ -426,6 +431,21 @@ export const ComissoesVendasView: React.FC<ComissoesVendasViewProps> = ({
                             <span>Detalhes</span>
                           </button>
 
+                          {isAdminOrGestor && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setVendaParaTransferir(v);
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-purple-600/10 hover:bg-purple-600/25 text-purple-300 border border-purple-500/20 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
+                              title="Transferir todos os dados da venda e comissão para outro vendedor"
+                            >
+                              <ArrowRightLeft size={12} />
+                              <span>Transferir</span>
+                            </button>
+                          )}
+
                           {isAdminOrGestor && onOpenDossie && (
                             <button
                               type="button"
@@ -504,10 +524,28 @@ export const ComissoesVendasView: React.FC<ComissoesVendasViewProps> = ({
           onClose={handleCloseDetails}
           venda={selectedVendaDetails}
           veiculoAssociado={getVeiculoAssociado(selectedVendaDetails)}
+          usuarios={usuarios}
           currentUser={currentUser}
           onOpenDossie={onOpenDossie}
           onUpdateVenda={onUpdateVenda}
           onDeleteVenda={onDeleteVenda}
+        />
+      )}
+
+      {/* Modal Rápido de Transferência de Venda */}
+      {vendaParaTransferir && (
+        <ModalTransferirVenda
+          isOpen={!!vendaParaTransferir}
+          onClose={() => setVendaParaTransferir(null)}
+          venda={vendaParaTransferir}
+          usuarios={usuarios}
+          currentUser={currentUser}
+          onTransferenciaSucesso={(vendaAtualizada) => {
+            if (onUpdateVenda) {
+              onUpdateVenda(vendaAtualizada);
+            }
+            setVendaParaTransferir(null);
+          }}
         />
       )}
     </div>

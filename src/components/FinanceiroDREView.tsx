@@ -96,25 +96,34 @@ import {
   ParametrosTransferencia
 } from '../services/firestoreService';
 import { ModalTransferenciaEntreContas } from './ModalTransferenciaEntreContas';
+import { FechamentoFolhaView } from './FechamentoFolhaView';
 
 interface FinanceiroDREViewProps {
   veiculos: Veiculo[];
   vendas: VendaVeiculo[];
   despesasFixas: DespesaFixa[];
+  usuarios?: Usuario[];
   currentUser?: Usuario | null;
   onOpenNovaDespesaFixa: () => void;
   onOpenNovaDespesaChassi: () => void;
+  onOpenMeuPerfil?: () => void;
+  onUpdateVenda?: (venda: VendaVeiculo) => Promise<void> | void;
+  onSaveDespesaFixa?: (despesa: DespesaFixa) => Promise<void> | void;
 }
 
-type TabFinanceiro = 'dre' | 'contas_mes' | 'bancos_caixa' | 'fechamento_cego';
+type TabFinanceiro = 'dre' | 'contas_mes' | 'bancos_caixa' | 'fechamento_cego' | 'fechamento_folha';
 
 export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
   veiculos,
   vendas,
   despesasFixas,
+  usuarios = [],
   currentUser,
   onOpenNovaDespesaFixa,
   onOpenNovaDespesaChassi,
+  onOpenMeuPerfil,
+  onUpdateVenda,
+  onSaveDespesaFixa,
 }) => {
   const [activeTab, setActiveTab] = useState<TabFinanceiro>('dre');
   const [filtroPeriodo, setFiltroPeriodo] = useState<string>('todos');
@@ -655,6 +664,14 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
               }`}
             >
               <Lock size={14} /> Fechamento Cego
+            </button>
+            <button
+              onClick={() => setActiveTab('fechamento_folha')}
+              className={`px-3.5 py-2 rounded-xl font-bold transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'fechamento_folha' ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Users size={14} /> Fechamento de Folha & RH
             </button>
           </div>
         </div>
@@ -2453,6 +2470,21 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {/* ================= ABA 5: FECHAMENTO DE FOLHA & RH ================= */}
+      {activeTab === 'fechamento_folha' && (
+        <FechamentoFolhaView
+          usuarios={usuarios}
+          vendas={vendas}
+          despesasFixas={despesasFixas}
+          contasBancarias={contasBancarias}
+          veiculos={veiculos}
+          currentUser={currentUser}
+          onOpenMeuPerfil={onOpenMeuPerfil}
+          onUpdateVenda={onUpdateVenda}
+          onSaveDespesaFixa={onSaveDespesaFixa}
+        />
       )}
 
       {/* Modal de Transferência entre Contas / Terceiros */}

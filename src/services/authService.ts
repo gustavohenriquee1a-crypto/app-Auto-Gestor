@@ -589,6 +589,22 @@ export async function updateUserPermissionsInFirestore(
 }
 
 /**
+ * Updates full user profile data in Firestore using merge: true
+ */
+export async function updateUserProfileFirestore(
+  uid: string,
+  updates: Partial<Usuario>
+): Promise<void> {
+  const userDocRef = doc(db, USERS_COLLECTION, uid);
+  try {
+    await setDoc(userDocRef, cleanFirestoreData(updates), { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `${USERS_COLLECTION}/${uid}`);
+    throw error;
+  }
+}
+
+/**
  * Delete a user profile completely from Firestore
  */
 export async function deleteUserInFirestore(uid: string): Promise<void> {

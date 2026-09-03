@@ -737,6 +737,8 @@ export interface DespesaFixa {
   contaBancariaNome?: string;
   formaPagamento?: string;
   dataPagamento?: string;
+  beneficiarioUsuarioId?: string;
+  beneficiarioNome?: string;
   nfNumero?: string;
   observacoes?: string;
 }
@@ -799,6 +801,8 @@ export interface MovimentacaoConta {
   isTerceiro?: boolean;
   terceiroNome?: string;
   motivo?: string;
+  comprovanteNumero?: string;
+  observacoes?: string;
 }
 
 export interface FechamentoCaixaDiario {
@@ -894,5 +898,64 @@ export interface Usuario {
   motivoRecusa?: string;
   createdAt: string;
   lastLoginAt?: string;
+
+  // 1. Dados Pessoais & Documentos (Gestão de RH)
+  cpfCnpj?: string;
+  rg?: string;
+  orgaoEmissor?: string;
+  dataNascimento?: string;
+  estadoCivil?: string;
+
+  // 2. Endereço Residencial Completo
+  enderecoCompleto?: {
+    cep?: string;
+    logradouro?: string;
+    numero?: string;
+    complemento?: string;
+    bairro?: string;
+    cidade?: string;
+    uf?: string;
+  };
+
+  // 3. Dados Bancários (PIX para recebimento de salários e comissões)
+  dadosBancarios?: {
+    banco?: string;
+    agencia?: string;
+    conta?: string;
+    tipoConta?: 'Corrente' | 'Poupança' | 'Pagamento' | string;
+    tipoChavePix?: string;
+    chavePix?: string;
+    titular?: string;
+  };
+
+  // 4. Regras de Remuneração e Dados Contratuais (RBAC - Exclusivo Admin)
+  dadosContratuais?: {
+    tipoVinculo?: 'Autônomo / Comissionista Puro' | 'PJ / Prestador' | 'CLT / Funcionário' | 'Sócio / Parceiro';
+    dataAdmissao?: string;
+    salarioBaseFixo?: number;
+    encargosTrabalhistasEstimados?: number; // Valor ou % de provisão de impostos
+    percentualParticipacaoLucros?: number; // Para Sócios/Gestores
+    observacoesContrato?: string;
+  };
+}
+
+// Estrutura de Fechamento de Folha de Pagamento & RH
+export interface ResumoFolhaUsuario {
+  usuarioId: string;
+  usuarioNome: string;
+  usuarioEmail: string;
+  cargo: string;
+  tipoVinculo: string;
+  mesReferencia: string; // YYYY-MM
+  salarioBaseFixo: number;
+  encargosTrabalhistasEstimados: number;
+  comissoesPendentesValor: number;
+  vendasComissoes: VendaVeiculo[];
+  percentualPLR: number;
+  lucroGlobalMes: number;
+  valorPLRApurado: number;
+  totalLiquidoColaborador: number; // Salário Fixo + Comissões + PLR
+  custoTotalEmpresa: number; // Salário Fixo + Encargos + Comissões + PLR
+  dadosBancarios?: Usuario['dadosBancarios'];
 }
 

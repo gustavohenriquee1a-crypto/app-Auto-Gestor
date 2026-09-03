@@ -2050,6 +2050,9 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
                       onChange={(e) => setVendedorNome(e.target.value)}
                       className="w-full px-2.5 py-1.5 rounded-lg border border-white/10 bg-[#16171f] text-white text-xs font-medium outline-none"
                     />
+                    <span className="text-[10px] text-purple-400/80 block mt-1 leading-tight">
+                      💡 Se o vendedor ainda não tiver cadastro, a venda pode ser registrada agora e transferida depois pela administração.
+                    </span>
                   </div>
 
                   {perfilComissao === 'admin_gerente' && (

@@ -23,16 +23,19 @@ import {
   ShieldCheck,
   TrendingUp,
   Tag,
-  FolderOpen
+  FolderOpen,
+  ArrowRightLeft
 } from 'lucide-react';
 import { VendaVeiculo, Usuario, Veiculo } from '../types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
+import { ModalTransferirVenda } from './ModalTransferirVenda';
 
 interface ModalDetalhesVendaComissaoProps {
   isOpen: boolean;
   onClose: () => void;
   venda: VendaVeiculo | null;
   veiculoAssociado?: Veiculo | null;
+  usuarios?: Usuario[];
   currentUser: Usuario | null;
   onOpenDossie?: (veiculo: Veiculo) => void;
   onUpdateVenda?: (vendaAtualizada: VendaVeiculo) => Promise<void> | void;
@@ -44,12 +47,16 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
   onClose,
   venda,
   veiculoAssociado,
+  usuarios = [],
   currentUser,
   onOpenDossie,
   onUpdateVenda,
   onDeleteVenda,
 }) => {
   const isAdminOrGestor = currentUser?.role === 'admin' || currentUser?.role === 'gestor';
+
+  // State for Transfer Modal
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
 
   // Form State for Commission Management
   const [comissaoStatus, setComissaoStatus] = useState<'Pendente' | 'Paga'>('Pendente');
@@ -689,11 +696,22 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-slate-400">Vendedor Beneficiário:</span>
                 <span className="font-bold text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2.5 py-1 rounded-xl">
                   {venda.vendedorNome || 'Vendedor Não Atribuído'}
                 </span>
+                {isAdminOrGestor && (
+                  <button
+                    type="button"
+                    onClick={() => setIsTransferModalOpen(true)}
+                    className="px-2.5 py-1 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+                    title="Transferir todos os dados da venda e comissão para outro vendedor"
+                  >
+                    <ArrowRightLeft size={13} />
+                    <span>Transferir Vendedor</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -888,6 +906,21 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
           </div>
         </div>
       </div>
+
+      {/* Modal de Transferência de Venda */}
+      <ModalTransferirVenda
+        isOpen={isTransferModalOpen}
+        onClose={() => setIsTransferModalOpen(false)}
+        venda={venda}
+        usuarios={usuarios}
+        currentUser={currentUser}
+        onTransferenciaSucesso={(vendaAtualizada) => {
+          if (onUpdateVenda) {
+            onUpdateVenda(vendaAtualizada);
+          }
+          setIsTransferModalOpen(false);
+        }}
+      />
     </div>
   );
 };

@@ -28,7 +28,8 @@ import {
   Layers,
   FolderCog,
   Shield,
-  Calendar
+  Calendar,
+  Settings
 } from 'lucide-react';
 import { Usuario } from '../types';
 import { subscribeConfiguracoesLoja, saveConfiguracaoLojaFirestore, getConfiguracaoLojaFirestore } from '../services/firestoreService';
@@ -54,6 +55,7 @@ interface SidebarProps {
   onOpenNovoLancamento: () => void;
   currentUser: Usuario | null;
   onOpenUsuarios: () => void;
+  onOpenMeuPerfil?: () => void;
   onOpenBackup?: () => void;
   onLogout: () => void;
 }
@@ -84,6 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenNovoLancamento,
   currentUser,
   onOpenUsuarios,
+  onOpenMeuPerfil,
   onOpenBackup,
   onLogout,
 }) => {
@@ -649,44 +652,67 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Perfil do Usuário & Sair */}
       <div className="p-3 border-t border-white/5 bg-[#0e0f14]">
         {currentUser ? (
-          <div className="p-2.5 rounded-2xl bg-[#14151c] border border-white/5 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              {currentUser.photoURL ? (
-                <img
-                  src={currentUser.photoURL}
-                  alt={currentUser.displayName}
-                  referrerPolicy="no-referrer"
-                  className="w-9 h-9 rounded-xl object-cover border border-white/10 shrink-0"
-                />
-              ) : (
-                <div className="w-9 h-9 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0 font-bold text-xs">
-                  {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : 'U'}
+          <div className="p-2 rounded-2xl bg-[#14151c] border border-white/5 flex items-center justify-between gap-1.5">
+            <button
+              id="btn-sidebar-user-profile"
+              type="button"
+              onClick={onOpenMeuPerfil}
+              title="Meu Perfil / Dados Bancários"
+              className="flex items-center gap-2.5 min-w-0 flex-1 text-left p-1 rounded-xl hover:bg-white/[0.05] transition cursor-pointer group"
+            >
+              <div className="relative shrink-0">
+                {currentUser.photoURL ? (
+                  <img
+                    src={currentUser.photoURL}
+                    alt={currentUser.displayName}
+                    referrerPolicy="no-referrer"
+                    className="w-9 h-9 rounded-xl object-cover border border-white/10 shrink-0 group-hover:border-blue-500/50 transition"
+                  />
+                ) : (
+                  <div className="w-9 h-9 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0 font-bold text-xs group-hover:border-blue-500/50 transition">
+                    {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : 'U'}
+                  </div>
+                )}
+                <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[#0e0f14] border border-white/15 flex items-center justify-center text-slate-400 group-hover:text-blue-400 shadow-sm">
+                  <Settings size={9} />
                 </div>
-              )}
-              <div className="min-w-0">
-                <p className="text-xs font-bold text-white truncate leading-tight">
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-white truncate leading-tight group-hover:text-blue-400 transition">
                   {currentUser.displayName}
                 </p>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <span className="text-[10px] text-blue-400 font-semibold uppercase bg-blue-500/10 px-1 rounded">
                     {currentUser.role}
                   </span>
-                  <span className="text-[10px] text-slate-400 truncate max-w-[80px]">
-                    {currentUser.email}
+                  <span className="text-[10px] text-slate-400 truncate max-w-[85px]">
+                    {currentUser.cargo || currentUser.email}
                   </span>
                 </div>
               </div>
-            </div>
-
-            <button
-              id="btn-sidebar-logout"
-              type="button"
-              onClick={onLogout}
-              title="Sair da conta"
-              className="w-8 h-8 rounded-xl bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 flex items-center justify-center transition shrink-0 cursor-pointer"
-            >
-              <LogOut size={15} />
             </button>
+
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                id="btn-sidebar-gear-profile"
+                type="button"
+                onClick={onOpenMeuPerfil}
+                title="Meu Perfil / Dados Bancários"
+                className="w-8 h-8 rounded-xl bg-white/5 hover:bg-blue-500/20 text-slate-400 hover:text-blue-400 border border-white/5 hover:border-blue-500/30 flex items-center justify-center transition cursor-pointer"
+              >
+                <Settings size={14} />
+              </button>
+
+              <button
+                id="btn-sidebar-logout"
+                type="button"
+                onClick={onLogout}
+                title="Sair da conta"
+                className="w-8 h-8 rounded-xl bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 flex items-center justify-center transition cursor-pointer"
+              >
+                <LogOut size={14} />
+              </button>
+            </div>
           </div>
         ) : (
           <div className="flex items-center justify-between text-xs text-slate-400">

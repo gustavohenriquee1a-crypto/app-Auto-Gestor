@@ -20,6 +20,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Veiculo, EtapaKanbanPreparacao, Usuario, DespesaVeiculo, FornecedorPrestador, EventoHistoricoVeiculo } from '../types';
+import { ParametrosMovimentacaoVeiculo, prepararMovimentacaoVeiculo } from '../services/movimentacaoVeiculoService';
 import { formatCurrency, formatKm, formatDate, calculateAging, calculateTotalDespesas } from '../utils/formatters';
 
 interface FunilPreparacaoViewProps {
@@ -27,6 +28,7 @@ interface FunilPreparacaoViewProps {
   fornecedores?: FornecedorPrestador[];
   currentUser: Usuario | null;
   onUpdateEtapaKanban?: (veiculoId: string, novaEtapa: EtapaKanbanPreparacao) => void;
+  onMovimentarVeiculo?: (params: ParametrosMovimentacaoVeiculo) => Promise<Veiculo>;
   onOpenDossie: (veiculo: Veiculo) => void;
   onOpenNovaDespesa: (veiculo: Veiculo) => void;
   onOpenVenda: (veiculo: Veiculo) => void;
@@ -92,6 +94,7 @@ export const FunilPreparacaoView: React.FC<FunilPreparacaoViewProps> = ({
   fornecedores = [],
   currentUser,
   onUpdateEtapaKanban,
+  onMovimentarVeiculo,
   onOpenDossie,
   onOpenNovaDespesa,
   onOpenVenda,
@@ -108,37 +111,33 @@ export const FunilPreparacaoView: React.FC<FunilPreparacaoViewProps> = ({
   const podeGerenciar = currentUser?.role === 'admin' || currentUser?.role === 'gestor' || currentUser?.permissoes?.gerenciarFunilPreparacao !== false;
 
   // Safe handler for updating vehicle Kanban stage
-  const handleAtualizarEtapa = (veiculoId: string, novaEtapa: EtapaKanbanPreparacao) => {
+  const handleAtualizarEtapa = async (veiculoId: string, novaEtapa: EtapaKanbanPreparacao) => {
     const veiculo = veiculos.find((v) => v.id === veiculoId);
+    if (!veiculo) return;
+
     // Se estiver movendo para Pronto para Pátio e tem oficina/serviço pendente, abrir modal de conclusão para lançar custo e forma de pagamento
-    if (novaEtapa === 'Pronto para Pátio' && veiculo && (veiculo.fornecedorAtualNome || veiculo.servicoAtualEmAndamento) && onOpenRetornoPatio) {
+    if (novaEtapa === 'Pronto para Pátio' && (veiculo.fornecedorAtualNome || veiculo.servicoAtualEmAndamento) && onOpenRetornoPatio) {
       onOpenRetornoPatio(veiculo);
       return;
     }
 
-    if (typeof onUpdateEtapaKanban === 'function') {
+    if (onMovimentarVeiculo) {
+      await onMovimentarVeiculo({
+        veiculo,
+        novaEtapaKanban: novaEtapa,
+        origemModulo: 'Funil de Preparação (Kanban)',
+        usuario: currentUser,
+      });
+    } else if (typeof onUpdateEtapaKanban === 'function') {
       onUpdateEtapaKanban(veiculoId, novaEtapa);
     } else if (typeof onUpdateVeiculo === 'function') {
-      if (veiculo) {
-        let novoStatus = veiculo.status;
-        let novoStatusEstoque = veiculo.status_estoque;
-        if (novaEtapa === 'Pronto para Pátio') {
-          novoStatus = 'Disponível';
-          novoStatusEstoque = 'No Pátio';
-        } else if (novaEtapa === 'Oficina') {
-          novoStatus = 'Em Manutenção';
-          novoStatusEstoque = 'Em Preparação';
-        } else {
-          novoStatus = 'Em Preparação';
-          novoStatusEstoque = 'Em Preparação';
-        }
-        onUpdateVeiculo({
-          ...veiculo,
-          etapaKanban: novaEtapa,
-          status: novoStatus,
-          status_estoque: novoStatusEstoque,
-        });
-      }
+      const veiculoAtualizado = prepararMovimentacaoVeiculo({
+        veiculo,
+        novaEtapaKanban: novaEtapa,
+        origemModulo: 'Funil de Preparação (Kanban)',
+        usuario: currentUser,
+      });
+      onUpdateVeiculo(veiculoAtualizado);
     }
   };
 

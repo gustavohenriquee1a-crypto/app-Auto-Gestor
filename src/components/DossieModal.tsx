@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   X, 
   Car, 
@@ -66,6 +66,7 @@ import {
   registrarMudancaStatusEstoque, 
   formatarDataHoraAuditoria 
 } from '../utils/auditLogger';
+import { ParametrosMovimentacaoVeiculo, prepararMovimentacaoVeiculo } from '../services/movimentacaoVeiculoService';
 
 interface DossieModalProps {
   veiculo: Veiculo;
@@ -78,6 +79,7 @@ interface DossieModalProps {
   onEditDespesa?: (veiculo: Veiculo, despesa: DespesaVeiculo) => void;
   onAdicionarEventoStatus?: (veiculoId: string, novoEvento: EventoHistoricoVeiculo) => void;
   onUpdateVeiculo?: (veiculo: Veiculo) => void;
+  onMovimentarVeiculo?: (params: ParametrosMovimentacaoVeiculo) => Promise<Veiculo>;
   onEditVeiculo?: (veiculo: Veiculo) => void;
   onOpenTestDrive?: (veiculo: Veiculo) => void;
   onOpenVistoria?: (veiculo: Veiculo) => void;
@@ -100,6 +102,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
   onEditDespesa,
   onAdicionarEventoStatus,
   onUpdateVeiculo,
+  onMovimentarVeiculo,
   onEditVeiculo,
   onOpenTestDrive,
   onOpenVistoria,
@@ -133,20 +136,36 @@ export const DossieModal: React.FC<DossieModalProps> = ({
   const [motivoMudancaStatusInput, setMotivoMudancaStatusInput] = useState('');
   const [statusFeedbackMsg, setStatusFeedbackMsg] = useState<string | null>(null);
 
-  const handleExecutarMudancaStatus = (statusParaAplicar?: StatusEstoque, motivo?: string) => {
-    if (!onUpdateVeiculo) return;
+  useEffect(() => {
+    if (veiculo.status_estoque) {
+      setNovoStatusEstoqueInput(veiculo.status_estoque);
+    }
+  }, [veiculo.status_estoque]);
+
+  const handleExecutarMudancaStatus = async (statusParaAplicar?: StatusEstoque, motivo?: string) => {
+    if (!onUpdateVeiculo && !onMovimentarVeiculo) return;
     const statusDestino = statusParaAplicar || novoStatusEstoqueInput;
     const motivoFinal = motivo !== undefined ? motivo : motivoMudancaStatusInput;
 
-    const veiculoAtualizado = registrarMudancaStatusEstoque(
-      veiculo,
-      statusDestino,
-      currentUser,
-      'Dossiê do Veículo',
-      motivoFinal
-    );
+    if (onMovimentarVeiculo) {
+      await onMovimentarVeiculo({
+        veiculo,
+        novoStatusEstoque: statusDestino,
+        motivoObservacao: motivoFinal,
+        origemModulo: 'Dossiê do Veículo',
+        usuario: currentUser,
+      });
+    } else if (onUpdateVeiculo) {
+      const veiculoAtualizado = prepararMovimentacaoVeiculo({
+        veiculo,
+        novoStatusEstoque: statusDestino,
+        motivoObservacao: motivoFinal,
+        origemModulo: 'Dossiê do Veículo',
+        usuario: currentUser,
+      });
+      onUpdateVeiculo(veiculoAtualizado);
+    }
 
-    onUpdateVeiculo(veiculoAtualizado);
     setNovoStatusEstoqueInput(statusDestino);
     setMotivoMudancaStatusInput('');
     setStatusFeedbackMsg(`Status alterado para "${statusDestino}" com log de auditoria registrado!`);

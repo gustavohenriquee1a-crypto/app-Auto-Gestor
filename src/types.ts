@@ -755,6 +755,15 @@ export interface MovimentacaoConta {
   formaPagamento?: string;
   criadoPor?: string;
   createdAt: string;
+  // Campos específicos de transferências entre contas e terceiros
+  transferenciaId?: string;
+  contaOrigemId?: string;
+  contaOrigemNome?: string;
+  contaDestinoId?: string;
+  contaDestinoNome?: string;
+  isTerceiro?: boolean;
+  terceiroNome?: string;
+  motivo?: string;
 }
 
 export interface FechamentoCaixaDiario {

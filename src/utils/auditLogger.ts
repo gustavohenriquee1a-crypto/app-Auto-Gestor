@@ -258,8 +258,13 @@ export const aplicarRetornoPatio = (params: ParametrosRetornoPatio): Veiculo => 
     statusPreparacaoOficina: 'Pátio / Pronto',
     data_chegada_patio: veiculo.data_chegada_patio || dataRetorno,
     dataEntradaPatio: veiculo.dataEntradaPatio || dataRetorno,
-    // Mantém histórico do último prestador para rastreabilidade
+    // Limpa associação com o prestador ativo para remover da lista 'Veículos no Local'
+    fornecedorAtualId: undefined,
+    fornecedorAtualNome: undefined,
+    fornecedorAtualCategoria: undefined,
     servicoAtualEmAndamento: undefined,
+    previsaoRetornoOficina: undefined,
+    custoEstimadoServico: undefined,
     historicoAuditoriaStatus: [novoLog, ...logsExistentes],
     historicoStatus: [novoEventoHistorico, ...eventosExistentes],
   };

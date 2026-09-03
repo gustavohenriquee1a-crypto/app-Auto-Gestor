@@ -45,7 +45,9 @@ import {
   Wrench,
   Rocket,
   Target,
-  Compass
+  Compass,
+  ArrowLeftRight,
+  Search
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -58,12 +60,20 @@ import {
   PieChart, 
   Pie, 
   Cell, 
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  ReferenceLine
+  CartesianGrid, 
+  ComposedChart, 
+  Line, 
+  ReferenceLine 
 } from 'recharts';
-import { Veiculo, VendaVeiculo, DespesaFixa, ContaBancariaCaixa, FechamentoCaixaDiario } from '../types';
+import { 
+  Veiculo, 
+  VendaVeiculo, 
+  DespesaFixa, 
+  ContaBancariaCaixa, 
+  FechamentoCaixaDiario,
+  MovimentacaoConta,
+  Usuario
+} from '../types';
 import { 
   formatCurrency, 
   formatCurrencyDetailed, 
@@ -79,13 +89,19 @@ import {
   subscribeContasBancarias, 
   saveContaBancariaFirestore, 
   deleteContaBancariaFirestore,
-  DEFAULT_CONTAS_BANCARIAS 
+  DEFAULT_CONTAS_BANCARIAS,
+  subscribeMovimentacoesContas,
+  deleteMovimentacaoContaFirestore,
+  executarTransferenciaEntreContasFirestore,
+  ParametrosTransferencia
 } from '../services/firestoreService';
+import { ModalTransferenciaEntreContas } from './ModalTransferenciaEntreContas';
 
 interface FinanceiroDREViewProps {
   veiculos: Veiculo[];
   vendas: VendaVeiculo[];
   despesasFixas: DespesaFixa[];
+  currentUser?: Usuario | null;
   onOpenNovaDespesaFixa: () => void;
   onOpenNovaDespesaChassi: () => void;
 }
@@ -96,6 +112,7 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
   veiculos,
   vendas,
   despesasFixas,
+  currentUser,
   onOpenNovaDespesaFixa,
   onOpenNovaDespesaChassi,
 }) => {
@@ -224,6 +241,82 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
       await deleteContaBancariaFirestore(id);
     }
   };
+
+  // --- MÓDULO DE TRANSFERÊNCIA ENTRE CONTAS & EXTRATO BANCÁRIO ---
+  const [modalTransferenciaOpen, setModalTransferenciaOpen] = useState(false);
+  const [contaOrigemPreSelecionadaId, setContaOrigemPreSelecionadaId] = useState<string | undefined>();
+  const [movimentacoesContas, setMovimentacoesContas] = useState<MovimentacaoConta[]>([]);
+  const [filtroExtratoConta, setFiltroExtratoConta] = useState<string>('todas');
+  const [filtroExtratoTipo, setFiltroExtratoTipo] = useState<string>('todos');
+  const [buscaExtratoTexto, setBuscaExtratoTexto] = useState<string>('');
+  const [notificacaoTransferencia, setNotificacaoTransferencia] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubMovs = subscribeMovimentacoesContas((movs) => {
+      setMovimentacoesContas(movs || []);
+    });
+    return () => unsubMovs();
+  }, []);
+
+  const handleConfirmarTransferencia = async (params: ParametrosTransferencia) => {
+    const res = await executarTransferenciaEntreContasFirestore(params);
+
+    // Atualiza imediatamente o estado local de contas para refletir em tela sem delay
+    setContasBancarias((prev) =>
+      prev.map((c) => {
+        if (c.id === res.contaOrigemAtualizada.id) return res.contaOrigemAtualizada;
+        if (res.contaDestinoAtualizada && c.id === res.contaDestinoAtualizada.id) {
+          return res.contaDestinoAtualizada;
+        }
+        return c;
+      })
+    );
+
+    const valorFmt = formatCurrency(params.valor);
+    if (params.isTerceiro) {
+      setNotificacaoTransferencia(
+        `Transferência de ${valorFmt} realizada com sucesso para o terceiro "${params.terceiroDestinoNome}" com débito em "${res.contaOrigemAtualizada.nome}"!`
+      );
+    } else {
+      setNotificacaoTransferencia(
+        `Transferência de ${valorFmt} concluída com sucesso: debitado de "${res.contaOrigemAtualizada.nome}" e creditado em "${res.contaDestinoAtualizada?.nome}"!`
+      );
+    }
+    setTimeout(() => setNotificacaoTransferencia(null), 6500);
+  };
+
+  const handleDeleteMovimentacao = async (movId: string) => {
+    if (window.confirm('Deseja excluir este registro de movimentação do extrato? (Isso não altera os saldos atuais)')) {
+      await deleteMovimentacaoContaFirestore(movId);
+    }
+  };
+
+  // Filtragem do Extrato de Contas
+  const movimentacoesFiltradas = useMemo(() => {
+    return movimentacoesContas.filter((mov) => {
+      // Filtro por Conta
+      if (filtroExtratoConta !== 'todas' && mov.contaId !== filtroExtratoConta) {
+        return false;
+      }
+      // Filtro por Tipo
+      if (filtroExtratoTipo !== 'todos' && mov.tipo !== filtroExtratoTipo) {
+        return false;
+      }
+      // Busca de Texto
+      if (buscaExtratoTexto.trim()) {
+        const q = buscaExtratoTexto.trim().toLowerCase();
+        const matchDesc = (mov.descricao || '').toLowerCase().includes(q);
+        const matchCat = (mov.categoria || '').toLowerCase().includes(q);
+        const matchConta = (mov.contaNome || '').toLowerCase().includes(q);
+        const matchPlaca = (mov.placa || '').toLowerCase().includes(q);
+        const matchCliente = (mov.clienteNome || '').toLowerCase().includes(q);
+        const matchTerceiro = (mov.terceiroNome || '').toLowerCase().includes(q);
+        const matchMotivo = (mov.motivo || '').toLowerCase().includes(q);
+        return matchDesc || matchCat || matchConta || matchPlaca || matchCliente || matchTerceiro || matchMotivo;
+      }
+      return true;
+    });
+  }, [movimentacoesContas, filtroExtratoConta, filtroExtratoTipo, buscaExtratoTexto]);
 
   // Fechamento Cego de Caixa
   const [valorInformadoOperador, setValorInformadoOperador] = useState<number | ''>('');
@@ -566,6 +659,24 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Banner de Notificação de Transferência */}
+      {notificacaoTransferencia && (
+        <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 flex items-center justify-between gap-3 shadow-lg shadow-emerald-950/50 animate-fadeIn">
+          <div className="flex items-center gap-2.5 text-xs font-semibold">
+            <div className="w-7 h-7 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <CheckCircle2 size={16} />
+            </div>
+            <span>{notificacaoTransferencia}</span>
+          </div>
+          <button
+            onClick={() => setNotificacaoTransferencia(null)}
+            className="p-1 rounded-lg hover:bg-white/10 text-emerald-400 hover:text-white cursor-pointer"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* ================= ABA 1: DRE CONSOLIDADO & CASCATA CONTÁBIL ================= */}
       {activeTab === 'dre' && (
@@ -1741,12 +1852,25 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
               <p className="text-xs text-slate-400">Controle rigoroso de faturas mensais, prazos de vencimento, pagamentos quitados e comprovantes anexos.</p>
             </div>
 
-            <button
-              onClick={onOpenNovaDespesaFixa}
-              className="px-4 py-2.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-600/20 cursor-pointer transition"
-            >
-              <Plus size={16} /> Cadastrar Nova Conta da Loja
-            </button>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <button
+                id="btn-transferencia-contas-mes"
+                onClick={() => {
+                  setContaOrigemPreSelecionadaId(undefined);
+                  setModalTransferenciaOpen(true);
+                }}
+                className="px-4 py-2.5 rounded-2xl bg-white/5 hover:bg-white/10 text-purple-300 hover:text-white border border-purple-500/30 font-bold text-xs flex items-center gap-2 cursor-pointer transition shadow"
+              >
+                <ArrowLeftRight size={15} /> Transferência entre Contas
+              </button>
+
+              <button
+                onClick={onOpenNovaDespesaFixa}
+                className="px-4 py-2.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-600/20 cursor-pointer transition"
+              >
+                <Plus size={16} /> Cadastrar Nova Conta da Loja
+              </button>
+            </div>
           </div>
 
           {/* KPI Cards */}
@@ -1828,15 +1952,28 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h4 className="font-extrabold text-white text-base">Contas Bancárias, Caixas & Capital de Giro</h4>
-              <p className="text-xs text-slate-400">Controle de saldos bancários, caixas físicos e patrimônio investido em estoque de veículos.</p>
+              <p className="text-xs text-slate-400">Controle de saldos bancários, transferências internas/terceiros e extrato unificado de liquidez.</p>
             </div>
 
-            <button
-              onClick={handleOpenNovaConta}
-              className="px-4 py-2.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-600/20 cursor-pointer transition"
-            >
-              <Plus size={16} /> Nova Conta Bancária / Caixa
-            </button>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <button
+                id="btn-nova-transferencia-bancos"
+                onClick={() => {
+                  setContaOrigemPreSelecionadaId(undefined);
+                  setModalTransferenciaOpen(true);
+                }}
+                className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold text-xs flex items-center gap-2 shadow-lg shadow-purple-600/30 cursor-pointer transition"
+              >
+                <ArrowLeftRight size={16} /> Nova Transferência
+              </button>
+
+              <button
+                onClick={handleOpenNovaConta}
+                className="px-4 py-2.5 rounded-2xl bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition"
+              >
+                <Plus size={16} /> Nova Conta Bancária / Caixa
+              </button>
+            </div>
           </div>
 
           {/* Cards de Saldo Global */}
@@ -1870,12 +2007,14 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
               <p className="text-xs text-slate-400 max-w-md mx-auto">
                 Cadastre as contas correntes PJ, caixas da gaveta da loja ou fundos de garantia para acompanhar o saldo real da empresa.
               </p>
-              <button
-                onClick={handleOpenNovaConta}
-                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer mt-2"
-              >
-                <Plus size={14} /> Adicionar Minha Primeira Conta
-              </button>
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <button
+                  onClick={handleOpenNovaConta}
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus size={14} /> Adicionar Minha Primeira Conta
+                </button>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1899,6 +2038,17 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                     </div>
                     <div className="flex items-center justify-end gap-1.5 opacity-80 group-hover:opacity-100 transition">
                       <button
+                        onClick={() => {
+                          setContaOrigemPreSelecionadaId(conta.id);
+                          setModalTransferenciaOpen(true);
+                        }}
+                        className="px-2 py-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 hover:text-white cursor-pointer flex items-center gap-1 text-[11px] font-bold"
+                        title="Transferir a partir desta conta"
+                      >
+                        <ArrowLeftRight size={13} />
+                        <span className="hidden sm:inline">Transferir</span>
+                      </button>
+                      <button
                         onClick={() => handleOpenEditarConta(conta)}
                         className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white cursor-pointer"
                         title="Editar Conta"
@@ -1918,6 +2068,197 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
               ))}
             </div>
           )}
+
+          {/* ================= SEÇÃO: EXTRATO DE MOVIMENTAÇÕES & TRANSFERÊNCIAS ================= */}
+          <div className="bg-[#111116] rounded-3xl border border-white/5 p-5 sm:p-6 space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <FileText size={18} className="text-purple-400" />
+                  <h4 className="font-extrabold text-white text-base">Extrato de Movimentações & Transferências</h4>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Histórico unificado em tempo real de transferências entre contas, pagamentos a terceiros e liquidações.
+                </p>
+              </div>
+
+              {/* Botão de Ação Rápida de Transferência no Extrato */}
+              <button
+                onClick={() => {
+                  setContaOrigemPreSelecionadaId(undefined);
+                  setModalTransferenciaOpen(true);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer self-start md:self-auto transition"
+              >
+                <ArrowLeftRight size={14} /> Nova Transferência
+              </button>
+            </div>
+
+            {/* Barra de Filtros do Extrato */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Busca Texto */}
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar descrição, motivo, terceiro..."
+                  value={buscaExtratoTexto}
+                  onChange={(e) => setBuscaExtratoTexto(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-white placeholder:text-slate-500 outline-none focus:border-purple-500"
+                />
+              </div>
+
+              {/* Filtro por Conta */}
+              <div>
+                <select
+                  value={filtroExtratoConta}
+                  onChange={(e) => setFiltroExtratoConta(e.target.value)}
+                  className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-slate-200 outline-none focus:border-purple-500 cursor-pointer"
+                >
+                  <option value="todas">🏦 Todas as Contas e Caixas</option>
+                  {contasBancarias.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nome} ({formatCurrency(c.saldo)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro por Tipo */}
+              <div>
+                <select
+                  value={filtroExtratoTipo}
+                  onChange={(e) => setFiltroExtratoTipo(e.target.value)}
+                  className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-slate-200 outline-none focus:border-purple-500 cursor-pointer"
+                >
+                  <option value="todos">📋 Todos os Tipos de Lançamento</option>
+                  <option value="Transferência">🔄 Apenas Transferências</option>
+                  <option value="Receita">🟢 Receitas / Entradas</option>
+                  <option value="Despesa">🔴 Despesas / Saídas</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Tabela de Extrato */}
+            {movimentacoesFiltradas.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-black/30 border border-dashed border-white/10 text-center space-y-2">
+                <ArrowLeftRight size={28} className="mx-auto text-slate-500" />
+                <p className="text-xs font-semibold text-slate-300">
+                  Nenhuma movimentação encontrada no extrato com os filtros atuais.
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Clique em "Nova Transferência" para registrar transferências entre contas bancárias ou para terceiros.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-white/5">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-[#16171f] text-slate-400 uppercase font-semibold border-b border-white/5">
+                      <th className="py-3 px-3.5">Data</th>
+                      <th className="py-3 px-3.5">Conta</th>
+                      <th className="py-3 px-3.5">Tipo</th>
+                      <th className="py-3 px-3.5">Descrição / Motivo</th>
+                      <th className="py-3 px-3.5">Canal</th>
+                      <th className="py-3 px-3.5 text-right">Valor</th>
+                      <th className="py-3 px-3.5 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 font-sans">
+                    {movimentacoesFiltradas.map((mov) => {
+                      const isTransf = mov.tipo === 'Transferência';
+                      const isReceita = mov.tipo === 'Receita';
+                      const isDebitoTransf = isTransf && (
+                        mov.descricao?.toLowerCase().includes('enviada') ||
+                        mov.descricao?.toLowerCase().includes('terceiro') ||
+                        mov.motivo?.toLowerCase().includes('débito')
+                      );
+
+                      return (
+                        <tr key={mov.id} className="hover:bg-white/[0.02] transition">
+                          {/* Data */}
+                          <td className="py-3 px-3.5 whitespace-nowrap text-slate-300 font-mono text-[11px]">
+                            {mov.data ? (mov.data.includes('-') ? formatDate(mov.data) : mov.data) : '—'}
+                          </td>
+
+                          {/* Conta */}
+                          <td className="py-3 px-3.5 whitespace-nowrap">
+                            <span className="font-bold text-white block">{mov.contaNome || 'Conta Geral'}</span>
+                          </td>
+
+                          {/* Tipo Badge */}
+                          <td className="py-3 px-3.5 whitespace-nowrap">
+                            {isTransf ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-bold">
+                                <ArrowLeftRight size={10} /> Transferência
+                              </span>
+                            ) : isReceita ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold">
+                                <ArrowDownRight size={10} /> Receita
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold">
+                                <ArrowUpRight size={10} /> Despesa
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Descrição / Motivo */}
+                          <td className="py-3 px-3.5">
+                            <div className="space-y-0.5 max-w-md">
+                              <p className="text-slate-200 font-medium leading-snug">{mov.descricao}</p>
+                              {mov.isTerceiro && mov.terceiroNome && (
+                                <span className="inline-block text-[10px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-semibold mr-1.5">
+                                  Terceiro: {mov.terceiroNome}
+                                </span>
+                              )}
+                              {mov.motivo && (
+                                <p className="text-[11px] text-slate-400 italic">
+                                  Motivo: {mov.motivo}
+                                </p>
+                              )}
+                              {mov.criadoPor && (
+                                <p className="text-[10px] text-slate-500">Por: {mov.criadoPor}</p>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Canal / Forma */}
+                          <td className="py-3 px-3.5 whitespace-nowrap text-slate-400 text-[11px]">
+                            {mov.formaPagamento || 'PIX / Transf.'}
+                          </td>
+
+                          {/* Valor */}
+                          <td className="py-3 px-3.5 whitespace-nowrap text-right font-mono font-bold text-xs">
+                            {isReceita || (!isDebitoTransf && isTransf && mov.descricao?.includes('recebida')) ? (
+                              <span className="text-emerald-400">
+                                + {formatCurrency(mov.valor)}
+                              </span>
+                            ) : (
+                              <span className="text-rose-400">
+                                - {formatCurrency(mov.valor)}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Ações */}
+                          <td className="py-3 px-3.5 whitespace-nowrap text-center">
+                            <button
+                              onClick={() => handleDeleteMovimentacao(mov.id)}
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
+                              title="Excluir do extrato"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
 
           {/* Modal Adicionar/Editar Conta */}
           {modalContaOpen && (
@@ -2112,6 +2453,21 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {/* Modal de Transferência entre Contas / Terceiros */}
+      {modalTransferenciaOpen && (
+        <ModalTransferenciaEntreContas
+          isOpen={modalTransferenciaOpen}
+          onClose={() => {
+            setModalTransferenciaOpen(false);
+            setContaOrigemPreSelecionadaId(undefined);
+          }}
+          contasBancarias={contasBancarias}
+          contaOrigemPreSelecionadaId={contaOrigemPreSelecionadaId}
+          currentUser={currentUser}
+          onConfirmarTransferencia={handleConfirmarTransferencia}
+        />
       )}
     </div>
   );

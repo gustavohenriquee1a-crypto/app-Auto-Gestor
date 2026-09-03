@@ -41,7 +41,9 @@ import {
   Send,
   Phone,
   ArrowUpRight,
-  Wrench
+  Wrench,
+  ArrowLeftRight,
+  X
 } from 'lucide-react';
 import {
   Veiculo,
@@ -50,11 +52,18 @@ import {
   DespesaFixa,
   FornecedorPrestador,
   ContaBancariaCaixa,
-  Usuario
+  Usuario,
+  VendaVeiculo
 } from '../types';
+import {
+  executarTransferenciaEntreContasFirestore,
+  ParametrosTransferencia
+} from '../services/firestoreService';
+import { ModalTransferenciaEntreContas } from './ModalTransferenciaEntreContas';
 
 interface ContasPagarViewProps {
   veiculos: Veiculo[];
+  vendas?: VendaVeiculo[];
   despesasFixas?: DespesaFixa[];
   fornecedores?: FornecedorPrestador[];
   contasBancarias?: ContaBancariaCaixa[];
@@ -105,6 +114,7 @@ export interface DespesaUnificadaItem {
   valor: number;
   dataCompetencia: string;
   dataVencimento?: string;
+  dataLiberacao?: string;
   statusPagamento: 'Pago' | 'Pendente';
   dataPagamento?: string;
   formaPagamento?: string;
@@ -117,6 +127,7 @@ export interface DespesaUnificadaItem {
   
   // Específico de Chassi / Veículo
   veiculo?: Veiculo;
+  venda?: VendaVeiculo;
   veiculoId?: string;
   placa?: string;
   chassi?: string;
@@ -155,6 +166,7 @@ export interface ExtratoParceiroResumo {
 
 export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
   veiculos,
+  vendas = [],
   despesasFixas = [],
   fornecedores = [],
   contasBancarias = [],
@@ -169,6 +181,21 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
 }) => {
   // Aba Ativa Principal: Títulos/Faturas vs Agrupado por Fornecedor (Fechamento & Lote)
   const [activeTabContas, setActiveTabContas] = useState<'titulos' | 'agrupado_fornecedor'>('titulos');
+
+  // Modal de Transferência entre Contas
+  const [modalTransferenciaOpen, setModalTransferenciaOpen] = useState(false);
+  const [notifTransferencia, setNotifTransferencia] = useState<string | null>(null);
+
+  const handleConfirmarTransferencia = async (params: ParametrosTransferencia) => {
+    const res = await executarTransferenciaEntreContasFirestore(params);
+    const valorFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(params.valor);
+    if (params.isTerceiro) {
+      setNotifTransferencia(`Transferência de ${valorFmt} realizada para o terceiro ${params.terceiroDestinoNome}!`);
+    } else {
+      setNotifTransferencia(`Transferência de ${valorFmt} realizada de ${res.contaOrigemAtualizada.nome} para ${res.contaDestinoAtualizada?.nome}!`);
+    }
+    setTimeout(() => setNotifTransferencia(null), 6000);
+  };
 
   // Estados de Filtros e Busca Avançada - Aba Títulos Individuais
   const [searchTerm, setSearchTerm] = useState('');
@@ -217,16 +244,50 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
 
     // A) Despesas por Chassi (Veículos)
     veiculos.forEach((v) => {
-      const isCarroVendido = v.status === 'Vendido' || v.status_estoque === 'Vendido';
+      // Buscar venda correspondente tanto pelo objeto embutido quanto pelo array global de vendas
+      const vendaCorrespondente =
+        v.venda ||
+        (vendas &&
+          vendas.find(
+            (vd) =>
+              (vd.veiculoId && vd.veiculoId === v.id) ||
+              (vd.placa && v.placa && vd.placa.trim().toUpperCase() === v.placa.trim().toUpperCase()) ||
+              (vd.chassi && v.chassi && vd.chassi.trim().toUpperCase() === v.chassi.trim().toUpperCase())
+          ));
+
+      const isCarroVendido =
+        v.status === 'Vendido' ||
+        v.status_estoque === 'Vendido' ||
+        Boolean(vendaCorrespondente) ||
+        Boolean(v.dataVenda);
+
+      const dataVenda = vendaCorrespondente?.dataVenda || v.dataVenda;
 
       if (v.despesas && Array.isArray(v.despesas)) {
         v.despesas.forEach((d) => {
+          const descLower = (d.descricao || '').toLowerCase();
+          const obsLower = (d.observacoes || '').toLowerCase();
+          const catLower = (d.categoria || '').toLowerCase();
+
+          // Identificar se é provisão condicional 'No Ato da Venda'
           const isNoAtoVenda =
             d.exigibilidade === 'no_ato_venda' ||
+            d.exigibilidade === 'condicional' ||
+            (typeof d.exigibilidade === 'string' && d.exigibilidade.toLowerCase().includes('venda')) ||
+            descLower.includes('no ato da venda') ||
+            descLower.includes('provisão condicional') ||
+            descLower.includes('provisao condicional') ||
+            obsLower.includes('no ato da venda') ||
+            obsLower.includes('provisão') ||
+            obsLower.includes('provisao') ||
+            d.tipoComissaoOrigem === 'manual_previsao' ||
             (!d.exigibilidade &&
-              ['Cartório / Serviços Notariais', 'Documentação / Despachante', 'Comissão'].includes(
-                d.categoria
+              ['cartório', 'notariais', 'despachante', 'documentação', 'comissão'].some((c) =>
+                catLower.includes(c)
               ));
+
+          const dataLiberacao = isCarroVendido ? (dataVenda || d.data) : undefined;
+          const dataVencimentoEfetiva = d.dataVencimento || (isNoAtoVenda && isCarroVendido ? (dataVenda || d.data) : d.data);
 
           lista.push({
             id: d.id,
@@ -235,7 +296,8 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
             categoria: d.categoria,
             valor: Number(d.valor || 0),
             dataCompetencia: d.data,
-            dataVencimento: d.dataVencimento || d.data,
+            dataVencimento: dataVencimentoEfetiva,
+            dataLiberacao,
             statusPagamento: d.statusPagamento || 'Pago',
             dataPagamento: d.dataPagamento,
             formaPagamento: d.formaPagamento,
@@ -245,7 +307,11 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
             fornecedorId: d.fornecedorId,
             nfNumero: d.nfNumero,
             observacoes: d.observacoes,
-            veiculo: v,
+            veiculo: {
+              ...v,
+              venda: vendaCorrespondente || v.venda,
+            },
+            venda: vendaCorrespondente,
             veiculoId: v.id,
             placa: d.placa || v.placa,
             chassi: d.chassi || v.chassi,
@@ -286,7 +352,7 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
     });
 
     return lista;
-  }, [veiculos, despesasFixas]);
+  }, [veiculos, vendas, despesasFixas]);
 
   // Contagem e valores de Despesas Condicionais 'No Ato da Venda' retidas (Carro ainda em estoque)
   const previsoesNoAtoVendaPendentes = useMemo(() => {
@@ -496,9 +562,10 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
         }
 
         // 6. Filtro Data / Período
-        const dataRef = item.dataPagamento || item.dataVencimento || item.dataCompetencia || '';
+        const dataRef = item.dataPagamento || item.dataLiberacao || item.dataVencimento || item.dataCompetencia || '';
         if (filtroPeriodo === 'mes_atual') {
-          if (!dataRef.startsWith(mesAtualPrefix)) return false;
+          const isLiberadaPendente = item.isNoAtoVenda && item.isCarroVendido && item.statusPagamento === 'Pendente';
+          if (!dataRef.startsWith(mesAtualPrefix) && !isLiberadaPendente) return false;
         } else if (filtroPeriodo === 'ano_atual') {
           if (!dataRef.startsWith(anoAtualPrefix)) return false;
         } else if (filtroPeriodo === 'ultimos_30') {
@@ -573,9 +640,9 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
   const extratoParceiros: ExtratoParceiroResumo[] = useMemo(() => {
     const map = new Map<string, ExtratoParceiroResumo>();
 
-    // Registrar fornecedores cadastrados
+    // Registrar fornecedores cadastrados inicialmente com chave canônica f.id || f.nome
     fornecedores.forEach((f) => {
-      const key = f.id || f.nome;
+      const key = f.id || f.nome.trim().toLowerCase();
       map.set(key, {
         fornecedorId: f.id,
         nome: f.nome,
@@ -602,39 +669,48 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
 
     // Distribuir todas as despesas unificadas
     todasDespesasUnificadas.forEach((item) => {
-      // Filtrar pelo período de fechamento selecionado
+      // Regra de Período para o Fechamento:
+      // Se for condicional pós-venda, a data relevante é a data de liberação (data da venda)
+      const dataRef = item.dataLiberacao || item.dataVencimento || item.dataCompetencia || '';
+      const itemMes = dataRef.substring(0, 7);
+
       if (filtroPeriodoFechamento === 'mes_atual') {
-        const itemMes = (item.dataCompetencia || item.dataVencimento || '').substring(0, 7);
-        if (itemMes && itemMes !== anoMesAtualRef) return;
+        const isExigivelPendenteAgora = item.statusPagamento === 'Pendente' && !(item.isNoAtoVenda && !item.isCarroVendido);
+        if (itemMes !== anoMesAtualRef && !isExigivelPendenteAgora) return;
       } else if (filtroPeriodoFechamento === 'mes_anterior') {
-        const itemMes = (item.dataCompetencia || item.dataVencimento || '').substring(0, 7);
-        if (itemMes && itemMes !== anoMesAnteriorRef) return;
+        if (itemMes !== anoMesAnteriorRef) return;
       } else if (filtroPeriodoFechamento === 'personalizado') {
-        const itemData = item.dataCompetencia || item.dataVencimento || '';
-        if (dataFechamentoInicio && itemData < dataFechamentoInicio) return;
-        if (dataFechamentoFim && itemData > dataFechamentoFim) return;
+        if (dataFechamentoInicio && dataRef < dataFechamentoInicio) return;
+        if (dataFechamentoFim && dataRef > dataFechamentoFim) return;
       }
 
-      let key = item.fornecedorId;
-      if (!key && item.fornecedorNome) {
-        const fByName = fornecedores.find(
-          (f) => f.nome.trim().toLowerCase() === item.fornecedorNome?.trim().toLowerCase()
-        );
-        if (fByName) {
-          key = fByName.id || fByName.nome;
-        } else {
-          key = item.fornecedorNome.trim();
-        }
-      }
+      const rawNome = (item.fornecedorNome || '').trim();
+      const fById = item.fornecedorId ? fornecedores.find((f) => f.id === item.fornecedorId) : undefined;
+      const fByName = rawNome ? fornecedores.find((f) => f.nome.trim().toLowerCase() === rawNome.toLowerCase()) : undefined;
+      const matchedF = fById || fByName;
 
-      if (!key) {
-        key = 'Fornecedores Avulsos / Diversos';
+      let key: string;
+      let displayNome: string;
+      let fId: string | undefined;
+
+      if (matchedF) {
+        key = matchedF.id || matchedF.nome.trim().toLowerCase();
+        displayNome = matchedF.nome;
+        fId = matchedF.id;
+      } else if (rawNome) {
+        key = rawNome.toLowerCase();
+        displayNome = rawNome;
+        fId = undefined;
+      } else {
+        key = '__fornecedores_avulsos__';
+        displayNome = 'Fornecedores Avulsos / Diversos';
+        fId = undefined;
       }
 
       if (!map.has(key)) {
         map.set(key, {
-          fornecedorId: item.fornecedorId,
-          nome: item.fornecedorNome || 'Fornecedor Parceiro',
+          fornecedorId: fId,
+          nome: displayNome,
           categoria: item.categoria,
           tipoCobranca: 'Variável por Serviço',
           totalGeral: 0,
@@ -976,6 +1052,16 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
             Imprimir Relatório
           </button>
 
+          <button
+            type="button"
+            id="btn-transferencia-contas-pagar"
+            onClick={() => setModalTransferenciaOpen(true)}
+            className="px-4 py-2.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow"
+          >
+            <ArrowLeftRight size={15} />
+            Transferência entre Contas
+          </button>
+
           {onOpenNovaDespesaFixa && (
             <button
               type="button"
@@ -997,6 +1083,24 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Banner de Notificação de Transferência */}
+      {notifTransferencia && (
+        <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 flex items-center justify-between gap-3 shadow-lg shadow-emerald-950/50 animate-fadeIn">
+          <div className="flex items-center gap-2.5 text-xs font-semibold">
+            <div className="w-7 h-7 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <CheckCircle2 size={16} />
+            </div>
+            <span>{notifTransferencia}</span>
+          </div>
+          <button
+            onClick={() => setNotifTransferencia(null)}
+            className="p-1 rounded-lg hover:bg-white/10 text-emerald-400 hover:text-white cursor-pointer"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* 2. KPI Cards Resumo */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2138,16 +2242,24 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                                         ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
                                         : isRetido
                                         ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                                        : item.isNoAtoVenda && item.isCarroVendido
+                                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                                         : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                                     }`}>
-                                      {isRetido ? 'No Ato da Venda (Aguardando Venda)' : item.statusPagamento}
+                                      {item.statusPagamento === 'Pago'
+                                        ? 'Pago'
+                                        : isRetido
+                                        ? '⏳ No Ato da Venda (Aguardando Venda)'
+                                        : item.isNoAtoVenda && item.isCarroVendido
+                                        ? '🔥 Liberado Pós-Venda'
+                                        : item.statusPagamento}
                                     </span>
                                   </div>
 
                                   <div className="flex items-center gap-2 text-[11px] text-slate-400 flex-wrap">
                                     {item.placa ? (
                                       <span className="text-slate-200 font-mono font-bold bg-white/5 px-1.5 py-0.5 rounded">
-                                        🚗 Placa {item.placa} {item.modelo ? `• ${item.modelo}` : ''}
+                                        🚗 Placa {item.placa} {item.modelo ? `• ${item.modelo}` : ''} {item.isCarroVendido ? '(Veículo Vendido)' : ''}
                                       </span>
                                     ) : (
                                       <span className="text-slate-300">🏢 Despesa Operacional Loja</span>
@@ -2442,9 +2554,16 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                             className="w-4 h-4 rounded text-amber-500 accent-amber-500 cursor-pointer"
                           />
                           <div>
-                            <p className="font-bold text-xs text-white line-clamp-1">{subItem.descricao}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="font-bold text-xs text-white line-clamp-1">{subItem.descricao}</p>
+                              {subItem.isNoAtoVenda && subItem.isCarroVendido && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  🔥 Liberado Pós-Venda
+                                </span>
+                              )}
+                            </div>
                             <span className="text-[10px] text-slate-400">
-                              {subItem.placa ? `🚗 ${subItem.placa}` : '🏢 Loja'} • Competência: {subItem.dataCompetencia}
+                              {subItem.placa ? `🚗 ${subItem.placa}${subItem.modelo ? ` • ${subItem.modelo}` : ''}` : '🏢 Loja'} • Competência: {subItem.dataCompetencia}
                             </span>
                           </div>
                         </div>
@@ -2560,6 +2679,17 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Modal de Transferência entre Contas / Terceiros */}
+      {modalTransferenciaOpen && (
+        <ModalTransferenciaEntreContas
+          isOpen={modalTransferenciaOpen}
+          onClose={() => setModalTransferenciaOpen(false)}
+          contasBancarias={contasBancarias || []}
+          currentUser={currentUser}
+          onConfirmarTransferencia={handleConfirmarTransferencia}
+        />
       )}
     </div>
   );

@@ -21,7 +21,7 @@ import {
 import { Veiculo, VendaVeiculo, Usuario } from '../types';
 import { formatCurrency, formatDate, formatKm } from '../utils/formatters';
 import { imprimirElemento, baixarElementoComoPdf } from '../utils/printPdfUtils';
-import { subscribeConfiguracoesLoja, getConfiguracaoLojaFirestore } from '../services/firestoreService';
+import { subscribeConfiguracoesLoja, getConfiguracaoLojaFirestore, saveConfiguracaoLojaFirestore } from '../services/firestoreService';
 
 interface ModalContratoVendaProps {
   isOpen: boolean;
@@ -45,6 +45,34 @@ export const ModalContratoVenda: React.FC<ModalContratoVendaProps> = ({
 
   // Logo Oficial Global Fixa no Contrato (Definida pelo Admin no Firestore documento 'geral')
   const [contractLogo, setContractLogo] = useState<string>('');
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
+  const isAdmin = currentUser?.role === 'admin';
+
+  const handleContractLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!isAdmin) {
+      alert('Apenas usuários com perfil Administrador podem alterar o logotipo oficial da loja.');
+      return;
+    }
+    if (file.size > 2.5 * 1024 * 1024) {
+      alert('O logotipo deve ter no máximo 2.5MB.');
+      return;
+    }
+    try {
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        const base64Url = ev.target?.result as string;
+        if (base64Url) {
+          setContractLogo(base64Url);
+          await saveConfiguracaoLojaFirestore({ logoUrl: base64Url });
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Erro ao atualizar logotipo da loja:', err);
+    }
+  };
 
   useEffect(() => {
     // Busca inicial imediata no Firestore (coleção 'configuracoes_loja', documento 'geral')
@@ -547,17 +575,38 @@ export const ModalContratoVenda: React.FC<ModalContratoVendaProps> = ({
             {/* Header Documento */}
             <div className="border-b-2 border-slate-900 pb-4 mb-5 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
-                {contractLogo ? (
-                  <img
-                    src={contractLogo}
-                    alt="Logo da Loja"
-                    className="w-14 h-14 object-contain rounded-lg border border-slate-200 p-0.5 shrink-0 bg-white"
-                  />
-                ) : (
-                  <div className="w-12 h-12 rounded-lg bg-slate-900 text-white flex items-center justify-center font-black text-xl shrink-0">
-                    TF
-                  </div>
-                )}
+                <div className="relative group shrink-0">
+                  {contractLogo ? (
+                    <img
+                      src={contractLogo}
+                      alt="Logo da Loja"
+                      className="w-14 h-14 object-contain rounded-lg border border-slate-200 p-0.5 bg-white"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-lg bg-slate-900 text-white flex items-center justify-center font-black text-xl">
+                      TF
+                    </div>
+                  )}
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => logoFileInputRef.current?.click()}
+                      title="Admin: Atualizar logotipo oficial da loja para todos os contratos e usuários"
+                      className="no-print absolute inset-0 bg-black/75 opacity-0 group-hover:opacity-100 flex items-center justify-center rounded-lg text-white text-[9px] font-bold transition cursor-pointer"
+                    >
+                      Trocar
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <input
+                      ref={logoFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleContractLogoUpload}
+                    />
+                  )}
+                </div>
                 <div>
                   <h1 className="text-xl font-black tracking-tight text-slate-950 uppercase">
                     {DADOS_LOJA.razaoSocial}

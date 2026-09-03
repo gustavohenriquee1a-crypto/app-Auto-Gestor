@@ -28,11 +28,12 @@ import {
   X,
   Compass
 } from 'lucide-react';
-import { Veiculo, Usuario } from '../types';
+import { Veiculo, Usuario, VendaVeiculo } from '../types';
 import { formatCurrency, formatKm, formatDate, calculateAging, calculateCustoTotal } from '../utils/formatters';
 
 interface CatalogoVendasViewProps {
   veiculos: Veiculo[];
+  vendas?: VendaVeiculo[];
   currentUser: Usuario | null;
   onOpenVenda: (veiculo: Veiculo) => void;
   onOpenDossie?: (veiculo: Veiculo) => void;
@@ -41,13 +42,14 @@ interface CatalogoVendasViewProps {
 
 export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
   veiculos,
+  vendas = [],
   currentUser,
   onOpenVenda,
   onOpenDossie,
   onOpenTestDrive,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'Todos' | 'Disponível' | 'Em Preparação'>('Todos');
+  const [statusFilter, setStatusFilter] = useState<'Todos' | 'Disponível' | 'Em Preparação' | 'Vendidos'>('Todos');
   const [marcaFilter, setMarcaFilter] = useState<string>('Todas');
   const [combustivelFilter, setCombustivelFilter] = useState<string>('Todos');
   const [anoMin, setAnoMin] = useState<number | ''>('');
@@ -60,37 +62,88 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
 
   // Check user permissions
   const isVendedor = currentUser?.role === 'vendedor';
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'superadmin' || currentUser?.role === 'gerente';
   const canSell = currentUser?.permissoes?.venderCarro !== false;
   const canViewCosts = (currentUser?.permissoes?.verCustosAquisicao === true || currentUser?.role === 'admin') && !isVendedor;
   const isComissaoFixa = currentUser?.tipoComissaoPadrao === 'fixo';
   const valorComissaoFixa = currentUser?.comissaoPadraoFixo ?? 500;
   const commissionRate = currentUser?.comissaoPadraoPercent || 1.5;
 
+  // Helper para identificar a venda vinculada ao veículo (via v.venda ou lista global de vendas)
+  const getVendaForVeiculo = (v: Veiculo): VendaVeiculo | undefined => {
+    if (v.venda) return v.venda;
+    if (!vendas || vendas.length === 0) return undefined;
+    return vendas.find((vd) =>
+      vd.veiculoId === v.id ||
+      (vd.placa && v.placa && vd.placa.toUpperCase().trim() === v.placa.toUpperCase().trim()) ||
+      (vd.chassi && v.chassi && vd.chassi.toUpperCase().trim() === v.chassi.toUpperCase().trim())
+    );
+  };
+
+  // Identifica com precisão se o veículo já foi vendido
+  const checkIsVeiculoVendido = (v: Veiculo): boolean => {
+    if (v.status === 'Vendido' || v.status_estoque === 'Vendido') return true;
+    if (Boolean(v.venda)) return true;
+    return Boolean(getVendaForVeiculo(v));
+  };
+
+  // Verifica se o usuário conectado foi quem realizou a venda deste veículo
+  const checkIsMinhaVenda = (v: Veiculo, vendaParam?: VendaVeiculo): boolean => {
+    if (!currentUser) return false;
+    const targetVenda = vendaParam || getVendaForVeiculo(v);
+    if (!targetVenda) return false;
+
+    // Verificar ID do vendedor
+    if (currentUser.uid && targetVenda.vendedorId && targetVenda.vendedorId === currentUser.uid) {
+      return true;
+    }
+    // Verificar email do vendedor
+    if (currentUser.email && targetVenda.vendedorEmail && targetVenda.vendedorEmail.toLowerCase() === currentUser.email.toLowerCase()) {
+      return true;
+    }
+    // Verificar nome do vendedor
+    if (currentUser.displayName && targetVenda.vendedorNome && targetVenda.vendedorNome.trim().toLowerCase() === currentUser.displayName.trim().toLowerCase()) {
+      return true;
+    }
+    return false;
+  };
+
   // Filter vehicles eligible for the sales catalog:
-  // - Ocultar IMEDIATAMENTE veículos vendidos (status_estoque === 'Vendido', status === 'Vendido' ou com venda vinculada)
-  // - O vendedor só deve ver veículos disponíveis ('No Pátio') ou 'Em Preparação'.
+  // - REGRA DE NEGÓCIO: Se o carro foi vendido:
+  //   * Administradores têm visão geral de todas as vendas da loja
+  //   * Vendedores vêem APENAS os veículos que eles próprios venderam
+  //   * Para os demais vendedores, o veículo vendido FICA INVISÍVEL no catálogo (não pode mais ser ofertado nem visualizado)
   // - Veículos 'Em Trânsito' ou 'Alugado' não entram no Catálogo Comercial de Vendas.
   const veiculosCatalogo = useMemo(() => {
     return veiculos.filter((v) => {
-      // 1. EXCLUIR veículos vendidos de forma estrita
-      if (
-        v.status_estoque === 'Vendido' ||
-        v.status === 'Vendido' ||
-        Boolean(v.venda)
-      ) {
-        return false;
-      }
-
-      // 2. Veículos 'Em Trânsito' ou 'Alugado' NUNCA aparecem no catálogo comercial
+      // 1. Veículos 'Em Trânsito' ou 'Alugado' NUNCA aparecem no catálogo comercial
       if (v.status_estoque === 'Em Trânsito' || v.status === 'Alugado') {
         return false;
       }
 
-      // 3. Exibir APENAS veículos cujo status_estoque seja DIFERENTE de 'Vendido': 'No Pátio' ou 'Em Preparação'
+      const isVendido = checkIsVeiculoVendido(v);
+      const venda = getVendaForVeiculo(v);
+
+      if (isVendido) {
+        // Se foi vendido:
+        // Admin vê todas as vendas (visão geral)
+        if (isAdmin) {
+          return true;
+        }
+        // Vendedor que realizou a venda vê o veículo vendido por ele
+        if (checkIsMinhaVenda(v, venda)) {
+          return true;
+        }
+        // Para qualquer outro vendedor/usuário, fica completamente oculto do catálogo
+        return false;
+      }
+
+      // Se NÃO foi vendido:
+      // Exibir veículos disponíveis para venda: 'No Pátio' ou 'Em Preparação'
       const statusEstoque = v.status_estoque || (v.status === 'Em Preparação' ? 'Em Preparação' : 'No Pátio');
       return statusEstoque === 'No Pátio' || statusEstoque === 'Em Preparação';
     });
-  }, [veiculos]);
+  }, [veiculos, vendas, currentUser, isAdmin]);
 
   // Extract unique brands with vehicle counts
   const uniqueBrands = useMemo(() => {
@@ -169,7 +222,16 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
           v.placa.toLowerCase().includes(searchTerm.toLowerCase()) ||
           (v.cor && v.cor.toLowerCase().includes(searchTerm.toLowerCase()));
 
-        const matchesStatus = statusFilter === 'Todos' || v.status === statusFilter;
+        const isVendido = checkIsVeiculoVendido(v);
+        const isPrep = (v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação') && !isVendido;
+        const isPatio = (v.status === 'Disponível' || v.status_estoque === 'No Pátio') && !isPrep && !isVendido;
+
+        const matchesStatus =
+          statusFilter === 'Todos' ||
+          (statusFilter === 'Disponível' && isPatio) ||
+          (statusFilter === 'Em Preparação' && isPrep) ||
+          (statusFilter === 'Vendidos' && isVendido);
+
         const matchesMarca = marcaFilter === 'Todas' || v.marca === marcaFilter;
         const matchesCombustivel = combustivelFilter === 'Todos' || v.combustivel === combustivelFilter;
 
@@ -178,7 +240,8 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
         const matchesAnoMax = anoMax === '' || v.ano <= Number(anoMax);
 
         // Price filter (based on suggested sale price or FIPE)
-        const effectivePrice = v.valorVendaSugerido || v.valorFipe || 50000;
+        const venda = getVendaForVeiculo(v);
+        const effectivePrice = isVendido && venda?.valorVenda ? venda.valorVenda : (v.valorVendaSugerido || v.valorFipe || 50000);
         const matchesPrecoMin = precoMin === '' || effectivePrice >= Number(precoMin);
         const matchesPrecoMax = precoMax === '' || effectivePrice <= Number(precoMax);
 
@@ -194,8 +257,13 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
         );
       })
       .sort((a, b) => {
-        const priceA = a.valorVendaSugerido || a.valorFipe || 0;
-        const priceB = b.valorVendaSugerido || b.valorFipe || 0;
+        const isVendidoA = checkIsVeiculoVendido(a);
+        const isVendidoB = checkIsVeiculoVendido(b);
+        const vendaA = getVendaForVeiculo(a);
+        const vendaB = getVendaForVeiculo(b);
+
+        const priceA = isVendidoA && vendaA?.valorVenda ? vendaA.valorVenda : (a.valorVendaSugerido || a.valorFipe || 0);
+        const priceB = isVendidoB && vendaB?.valorVenda ? vendaB.valorVenda : (b.valorVendaSugerido || b.valorFipe || 0);
 
         if (sortOrder === 'preco-asc') return priceA - priceB;
         if (sortOrder === 'preco-desc') return priceB - priceA;
@@ -204,29 +272,44 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
         // Recentes
         return new Date(b.dataEntrada).getTime() - new Date(a.dataEntrada).getTime();
       });
-  }, [veiculosCatalogo, searchTerm, statusFilter, marcaFilter, combustivelFilter, anoMin, anoMax, precoMin, precoMax, sortOrder]);
+  }, [veiculosCatalogo, searchTerm, statusFilter, marcaFilter, combustivelFilter, anoMin, anoMax, precoMin, precoMax, sortOrder, currentUser, vendas]);
 
   // Calculate Catalog KPIs
   const stats = useMemo(() => {
     const totalCount = veiculosCatalogo.length;
-    const disponiveisCount = veiculosCatalogo.filter(v => v.status === 'Disponível').length;
-    const preparacaoCount = veiculosCatalogo.filter(v => v.status === 'Em Preparação').length;
-    let totalValorEstoque = 0;
+    const vendidos = veiculosCatalogo.filter((v) => checkIsVeiculoVendido(v));
+    const vendidosCount = vendidos.length;
+    const preparacaoCount = veiculosCatalogo.filter((v) => !checkIsVeiculoVendido(v) && (v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação')).length;
+    const disponiveisCount = veiculosCatalogo.filter((v) => !checkIsVeiculoVendido(v) && (v.status === 'Disponível' || v.status_estoque === 'No Pátio') && v.status !== 'Em Preparação' && v.status_estoque !== 'Em Preparação').length;
 
-    veiculosCatalogo.forEach((v) => {
+    let totalValorEstoque = 0;
+    veiculosCatalogo.filter((v) => !checkIsVeiculoVendido(v)).forEach((v) => {
       totalValorEstoque += v.valorVendaSugerido || v.valorFipe || 0;
     });
 
-    const ticketMedio = totalCount > 0 ? totalValorEstoque / totalCount : 0;
+    let totalValorVendido = 0;
+    let totalComissaoVendidos = 0;
+    vendidos.forEach((v) => {
+      const vd = getVendaForVeiculo(v);
+      const val = vd?.valorVenda || v.valorVendaEfetivo || v.valorVendaSugerido || 0;
+      totalValorVendido += val;
+      totalComissaoVendidos += vd?.comissaoValor || 0;
+    });
+
+    const activeShowroomCount = disponiveisCount + preparacaoCount;
+    const ticketMedio = activeShowroomCount > 0 ? totalValorEstoque / activeShowroomCount : 0;
 
     return {
       totalCount,
       disponiveisCount,
       preparacaoCount,
+      vendidosCount,
       totalValorEstoque,
+      totalValorVendido,
+      totalComissaoVendidos,
       ticketMedio,
     };
-  }, [veiculosCatalogo]);
+  }, [veiculosCatalogo, vendas]);
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -251,13 +334,13 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
             <div className="bg-[#111116]/80 backdrop-blur-md p-4 rounded-2xl border border-white/10 text-left shrink-0">
               <div className="flex items-center gap-2 text-xs text-slate-400 font-bold uppercase">
                 <Award size={16} className="text-amber-400" />
-                <span>Vendedor Conectado</span>
+                <span>{isAdmin ? 'Perfil Gerencial / Admin' : 'Vendedor Conectado'}</span>
               </div>
               <p className="text-sm font-bold text-white mt-1 truncate">{currentUser.displayName}</p>
               <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10 text-xs">
                 <span className="text-slate-400">Sua Comissão Padrão:</span>
                 <span className="font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded font-mono">
-                  {commissionRate}%
+                  {isComissaoFixa ? formatCurrency(valorComissaoFixa) : `${commissionRate}%`}
                 </span>
               </div>
             </div>
@@ -266,12 +349,14 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-[#111116] p-5 rounded-2xl border border-white/5 flex items-center justify-between">
           <div>
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Carros Disponíveis</span>
-            <p className="text-2xl font-black text-white mt-1">{stats.totalCount}</p>
-            <span className="text-[11px] text-slate-500">Prontos no pátio da loja</span>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Disponíveis Pátio</span>
+            <p className="text-2xl font-black text-white mt-1">{stats.disponiveisCount + stats.preparacaoCount}</p>
+            <span className="text-[11px] text-slate-500">
+              {stats.disponiveisCount} no pátio • {stats.preparacaoCount} na oficina
+            </span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center font-bold">
             <Car size={24} />
@@ -280,9 +365,9 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
 
         <div className="bg-[#111116] p-5 rounded-2xl border border-white/5 flex items-center justify-between">
           <div>
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Volume do Showroom</span>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Volume Showroom</span>
             <p className="text-2xl font-black text-emerald-400 mt-1">{formatCurrency(stats.totalValorEstoque)}</p>
-            <span className="text-[11px] text-slate-500">Valor somado de venda sugerida</span>
+            <span className="text-[11px] text-slate-500">Total disponível para venda</span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold">
             <DollarSign size={24} />
@@ -293,10 +378,27 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
           <div>
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ticket Médio</span>
             <p className="text-2xl font-black text-purple-400 mt-1">{formatCurrency(stats.ticketMedio)}</p>
-            <span className="text-[11px] text-slate-500">Média por veículo no pátio</span>
+            <span className="text-[11px] text-slate-500">Média por carro disponível</span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center font-bold">
             <TrendingUp size={24} />
+          </div>
+        </div>
+
+        <div className="bg-[#111116] p-5 rounded-2xl border border-white/5 flex items-center justify-between">
+          <div>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              {isAdmin ? 'Total Vendidos (Loja)' : 'Minhas Vendas'}
+            </span>
+            <p className="text-2xl font-black text-amber-400 mt-1">{stats.vendidosCount}</p>
+            <span className="text-[11px] text-slate-500">
+              {isAdmin
+                ? `Total: ${formatCurrency(stats.totalValorVendido)}`
+                : `Comissão: ${formatCurrency(stats.totalComissaoVendidos)}`}
+            </span>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center font-bold">
+            <Award size={24} />
           </div>
         </div>
       </div>
@@ -305,7 +407,7 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
       <div className="bg-[#111116] p-5 rounded-2xl border border-white/5 space-y-4">
         {/* Main Search and Quick Actions */}
         <div className="space-y-3">
-          {/* Status Filter Chips: Todos / Disponíveis / Em Preparação */}
+          {/* Status Filter Chips: Todos / Disponíveis / Em Preparação / Vendidos */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-slate-400 font-semibold uppercase text-[10px] mr-1">Status no Showroom:</span>
             <button
@@ -338,7 +440,18 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
               }`}
             >
               <span className="w-2 h-2 rounded-full bg-amber-400" />
-              🔧 Em Preparação / Pré-Venda ({stats.preparacaoCount})
+              🔧 Em Preparação / Oficina ({stats.preparacaoCount})
+            </button>
+            <button
+              onClick={() => setStatusFilter('Vendidos')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition border flex items-center gap-1.5 ${
+                statusFilter === 'Vendidos'
+                  ? 'bg-purple-600 text-white border-purple-500 shadow-xs'
+                  : 'bg-white/5 text-slate-300 border-white/5 hover:bg-white/10'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-purple-400" />
+              🏁 {isAdmin ? `Todas as Vendas (${stats.vendidosCount})` : `Minhas Vendas (${stats.vendidosCount})`}
             </button>
           </div>
 
@@ -555,19 +668,26 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filteredVeiculos.map((v) => {
+            const isVendido = checkIsVeiculoVendido(v);
+            const venda = getVendaForVeiculo(v);
+            const isMinhaVenda = checkIsMinhaVenda(v, venda);
             const aging = calculateAging(v);
             const custoTotal = calculateCustoTotal(v);
-            const effectivePrice = v.valorVendaSugerido || v.valorFipe || 60000;
-            const isEmPreparacao = v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação';
+            const effectivePrice = isVendido && venda?.valorVenda ? venda.valorVenda : (v.valorVendaSugerido || v.valorFipe || 60000);
+            const isEmPreparacao = (v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação') && !isVendido;
             const dataPrevisaoTermino = v.previsao_termino_preparacao || v.previsaoRetornoOficina;
-            const estimatedCommission = isComissaoFixa ? valorComissaoFixa : (effectivePrice * commissionRate) / 100;
+            const estimatedCommission = isVendido && venda?.comissaoValor !== undefined
+              ? venda.comissaoValor
+              : (isComissaoFixa ? valorComissaoFixa : (effectivePrice * commissionRate) / 100);
             const photoUrl = v.fotoUrl || `https://images.unsplash.com/photo-1541348263662-e0c8de4259ba?w=800&auto=format&fit=crop&q=80`;
 
             return (
               <div
                 key={v.id}
                 className={`rounded-3xl border transition-all duration-300 flex flex-col overflow-hidden shadow-xl hover:shadow-2xl group ${
-                  isEmPreparacao
+                  isVendido
+                    ? 'bg-[#13111c] border-purple-500/40 hover:border-purple-500/70 hover:shadow-purple-500/10'
+                    : isEmPreparacao
                     ? 'bg-[#14120e] border-amber-500/30 hover:border-amber-500/60 hover:shadow-amber-500/10'
                     : 'bg-[#111116] border-white/10 hover:border-blue-500/40 hover:shadow-blue-500/5'
                 }`}
@@ -586,20 +706,30 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
                     <span className="font-mono text-xs font-black bg-black/70 backdrop-blur-md text-white px-2.5 py-1 rounded-lg border border-white/20">
                       {v.placa}
                     </span>
-                    <span
-                      className={`text-[11px] font-black uppercase tracking-wider px-3 py-1 rounded-lg backdrop-blur-md shadow-lg border flex items-center gap-1.5 ${
-                        isEmPreparacao
-                          ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 border-amber-300 font-extrabold animate-pulse'
-                          : 'bg-emerald-500/90 text-white border-emerald-400/40'
-                      }`}
-                    >
-                      {isEmPreparacao ? '🛠️ EM PREPARAÇÃO' : '🟢 NO PÁTIO'}
-                    </span>
+                    {isVendido ? (
+                      <span className="text-[11px] font-black uppercase tracking-wider px-3 py-1 rounded-lg backdrop-blur-md shadow-lg border flex items-center gap-1.5 bg-purple-600/90 text-white border-purple-400/50">
+                        <CheckCircle2 size={13} className="text-purple-300" />
+                        🏁 {isMinhaVenda ? 'VENDIDO POR VOCÊ' : 'VENDIDO'}
+                      </span>
+                    ) : isEmPreparacao ? (
+                      <span className="text-[11px] font-black uppercase tracking-wider px-3 py-1 rounded-lg backdrop-blur-md shadow-lg border flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 border-amber-300 font-extrabold animate-pulse">
+                        🛠️ EM PREPARAÇÃO
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-black uppercase tracking-wider px-3 py-1 rounded-lg backdrop-blur-md shadow-lg border flex items-center gap-1.5 bg-emerald-500/90 text-white border-emerald-400/40">
+                        🟢 NO PÁTIO
+                      </span>
+                    )}
                   </div>
 
                   {/* Commercial Tag / Aging & Location */}
                   <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-white">
-                    {isEmPreparacao ? (
+                    {isVendido ? (
+                      <span className="flex items-center gap-1 bg-purple-950/80 border border-purple-500/40 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] text-purple-200 font-bold">
+                        <CheckCircle2 size={12} className="text-purple-400" />
+                        Vendido em {formatDate(venda?.dataVenda || v.dataVenda || new Date().toISOString())}
+                      </span>
+                    ) : isEmPreparacao ? (
                       <span className="flex items-center gap-1 bg-amber-950/80 border border-amber-500/40 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] text-amber-300 font-bold">
                         <Clock size={12} className="text-amber-400" />
                         {dataPrevisaoTermino ? `Previsão Pátio: ${formatDate(dataPrevisaoTermino)}` : 'Previsão: Em breve'}
@@ -623,6 +753,19 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
                     )}
                   </div>
                 </div>
+
+                {/* Banner Específico para Carro Vendido */}
+                {isVendido && (
+                  <div className="bg-purple-950/30 border-b border-purple-500/30 px-4 py-2 flex items-center justify-between text-[11px] text-purple-200 font-semibold">
+                    <span className="truncate flex items-center gap-1.5">
+                      <Sparkles size={13} className="text-purple-400 shrink-0" />
+                      <span className="truncate">Comprador: <strong>{venda?.compradorNome || 'Cliente'}</strong></span>
+                    </span>
+                    <span className="shrink-0 bg-purple-500/20 px-2 py-0.5 rounded font-mono font-bold text-purple-200 border border-purple-500/30">
+                      {isMinhaVenda ? 'Vendido por você' : (venda?.vendedorNome ? `Vendedor: ${venda.vendedorNome}` : 'Venda confirmada')}
+                    </span>
+                  </div>
+                )}
 
                 {/* Banner Específico de Aviso para Carros Em Preparação */}
                 {isEmPreparacao && (
@@ -673,8 +816,10 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
                   <div className="p-3.5 rounded-2xl bg-[#16171f] border border-white/5 space-y-2">
                     <div className="flex items-baseline justify-between">
                       <div>
-                        <span className="text-[10px] uppercase font-bold text-slate-400">Preço Sugerido de Venda</span>
-                        <p className="text-xl font-black text-white">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">
+                          {isVendido ? 'Valor Efetivo da Venda' : 'Preço Sugerido de Venda'}
+                        </span>
+                        <p className={`text-xl font-black ${isVendido ? 'text-purple-300' : 'text-white'}`}>
                           {formatCurrency(effectivePrice)}
                         </p>
                       </div>
@@ -690,19 +835,22 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
                     <div className="pt-2 border-t border-white/5 flex items-center justify-between text-xs">
                       <span className="text-slate-400 flex items-center gap-1 font-medium">
                         <Award size={13} className="text-amber-400" />
-                        Comissão Estimada ({isComissaoFixa ? 'Fixo' : `${commissionRate}%`}):
+                        {isVendido
+                          ? (isMinhaVenda ? 'Sua Comissão Fechada:' : 'Comissão do Vendedor:')
+                          : `Comissão Estimada (${isComissaoFixa ? 'Fixo' : `${commissionRate}%`}):`}
                       </span>
                       <span className="font-bold font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
                         {formatCurrency(estimatedCommission)}
                       </span>
                     </div>
 
-                    {/* Admin only: Internal cost */}
+                    {/* Admin only: Internal cost & profit */}
                     {canViewCosts && (
                       <div className="pt-1.5 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-500">
                         <span>Custo Total Loja: {formatCurrency(custoTotal)}</span>
                         <span className="text-blue-400 font-bold">
-                          Margem Loja: {formatCurrency(effectivePrice - custoTotal)}
+                          {isVendido ? 'Lucro Bruto Apurado: ' : 'Margem Prevista: '}
+                          {formatCurrency(effectivePrice - custoTotal)}
                         </span>
                       </div>
                     )}
@@ -714,14 +862,14 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
                       <button
                         type="button"
                         onClick={() => onOpenDossie(v)}
-                        className="py-2.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold border border-white/5 transition"
+                        className="py-2.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold border border-white/5 transition cursor-pointer"
                         title="Ver dossiê do veículo"
                       >
                         <Layers size={15} />
                       </button>
                     )}
 
-                    {onOpenTestDrive && currentUser?.permissoes?.podeRealizarTestDrive !== false && (
+                    {!isVendido && onOpenTestDrive && currentUser?.permissoes?.podeRealizarTestDrive !== false && (
                       <button
                         type="button"
                         onClick={() => onOpenTestDrive(v)}
@@ -732,7 +880,12 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
                       </button>
                     )}
 
-                    {canSell && (
+                    {isVendido ? (
+                      <div className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-purple-600/20 text-purple-200 border border-purple-500/30 flex items-center justify-center gap-2 shadow-xs">
+                        <CheckCircle2 size={15} className="text-purple-400" />
+                        <span>Venda Concluída</span>
+                      </div>
+                    ) : canSell ? (
                       <button
                         type="button"
                         onClick={() => onOpenVenda(v)}
@@ -745,7 +898,7 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
                         <Tag size={15} />
                         <span>{isEmPreparacao ? 'Pré-Venda / Reserva' : 'Vender Carro'}</span>
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>

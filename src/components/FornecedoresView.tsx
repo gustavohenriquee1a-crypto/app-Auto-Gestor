@@ -21,18 +21,25 @@ import {
   CheckCircle2,
   AlertTriangle,
   Send,
-  Layers
+  Layers,
+  ArrowRight,
+  Eye,
+  Loader2
 } from 'lucide-react';
-import { FornecedorPrestador, CategoriaFornecedor, Veiculo } from '../types';
+import { FornecedorPrestador, CategoriaFornecedor, Veiculo, Usuario } from '../types';
+import { ParametrosMovimentacaoVeiculo } from '../services/movimentacaoVeiculoService';
 import { MetricCard } from './MetricCard';
 
 interface FornecedoresViewProps {
   fornecedores: FornecedorPrestador[];
   veiculos: Veiculo[];
+  currentUser?: Usuario | null;
   onOpenNovoFornecedor?: () => void;
   onEditFornecedor?: (fornecedor: FornecedorPrestador) => void;
   onDeleteFornecedor?: (fornecedorId: string) => void;
   onOpenDossie: (veiculo: Veiculo) => void;
+  onOpenRetornoPatio?: (veiculo: Veiculo) => void;
+  onMovimentarVeiculo?: (params: ParametrosMovimentacaoVeiculo) => Promise<Veiculo>;
   onSelectTab?: (tab: string) => void;
 }
 
@@ -58,22 +65,34 @@ const CATEGORIAS_FILTRO: (CategoriaFornecedor | 'Todas')[] = [
 export const FornecedoresView: React.FC<FornecedoresViewProps> = ({
   fornecedores,
   veiculos,
+  currentUser,
   onOpenNovoFornecedor,
   onEditFornecedor,
   onDeleteFornecedor,
   onOpenDossie,
+  onOpenRetornoPatio,
+  onMovimentarVeiculo,
   onSelectTab,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [categoriaFiltro, setCategoriaFiltro] = useState<CategoriaFornecedor | 'Todas'>('Todas');
   const [statusFiltro, setStatusFiltro] = useState<'Todos' | 'Ativo' | 'Inativo'>('Todos');
   const [copiedPixId, setCopiedPixId] = useState<string | null>(null);
+  const [retornandoCarroId, setRetornandoCarroId] = useState<string | null>(null);
 
   // Mapear quantos e quais carros estão em cada fornecedor atualmente
+  // O veículo só é contado/exibido se estiver ativamente em preparação e não retornado ao pátio/vendido
   const veiculosPorFornecedor = useMemo(() => {
     const map = new Map<string, Veiculo[]>();
     veiculos.forEach((v) => {
-      if (v.status !== 'Vendido') {
+      const estaEmServico = 
+        v.status !== 'Vendido' &&
+        v.status_estoque !== 'Vendido' &&
+        v.status_estoque !== 'No Pátio' &&
+        v.etapaKanban !== 'Pronto para Pátio' &&
+        (v.status === 'Em Preparação' || v.status === 'Em Manutenção' || v.status_estoque === 'Em Preparação');
+
+      if (estaEmServico) {
         const fornKey = v.fornecedorAtualId || v.fornecedorAtualNome;
         if (fornKey) {
           const list = map.get(fornKey) || [];
@@ -112,9 +131,43 @@ export const FornecedoresView: React.FC<FornecedoresViewProps> = ({
 
   const totalCarrosEmOficina = useMemo(() => {
     return veiculos.filter(
-      (v) => v.status !== 'Vendido' && (v.fornecedorAtualId || v.fornecedorAtualNome || v.status === 'Em Preparação' || v.status === 'Em Manutenção')
+      (v) =>
+        v.status !== 'Vendido' &&
+        v.status_estoque !== 'Vendido' &&
+        v.status_estoque !== 'No Pátio' &&
+        v.etapaKanban !== 'Pronto para Pátio' &&
+        Boolean(v.fornecedorAtualId || v.fornecedorAtualNome) &&
+        (v.status === 'Em Preparação' || v.status === 'Em Manutenção' || v.status_estoque === 'Em Preparação')
     ).length;
   }, [veiculos]);
+
+  const handleRetornarAoPatio = async (e: React.MouseEvent, car: Veiculo) => {
+    e.stopPropagation();
+    if (onOpenRetornoPatio) {
+      onOpenRetornoPatio(car);
+      return;
+    }
+
+    if (onMovimentarVeiculo) {
+      if (!confirm(`Confirmar o retorno do veículo ${car.modelo} (${car.placa}) para o pátio da loja? Ele será removido imediatamente deste prestador e disponibilizado no showroom.`)) {
+        return;
+      }
+      setRetornandoCarroId(car.id);
+      try {
+        await onMovimentarVeiculo({
+          veiculo: car,
+          novaEtapaKanban: 'Pronto para Pátio',
+          novoStatusEstoque: 'No Pátio',
+          origemModulo: 'Fornecedores & Parceiros',
+          usuario: currentUser,
+        });
+      } catch (err) {
+        console.error('Erro ao retornar veículo ao pátio:', err);
+      } finally {
+        setRetornandoCarroId(null);
+      }
+    }
+  };
 
   const handleCopyPix = (pix: string, id: string) => {
     if (!pix) return;
@@ -472,20 +525,51 @@ export const FornecedoresView: React.FC<FornecedoresViewProps> = ({
                         </span>
                       </div>
 
-                      <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
+                      <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                         {uniqueCarros.map((car) => (
                           <div
                             key={car.id}
-                            onClick={() => onOpenDossie(car)}
-                            className="bg-[#16171e] hover:bg-white/5 p-1.5 rounded-lg border border-white/5 flex items-center justify-between text-xs cursor-pointer transition"
+                            className="bg-[#16171e] hover:bg-white/5 p-2 rounded-xl border border-white/5 flex items-center justify-between gap-2 text-xs transition group"
                           >
-                            <div className="min-w-0">
-                              <span className="font-bold text-white truncate block">{car.modelo}</span>
-                              <span className="font-mono text-[10px] text-slate-400">{car.placa}</span>
+                            <div
+                              onClick={() => onOpenDossie(car)}
+                              className="min-w-0 flex-1 cursor-pointer"
+                              title="Clique para ver o dossiê do veículo"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-white truncate block group-hover:text-blue-400 transition">{car.modelo}</span>
+                                <span className="font-mono text-[10px] text-slate-400 bg-black/40 px-1 py-0.5 rounded border border-white/5">{car.placa}</span>
+                              </div>
+                              <span className="text-[10px] text-blue-400 font-semibold truncate block mt-0.5">
+                                {car.servicoAtualEmAndamento || 'Em Preparação'}
+                              </span>
                             </div>
-                            <span className="text-[10px] text-blue-400 font-semibold truncate max-w-[100px]">
-                              {car.servicoAtualEmAndamento || 'Em Preparação'}
-                            </span>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => handleRetornarAoPatio(e, car)}
+                                disabled={retornandoCarroId === car.id}
+                                title="Concluir serviço e retornar veículo ao Pátio da loja (Showroom Liberado)"
+                                className="px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 text-[10px] font-bold flex items-center gap-1 transition shadow-sm cursor-pointer disabled:opacity-50"
+                              >
+                                {retornandoCarroId === car.id ? (
+                                  <Loader2 size={11} className="animate-spin" />
+                                ) : (
+                                  <MapPin size={11} />
+                                )}
+                                <span>Retornar ao Pátio</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => onOpenDossie(car)}
+                                title="Ver Dossiê Completo"
+                                className="p-1 text-slate-400 hover:text-white rounded hover:bg-white/5 transition"
+                              >
+                                <Eye size={12} />
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>

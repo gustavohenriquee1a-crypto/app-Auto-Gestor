@@ -37,6 +37,7 @@ import {
   checkRevisaoNecessaria 
 } from '../utils/formatters';
 import { registrarMudancaStatusEstoque } from '../utils/auditLogger';
+import { ParametrosMovimentacaoVeiculo, prepararMovimentacaoVeiculo } from '../services/movimentacaoVeiculoService';
 import { MetricCard } from './MetricCard';
 
 export interface GrupoFornecedorMetricas {
@@ -60,6 +61,7 @@ interface RevisoesViewProps {
   onOpenDossie: (veiculo: Veiculo) => void;
   onAtualizarKm: (veiculoId: string, novaKm: number) => void;
   onUpdateVeiculo?: (veiculo: Veiculo) => void;
+  onMovimentarVeiculo?: (params: ParametrosMovimentacaoVeiculo) => Promise<Veiculo>;
   onOpenNovaDespesa?: (veiculo?: Veiculo) => void;
   onSelectTab?: (tab: string) => void;
 }
@@ -72,6 +74,7 @@ export const RevisoesView: React.FC<RevisoesViewProps> = ({
   onOpenDossie,
   onAtualizarKm,
   onUpdateVeiculo,
+  onMovimentarVeiculo,
   onOpenNovaDespesa,
   onSelectTab,
 }) => {
@@ -406,66 +409,79 @@ export const RevisoesView: React.FC<RevisoesViewProps> = ({
     setModalFornecedorOpen(true);
   };
 
-  const handleSalvarEnvioOficina = () => {
+  const handleSalvarEnvioOficina = async () => {
     if (!selectedVeiculoFornecedor || !onUpdateVeiculo) return;
 
     const fornSelected = fornecedores.find((f) => f.id === modalFormFornecedorId);
     const fornNome = fornSelected ? fornSelected.nome : modalFormFornecedorId ? modalFormFornecedorId : undefined;
     const fornCat = fornSelected?.categoria;
 
-    const veiculoComAuditoria = registrarMudancaStatusEstoque(
-      selectedVeiculoFornecedor,
-      'Em Preparação',
-      currentUser,
-      'Preparações & Oficina',
-      `Encaminhado para ${fornNome || 'Oficina'}: ${modalFormServico || 'Preparação'}`
-    );
+    if (onMovimentarVeiculo) {
+      await onMovimentarVeiculo({
+        veiculo: selectedVeiculoFornecedor,
+        novaEtapaKanban: 'Oficina',
+        novoStatusEstoque: 'Em Preparação',
+        fornecedorId: fornSelected?.id,
+        fornecedorNome: fornNome,
+        fornecedorCategoria: fornCat,
+        servicoDescricao: modalFormServico.trim(),
+        custo: typeof modalFormCustoEstimado === 'number' ? modalFormCustoEstimado : undefined,
+        motivoObservacao: `Encaminhado para ${fornNome || 'Oficina'}: ${modalFormServico || 'Preparação'}`,
+        origemModulo: 'Preparações & Oficina',
+        usuario: currentUser,
+      });
+    } else if (onUpdateVeiculo) {
+      const veiculoAtualizado = prepararMovimentacaoVeiculo({
+        veiculo: selectedVeiculoFornecedor,
+        novaEtapaKanban: 'Oficina',
+        novoStatusEstoque: 'Em Preparação',
+        fornecedorId: fornSelected?.id,
+        fornecedorNome: fornNome,
+        fornecedorCategoria: fornCat,
+        servicoDescricao: modalFormServico.trim(),
+        custo: typeof modalFormCustoEstimado === 'number' ? modalFormCustoEstimado : undefined,
+        motivoObservacao: `Encaminhado para ${fornNome || 'Oficina'}: ${modalFormServico || 'Preparação'}`,
+        origemModulo: 'Preparações & Oficina',
+        usuario: currentUser,
+      });
+      onUpdateVeiculo({
+        ...veiculoAtualizado,
+        dataEnvioOficina: modalFormDataEnvio,
+        previsaoRetornoOficina: modalFormPrevisaoRetorno || undefined,
+        statusPreparacaoOficina: modalFormStatusPrep,
+      });
+    }
 
-    const veiculoAtualizado: Veiculo = {
-      ...veiculoComAuditoria,
-      status: 'Em Preparação',
-      status_estoque: 'Em Preparação',
-      fornecedorAtualId: fornSelected?.id || undefined,
-      fornecedorAtualNome: fornNome,
-      fornecedorAtualCategoria: fornCat,
-      servicoAtualEmAndamento: modalFormServico.trim() || undefined,
-      dataEnvioOficina: modalFormDataEnvio,
-      previsaoRetornoOficina: modalFormPrevisaoRetorno || undefined,
-      statusPreparacaoOficina: modalFormStatusPrep,
-      custoEstimadoServico: typeof modalFormCustoEstimado === 'number' ? modalFormCustoEstimado : undefined,
-    };
-
-    onUpdateVeiculo(veiculoAtualizado);
     setModalFornecedorOpen(false);
     setSelectedVeiculoFornecedor(null);
   };
 
-  const handleConcluirServicoRetornoPatio = (veiculo: Veiculo) => {
-    if (!onUpdateVeiculo) return;
+  const handleConcluirServicoRetornoPatio = async (veiculo: Veiculo) => {
+    if (!onUpdateVeiculo && !onMovimentarVeiculo) return;
     if (!confirm(`Confirmar que o veículo ${veiculo.modelo} (${veiculo.placa}) concluiu o serviço e retornou ao pátio disponível para venda?`)) {
       return;
     }
 
-    const veiculoComAuditoria = registrarMudancaStatusEstoque(
-      veiculo,
-      'No Pátio',
-      currentUser,
-      'Preparações & Oficina',
-      `Serviço concluído na empresa ${veiculo.fornecedorAtualNome || 'parceira'}. Liberado para o pátio.`
-    );
-
-    const veiculoAtualizado: Veiculo = {
-      ...veiculoComAuditoria,
-      status: 'Disponível',
-      status_estoque: 'No Pátio',
-      fornecedorAtualId: undefined,
-      fornecedorAtualNome: undefined,
-      fornecedorAtualCategoria: undefined,
-      servicoAtualEmAndamento: undefined,
-      statusPreparacaoOficina: 'Pátio / Pronto',
-    };
-
-    onUpdateVeiculo(veiculoAtualizado);
+    if (onMovimentarVeiculo) {
+      await onMovimentarVeiculo({
+        veiculo,
+        novaEtapaKanban: 'Pronto para Pátio',
+        novoStatusEstoque: 'No Pátio',
+        origemModulo: 'Preparações & Oficina',
+        motivoObservacao: `Serviço concluído na empresa ${veiculo.fornecedorAtualNome || 'parceira'}. Liberado para o pátio.`,
+        usuario: currentUser,
+      });
+    } else if (onUpdateVeiculo) {
+      const veiculoAtualizado = prepararMovimentacaoVeiculo({
+        veiculo,
+        novaEtapaKanban: 'Pronto para Pátio',
+        novoStatusEstoque: 'No Pátio',
+        origemModulo: 'Preparações & Oficina',
+        motivoObservacao: `Serviço concluído na empresa ${veiculo.fornecedorAtualNome || 'parceira'}. Liberado para o pátio.`,
+        usuario: currentUser,
+      });
+      onUpdateVeiculo(veiculoAtualizado);
+    }
   };
 
   return (

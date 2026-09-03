@@ -655,7 +655,28 @@ export async function deleteFornecedorFirestore(fornecedorId: string): Promise<v
 export async function saveVeiculoFirestore(veiculo: Veiculo): Promise<void> {
   const docRef = doc(db, COLLECTIONS.VEICULOS, veiculo.id);
   // Clean undefined properties before saving to firestore
-  const cleanData = JSON.parse(JSON.stringify(veiculo));
+  const cleanData: any = JSON.parse(JSON.stringify(veiculo));
+
+  // Explicitly assign null to fields that were cleared so Firestore updates and removes old values
+  if (veiculo.fornecedorAtualId === undefined || veiculo.fornecedorAtualId === null) {
+    cleanData.fornecedorAtualId = null;
+  }
+  if (veiculo.fornecedorAtualNome === undefined || veiculo.fornecedorAtualNome === null) {
+    cleanData.fornecedorAtualNome = null;
+  }
+  if (veiculo.fornecedorAtualCategoria === undefined || veiculo.fornecedorAtualCategoria === null) {
+    cleanData.fornecedorAtualCategoria = null;
+  }
+  if (veiculo.servicoAtualEmAndamento === undefined || veiculo.servicoAtualEmAndamento === null) {
+    cleanData.servicoAtualEmAndamento = null;
+  }
+  if (veiculo.previsaoRetornoOficina === undefined || veiculo.previsaoRetornoOficina === null) {
+    cleanData.previsaoRetornoOficina = null;
+  }
+  if (veiculo.custoEstimadoServico === undefined || veiculo.custoEstimadoServico === null) {
+    cleanData.custoEstimadoServico = null;
+  }
+
   await setDoc(docRef, cleanData, { merge: true });
 }
 
@@ -1230,6 +1251,193 @@ export async function deleteMovimentacaoContaFirestore(movId: string): Promise<v
     console.error('Erro ao excluir movimentação de conta:', error);
     throw error;
   }
+}
+
+/**
+ * =========================================================================
+ * 3.1 TRANSFERÊNCIA ENTRE CONTAS (INTERNA OU TERCEIROS)
+ * =========================================================================
+ * - Debita o valor do saldo da Conta de Origem
+ * - Se for conta interna, credita automaticamente o valor na Conta de Destino
+ * - Se for para terceiros, debita da origem e registra com favorecido externo
+ * - Gera registros detalhados no extrato de ambas as contas (ou da origem se terceiro)
+ */
+export interface ParametrosTransferencia {
+  contaOrigemId: string;
+  contaDestinoId?: string;
+  isTerceiro: boolean;
+  terceiroDestinoNome?: string;
+  valor: number;
+  data: string;
+  motivo: string;
+  usuarioNome?: string;
+}
+
+export async function executarTransferenciaEntreContasFirestore(
+  params: ParametrosTransferencia
+): Promise<{
+  contaOrigemAtualizada: ContaBancariaCaixa;
+  contaDestinoAtualizada?: ContaBancariaCaixa;
+  movimentacaoOrigem: MovimentacaoConta;
+  movimentacaoDestino?: MovimentacaoConta;
+}> {
+  const {
+    contaOrigemId,
+    contaDestinoId,
+    isTerceiro,
+    terceiroDestinoNome,
+    valor,
+    data,
+    motivo,
+    usuarioNome = 'Sistema',
+  } = params;
+
+  if (!contaOrigemId) {
+    throw new Error('A Conta de Origem é obrigatória.');
+  }
+
+  if (valor <= 0) {
+    throw new Error('O valor da transferência deve ser maior que zero.');
+  }
+
+  if (!isTerceiro && !contaDestinoId) {
+    throw new Error('A Conta de Destino é obrigatória para transferências internas.');
+  }
+
+  if (!isTerceiro && contaOrigemId === contaDestinoId) {
+    throw new Error('A Conta de Origem e a Conta de Destino não podem ser a mesma.');
+  }
+
+  if (isTerceiro && (!terceiroDestinoNome || !terceiroDestinoNome.trim())) {
+    throw new Error('Informe o nome ou instituição do terceiro favorecido.');
+  }
+
+  // 1. Obter todas as contas bancárias atuais
+  const contasSnap = await getDocs(collection(db, COLLECTIONS.CONTAS_BANCARIAS));
+  const contasMap = new Map<string, ContaBancariaCaixa>();
+
+  if (!contasSnap.empty) {
+    contasSnap.docs.forEach((d) => {
+      contasMap.set(d.id, { ...d.data(), id: d.id } as ContaBancariaCaixa);
+    });
+  } else {
+    DEFAULT_CONTAS_BANCARIAS.forEach((c) => contasMap.set(c.id, { ...c }));
+  }
+
+  // Localizar Conta de Origem
+  let contaOrigem = contasMap.get(contaOrigemId);
+  if (!contaOrigem) {
+    const fallbackOrigem = DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaOrigemId);
+    if (fallbackOrigem) {
+      contaOrigem = { ...fallbackOrigem };
+    } else {
+      throw new Error(`Conta de Origem com ID "${contaOrigemId}" não foi encontrada.`);
+    }
+  }
+
+  // 2. Processar débito na Conta de Origem
+  const saldoAnteriorOrigem = Number(contaOrigem.saldo || 0);
+  const novoSaldoOrigem = saldoAnteriorOrigem - valor;
+
+  const contaOrigemAtualizada: ContaBancariaCaixa = {
+    ...contaOrigem,
+    saldo: novoSaldoOrigem,
+    updatedAt: new Date().toISOString(),
+  };
+  await saveContaBancariaFirestore(contaOrigemAtualizada);
+
+  // 3. Processar crédito na Conta de Destino (se interna)
+  let contaDestinoAtualizada: ContaBancariaCaixa | undefined;
+  let contaDestino: ContaBancariaCaixa | undefined;
+
+  if (!isTerceiro && contaDestinoId) {
+    contaDestino = contasMap.get(contaDestinoId);
+    if (!contaDestino) {
+      const fallbackDestino = DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaDestinoId);
+      if (fallbackDestino) {
+        contaDestino = { ...fallbackDestino };
+      } else {
+        throw new Error(`Conta de Destino com ID "${contaDestinoId}" não foi encontrada.`);
+      }
+    }
+
+    const saldoAnteriorDestino = Number(contaDestino.saldo || 0);
+    const novoSaldoDestino = saldoAnteriorDestino + valor;
+
+    contaDestinoAtualizada = {
+      ...contaDestino,
+      saldo: novoSaldoDestino,
+      updatedAt: new Date().toISOString(),
+    };
+    await saveContaBancariaFirestore(contaDestinoAtualizada);
+  }
+
+  // 4. Gerar registros no Extrato (Movimentações de Contas)
+  const idTransferencia = `transf_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  const dataMov = data || new Date().toISOString().split('T')[0];
+
+  // A) Extrato Conta Origem (Débito)
+  const descricaoOrigem = isTerceiro
+    ? `Transferência para Terceiro: ${terceiroDestinoNome?.trim()} - Motivo: ${motivo.trim()}`
+    : `Transferência enviada para ${contaDestino?.nome || 'Conta Destino'} - Motivo: ${motivo.trim()}`;
+
+  const movimentacaoOrigem: MovimentacaoConta = {
+    id: `mov_deb_${idTransferencia}`,
+    contaId: contaOrigem.id,
+    contaNome: contaOrigem.nome,
+    tipo: 'Transferência',
+    categoria: isTerceiro ? 'Transferência para Terceiros' : 'Transferência entre Contas',
+    valor: valor,
+    data: dataMov,
+    descricao: descricaoOrigem,
+    formaPagamento: 'Transferência Bancária / PIX',
+    criadoPor: usuarioNome,
+    createdAt: new Date().toISOString(),
+    transferenciaId: idTransferencia,
+    contaOrigemId: contaOrigem.id,
+    contaOrigemNome: contaOrigem.nome,
+    contaDestinoId: isTerceiro ? undefined : contaDestino?.id,
+    contaDestinoNome: isTerceiro ? undefined : contaDestino?.nome,
+    isTerceiro,
+    terceiroNome: isTerceiro ? terceiroDestinoNome?.trim() : undefined,
+    motivo: motivo.trim(),
+  };
+  await saveMovimentacaoContaFirestore(movimentacaoOrigem);
+
+  // B) Extrato Conta Destino (Crédito, se interna)
+  let movimentacaoDestino: MovimentacaoConta | undefined;
+  if (!isTerceiro && contaDestino) {
+    const descricaoDestino = `Transferência recebida de ${contaOrigem.nome} - Motivo: ${motivo.trim()}`;
+
+    movimentacaoDestino = {
+      id: `mov_cred_${idTransferencia}`,
+      contaId: contaDestino.id,
+      contaNome: contaDestino.nome,
+      tipo: 'Transferência',
+      categoria: 'Transferência entre Contas',
+      valor: valor,
+      data: dataMov,
+      descricao: descricaoDestino,
+      formaPagamento: 'Transferência Bancária / PIX',
+      criadoPor: usuarioNome,
+      createdAt: new Date().toISOString(),
+      transferenciaId: idTransferencia,
+      contaOrigemId: contaOrigem.id,
+      contaOrigemNome: contaOrigem.nome,
+      contaDestinoId: contaDestino.id,
+      contaDestinoNome: contaDestino.nome,
+      isTerceiro: false,
+      motivo: motivo.trim(),
+    };
+    await saveMovimentacaoContaFirestore(movimentacaoDestino);
+  }
+
+  return {
+    contaOrigemAtualizada,
+    contaDestinoAtualizada,
+    movimentacaoOrigem,
+    movimentacaoDestino,
+  };
 }
 
 /**

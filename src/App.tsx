@@ -109,6 +109,10 @@ import {
   ParametrosEnviarServico, 
   ParametrosRetornoPatio 
 } from './utils/auditLogger';
+import { 
+  ParametrosMovimentacaoVeiculo, 
+  prepararMovimentacaoVeiculo 
+} from './services/movimentacaoVeiculoService';
 import { calculateAging, checkRevisaoNecessaria, calculateTotalDespesas } from './utils/formatters';
 
 const STORAGE_KEYS = {
@@ -324,6 +328,11 @@ export default function App() {
     const unsubscribeVeiculos = subscribeVeiculos((firestoreVeiculos) => {
       if (firestoreVeiculos) {
         setVeiculos(firestoreVeiculos);
+        setDossieVeiculo((prevDossie) => {
+          if (!prevDossie) return null;
+          const fresh = firestoreVeiculos.find((v) => v.id === prevDossie.id);
+          return fresh || prevDossie;
+        });
       }
     });
 
@@ -976,63 +985,44 @@ export default function App() {
     }
   };
 
-  // 4. Atualizar Etapa no Funil de Preparação (Kanban)
+  // 4. Função Centralizada de Movimentação de Veículo (Kanban, Fornecedores, Auditoria e Estoque)
+  const handleMovimentarVeiculo = async (
+    params: ParametrosMovimentacaoVeiculo
+  ): Promise<Veiculo> => {
+    // 1. Unificação de regras de negócio, status_estoque, etapaKanban, desassociação de fornecedor e log de auditoria
+    const veiculoAtualizado = prepararMovimentacaoVeiculo({
+      ...params,
+      usuario: params.usuario || currentUserProfile,
+    });
+
+    // 2. Atualização otimista no estado da aplicação
+    setVeiculos((prev) =>
+      prev.map((v) => (v.id === veiculoAtualizado.id ? veiculoAtualizado : v))
+    );
+    if (dossieVeiculo?.id === veiculoAtualizado.id) {
+      setDossieVeiculo(veiculoAtualizado);
+    }
+
+    // 3. Persistência atômica no Firestore (garantindo limpeza de prestador via null se aplicável)
+    await saveVeiculoFirestore(veiculoAtualizado);
+
+    return veiculoAtualizado;
+  };
+
+  // Atualizar Etapa no Funil de Preparação (Kanban)
   const handleUpdateEtapaKanban = async (
     veiculoId: string,
     novaEtapa: EtapaKanbanPreparacao
   ) => {
-    let targetVeiculoUpdated: Veiculo | null = null;
+    const veiculo = veiculos.find((v) => v.id === veiculoId);
+    if (!veiculo) return;
 
-    setVeiculos((prev) =>
-      prev.map((v) => {
-        if (v.id === veiculoId) {
-          let novoStatus = v.status;
-          let novoStatusEstoque = v.status_estoque;
-
-          if (novaEtapa === 'Pronto para Pátio') {
-            novoStatus = 'Disponível';
-            novoStatusEstoque = 'No Pátio';
-          } else if (novaEtapa === 'Oficina') {
-            novoStatus = 'Em Manutenção';
-            novoStatusEstoque = 'Em Preparação';
-          } else {
-            novoStatus = 'Em Preparação';
-            novoStatusEstoque = 'Em Preparação';
-          }
-
-          const novoEvento: EventoHistoricoVeiculo = {
-            id: `hs-etapa-${Date.now()}`,
-            data: new Date().toISOString().split('T')[0],
-            tipo: novaEtapa === 'Pronto para Pátio' ? 'Retorno ao Pátio' : 'Preparação / Estética',
-            titulo: `Etapa de Preparação Alterada: ${novaEtapa}`,
-            descricao: `Veículo movimentado no Funil de Preparação para a etapa "${novaEtapa}".`,
-            statusResultante: novoStatus,
-            usuarioRegistro: currentUserProfile?.displayName || 'Sistema AutoGestor',
-          };
-
-          const updated: Veiculo = {
-            ...v,
-            etapaKanban: novaEtapa,
-            status: novoStatus,
-            status_estoque: novoStatusEstoque,
-            statusPreparacaoOficina: novaEtapa === 'Pronto para Pátio' ? 'Pátio / Pronto' : 'Em Execução',
-            data_chegada_patio: novaEtapa === 'Pronto para Pátio' && !v.data_chegada_patio ? new Date().toISOString().split('T')[0] : v.data_chegada_patio,
-            dataEntradaPatio: novaEtapa === 'Pronto para Pátio' && !v.dataEntradaPatio ? new Date().toISOString().split('T')[0] : v.dataEntradaPatio,
-            historicoStatus: [novoEvento, ...(v.historicoStatus || [])],
-          };
-          targetVeiculoUpdated = updated;
-          return updated;
-        }
-        return v;
-      })
-    );
-
-    if (targetVeiculoUpdated) {
-      await saveVeiculoFirestore(targetVeiculoUpdated);
-      if (dossieVeiculo?.id === veiculoId) {
-        setDossieVeiculo(targetVeiculoUpdated);
-      }
-    }
+    await handleMovimentarVeiculo({
+      veiculo,
+      novaEtapaKanban: novaEtapa,
+      origemModulo: 'Funil de Preparação (Kanban)',
+      usuario: currentUserProfile,
+    });
   };
 
   // Handlers para Envio e Retorno de Serviço Rápido (Sincronização 100% Automática)
@@ -1045,41 +1035,44 @@ export default function App() {
     paramsEnvio: ParametrosEnviarServico;
     despesaData?: Omit<DespesaVeiculo, 'id'>;
   }) => {
-    let targetVeiculoUpdated: Veiculo | null = null;
+    const veiculo = veiculos.find((v) => v.id === veiculoId) || paramsEnvio.veiculo;
+    if (!veiculo) return;
+
+    let veiculoAtualizado = prepararMovimentacaoVeiculo({
+      veiculo,
+      novaEtapaKanban: paramsEnvio.etapaKanban,
+      novoStatusEstoque: 'Em Preparação',
+      fornecedorId: paramsEnvio.fornecedorId,
+      fornecedorNome: paramsEnvio.fornecedorNome,
+      fornecedorCategoria: paramsEnvio.fornecedorCategoria,
+      servicoDescricao: paramsEnvio.servicoDescricao,
+      km: paramsEnvio.kmSaida,
+      custo: paramsEnvio.custoEstimado,
+      motivoObservacao: paramsEnvio.motivoSaida,
+      origemModulo: 'Envio para Serviço',
+      usuario: currentUserProfile,
+    });
+
+    if (despesaData) {
+      const novaDesp: DespesaVeiculo = {
+        ...despesaData,
+        id: `desp-servico-${Date.now()}`,
+        veiculoId: veiculo.id,
+      };
+      veiculoAtualizado = {
+        ...veiculoAtualizado,
+        despesas: [novaDesp, ...(veiculoAtualizado.despesas || [])],
+      };
+    }
 
     setVeiculos((prev) =>
-      prev.map((v) => {
-        if (v.id === veiculoId) {
-          let updated = aplicarEnvioServico({
-            ...paramsEnvio,
-            veiculo: v,
-          });
-
-          if (despesaData) {
-            const novaDesp: DespesaVeiculo = {
-              ...despesaData,
-              id: `desp-servico-${Date.now()}`,
-              veiculoId: v.id,
-            };
-            updated = {
-              ...updated,
-              despesas: [novaDesp, ...(updated.despesas || [])],
-            };
-          }
-
-          targetVeiculoUpdated = updated;
-          return updated;
-        }
-        return v;
-      })
+      prev.map((v) => (v.id === veiculoId ? veiculoAtualizado : v))
     );
-
-    if (targetVeiculoUpdated) {
-      await saveVeiculoFirestore(targetVeiculoUpdated);
-      if (dossieVeiculo?.id === veiculoId) {
-        setDossieVeiculo(targetVeiculoUpdated);
-      }
+    if (dossieVeiculo?.id === veiculoId) {
+      setDossieVeiculo(veiculoAtualizado);
     }
+
+    await saveVeiculoFirestore(veiculoAtualizado);
 
     if (despesaData && despesaData.statusPagamento === 'Pago' && despesaData.contaBancariaId) {
       const conta = contasBancarias.find((c) => c.id === despesaData.contaBancariaId);
@@ -1121,41 +1114,41 @@ export default function App() {
     paramsRetorno: ParametrosRetornoPatio;
     despesaData?: Omit<DespesaVeiculo, 'id'>;
   }) => {
-    let targetVeiculoUpdated: Veiculo | null = null;
+    const veiculo = veiculos.find((v) => v.id === veiculoId) || paramsRetorno.veiculo;
+    if (!veiculo) return;
+
+    let veiculoAtualizado = prepararMovimentacaoVeiculo({
+      veiculo,
+      novaEtapaKanban: 'Pronto para Pátio',
+      novoStatusEstoque: 'No Pátio',
+      km: paramsRetorno.kmRetorno,
+      custo: paramsRetorno.custoRealizado,
+      avaliacaoQualidade: paramsRetorno.avaliacaoQualidade,
+      motivoObservacao: paramsRetorno.observacoes,
+      origemModulo: 'Retorno ao Pátio',
+      usuario: currentUserProfile,
+    });
+
+    if (despesaData) {
+      const novaDesp: DespesaVeiculo = {
+        ...despesaData,
+        id: `desp-retorno-${Date.now()}`,
+        veiculoId: veiculo.id,
+      };
+      veiculoAtualizado = {
+        ...veiculoAtualizado,
+        despesas: [novaDesp, ...(veiculoAtualizado.despesas || [])],
+      };
+    }
 
     setVeiculos((prev) =>
-      prev.map((v) => {
-        if (v.id === veiculoId) {
-          let updated = aplicarRetornoPatio({
-            ...paramsRetorno,
-            veiculo: v,
-          });
-
-          if (despesaData) {
-            const novaDesp: DespesaVeiculo = {
-              ...despesaData,
-              id: `desp-retorno-${Date.now()}`,
-              veiculoId: v.id,
-            };
-            updated = {
-              ...updated,
-              despesas: [novaDesp, ...(updated.despesas || [])],
-            };
-          }
-
-          targetVeiculoUpdated = updated;
-          return updated;
-        }
-        return v;
-      })
+      prev.map((v) => (v.id === veiculoId ? veiculoAtualizado : v))
     );
-
-    if (targetVeiculoUpdated) {
-      await saveVeiculoFirestore(targetVeiculoUpdated);
-      if (dossieVeiculo?.id === veiculoId) {
-        setDossieVeiculo(targetVeiculoUpdated);
-      }
+    if (dossieVeiculo?.id === veiculoId) {
+      setDossieVeiculo(veiculoAtualizado);
     }
+
+    await saveVeiculoFirestore(veiculoAtualizado);
 
     if (despesaData && despesaData.statusPagamento === 'Pago' && despesaData.contaBancariaId) {
       const conta = contasBancarias.find((c) => c.id === despesaData.contaBancariaId);
@@ -2499,6 +2492,7 @@ export default function App() {
             <LogisticaTransitoView
               veiculos={veiculos}
               fornecedores={fornecedores}
+              currentUser={currentUserProfile}
               onOpenNovoVeiculoEmTransito={() => {
                 setVeiculoToEdit(null);
                 setIsNovoVeiculoOpen(true);
@@ -2506,6 +2500,7 @@ export default function App() {
               onOpenDossie={openDossie}
               onOpenNovaDespesa={openNovaDespesa}
               onUpdateVeiculo={handleUpdateVeiculoDirect}
+              onMovimentarVeiculo={handleMovimentarVeiculo}
             />
           )}
 
@@ -2568,10 +2563,12 @@ export default function App() {
             <RevisoesView
               veiculos={veiculos}
               fornecedores={fornecedores}
+              currentUser={currentUserProfile}
               onOpenRegistrarRevisao={openRegistrarRevisao}
               onOpenDossie={openDossie}
               onAtualizarKm={handleAtualizarKm}
               onUpdateVeiculo={handleUpdateVeiculoDirect}
+              onMovimentarVeiculo={handleMovimentarVeiculo}
               onOpenNovaDespesa={openNovaDespesa}
               onSelectTab={setActiveTab}
             />
@@ -2583,6 +2580,7 @@ export default function App() {
               fornecedores={fornecedores}
               currentUser={currentUserProfile}
               onUpdateEtapaKanban={handleUpdateEtapaKanban}
+              onMovimentarVeiculo={handleMovimentarVeiculo}
               onOpenDossie={openDossie}
               onOpenNovaDespesa={openNovaDespesa}
               onOpenRegistrarRevisao={openRegistrarRevisao}
@@ -2599,6 +2597,8 @@ export default function App() {
             <FornecedoresView
               fornecedores={fornecedores}
               veiculos={veiculos}
+              currentUser={currentUserProfile}
+              onMovimentarVeiculo={handleMovimentarVeiculo}
               onOpenNovoFornecedor={() => {
                 setFornecedorToEdit(null);
                 setIsNovoFornecedorOpen(true);
@@ -2633,6 +2633,7 @@ export default function App() {
           {activeTab === 'contas-pagar' && (
             <ContasPagarView
               veiculos={veiculos}
+              vendas={vendas}
               despesasFixas={despesasFixas}
               fornecedores={fornecedores}
               contasBancarias={contasBancarias}
@@ -2664,6 +2665,7 @@ export default function App() {
               veiculos={veiculos}
               vendas={vendas}
               despesasFixas={despesasFixas}
+              currentUser={currentUserProfile}
               onOpenNovaDespesaFixa={() => setIsNovaDespesaFixaOpen(true)}
               onOpenNovaDespesaChassi={() => openNovaDespesa()}
             />
@@ -2701,6 +2703,7 @@ export default function App() {
           onEditDespesa={openEditDespesa}
           onEditVeiculo={handleEditVeiculo}
           onUpdateVeiculo={handleUpdateVeiculoDirect}
+          onMovimentarVeiculo={handleMovimentarVeiculo}
           onAdicionarEventoStatus={handleAdicionarEventoStatus}
           onOpenTestDrive={openTestDrive}
           onOpenVistoria={openVistoria}

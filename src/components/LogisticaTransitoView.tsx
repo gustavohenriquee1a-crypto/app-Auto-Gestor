@@ -22,25 +22,30 @@ import {
   Sparkles,
   Receipt
 } from 'lucide-react';
-import { Veiculo, FornecedorPrestador } from '../types';
+import { Veiculo, FornecedorPrestador, Usuario } from '../types';
+import { ParametrosMovimentacaoVeiculo, prepararMovimentacaoVeiculo } from '../services/movimentacaoVeiculoService';
 import { formatCurrency, formatDate, calculateAging } from '../utils/formatters';
 
 interface LogisticaTransitoViewProps {
   veiculos: Veiculo[];
   fornecedores?: FornecedorPrestador[];
+  currentUser?: Usuario | null;
   onOpenNovoVeiculoEmTransito?: () => void;
   onOpenDossie?: (veiculo: Veiculo) => void;
   onOpenNovaDespesa?: (veiculo: Veiculo) => void;
   onUpdateVeiculo: (veiculo: Veiculo) => Promise<void> | void;
+  onMovimentarVeiculo?: (params: ParametrosMovimentacaoVeiculo) => Promise<Veiculo>;
 }
 
 export const LogisticaTransitoView: React.FC<LogisticaTransitoViewProps> = ({
   veiculos,
   fornecedores = [],
+  currentUser,
   onOpenNovoVeiculoEmTransito,
   onOpenDossie,
   onOpenNovaDespesa,
   onUpdateVeiculo,
+  onMovimentarVeiculo,
 }) => {
   const [activeTab, setActiveTab] = useState<'transito' | 'preparacao' | 'patio' | 'todos'>('transito');
   const [searchTerm, setSearchTerm] = useState('');
@@ -176,20 +181,46 @@ export const LogisticaTransitoView: React.FC<LogisticaTransitoViewProps> = ({
     try {
       const parceiro = fornecedores.find(f => f.id === fornecedorOficinaId);
 
-      const updated: Veiculo = {
-        ...selectedVeiculoRecebimento,
-        status_estoque: destinoRecebimento,
-        status: destinoRecebimento === 'No Pátio' ? 'Disponível' : 'Em Preparação',
-        data_chegada_patio: destinoRecebimento === 'No Pátio' ? dataChegadaConfirmada : undefined,
-        dataEntradaPatio: destinoRecebimento === 'No Pátio' ? dataChegadaConfirmada : selectedVeiculoRecebimento.dataEntradaPatio,
-        previsao_termino_preparacao: destinoRecebimento === 'Em Preparação' ? (previsaoTerminoInput || undefined) : undefined,
-        fornecedorAtualId: destinoRecebimento === 'Em Preparação' ? (fornecedorOficinaId || undefined) : undefined,
-        fornecedorAtualNome: destinoRecebimento === 'Em Preparação' ? (parceiro?.nome || parceiro?.nomeEmpresa || undefined) : undefined,
-        servicoAtualEmAndamento: destinoRecebimento === 'Em Preparação' ? (servicoOficinaInput || undefined) : undefined,
-        localizacaoPatio: destinoRecebimento === 'No Pátio' ? localizacaoPatioInput : (selectedVeiculoRecebimento.localizacaoPatio || 'Pátio Principal'),
-      };
+      if (onMovimentarVeiculo) {
+        await onMovimentarVeiculo({
+          veiculo: selectedVeiculoRecebimento,
+          novaEtapaKanban: destinoRecebimento === 'No Pátio' ? 'Pronto para Pátio' : 'Oficina',
+          novoStatusEstoque: destinoRecebimento,
+          fornecedorId: destinoRecebimento === 'Em Preparação' ? (fornecedorOficinaId || undefined) : undefined,
+          fornecedorNome: destinoRecebimento === 'Em Preparação' ? (parceiro?.nome || parceiro?.nomeEmpresa || undefined) : undefined,
+          fornecedorCategoria: destinoRecebimento === 'Em Preparação' ? parceiro?.categoria : undefined,
+          servicoDescricao: destinoRecebimento === 'Em Preparação' ? (servicoOficinaInput || undefined) : undefined,
+          motivoObservacao: destinoRecebimento === 'No Pátio'
+            ? `Recebido do trânsito diretamente no Pátio (${localizacaoPatioInput}). Liberado para venda.`
+            : `Recebido do trânsito e encaminhado para preparação na oficina: ${parceiro?.nome || 'Oficina'}.`,
+          origemModulo: 'Logística & Trânsito',
+          usuario: currentUser,
+        });
+      } else {
+        const veiculoAtualizado = prepararMovimentacaoVeiculo({
+          veiculo: selectedVeiculoRecebimento,
+          novaEtapaKanban: destinoRecebimento === 'No Pátio' ? 'Pronto para Pátio' : 'Oficina',
+          novoStatusEstoque: destinoRecebimento,
+          fornecedorId: destinoRecebimento === 'Em Preparação' ? (fornecedorOficinaId || undefined) : undefined,
+          fornecedorNome: destinoRecebimento === 'Em Preparação' ? (parceiro?.nome || parceiro?.nomeEmpresa || undefined) : undefined,
+          fornecedorCategoria: destinoRecebimento === 'Em Preparação' ? parceiro?.categoria : undefined,
+          servicoDescricao: destinoRecebimento === 'Em Preparação' ? (servicoOficinaInput || undefined) : undefined,
+          motivoObservacao: destinoRecebimento === 'No Pátio'
+            ? `Recebido do trânsito diretamente no Pátio (${localizacaoPatioInput}). Liberado para venda.`
+            : `Recebido do trânsito e encaminhado para preparação na oficina: ${parceiro?.nome || 'Oficina'}.`,
+          origemModulo: 'Logística & Trânsito',
+          usuario: currentUser,
+        });
 
-      await onUpdateVeiculo(updated);
+        await onUpdateVeiculo({
+          ...veiculoAtualizado,
+          data_chegada_patio: destinoRecebimento === 'No Pátio' ? dataChegadaConfirmada : undefined,
+          dataEntradaPatio: destinoRecebimento === 'No Pátio' ? dataChegadaConfirmada : selectedVeiculoRecebimento.dataEntradaPatio,
+          previsao_termino_preparacao: destinoRecebimento === 'Em Preparação' ? (previsaoTerminoInput || undefined) : undefined,
+          localizacaoPatio: destinoRecebimento === 'No Pátio' ? localizacaoPatioInput : (selectedVeiculoRecebimento.localizacaoPatio || 'Pátio Principal'),
+        });
+      }
+
       setSelectedVeiculoRecebimento(null);
     } catch (err) {
       console.error('Erro ao confirmar recebimento:', err);

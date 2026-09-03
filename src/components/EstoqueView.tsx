@@ -30,14 +30,15 @@ import {
   ClipboardCheck,
   Palette
 } from 'lucide-react';
-import { Veiculo, StatusVeiculo, Usuario } from '../types';
+import { Veiculo, StatusVeiculo, Usuario, VendaVeiculo } from '../types';
 import { 
   formatCurrency, 
   formatDate, 
   formatKm, 
   calculateAging, 
   calculateTotalDespesas, 
-  calculateCustoTotal 
+  calculateCustoTotal,
+  checkIsVeiculoVendido
 } from '../utils/formatters';
 import { CreatableSelect } from './CreatableSelect';
 import {
@@ -51,6 +52,7 @@ import {
 
 interface EstoqueViewProps {
   veiculos: Veiculo[];
+  vendas?: VendaVeiculo[];
   currentUser?: Usuario | null;
   onOpenDossie: (veiculo: Veiculo) => void;
   onOpenNovoVeiculo: () => void;
@@ -65,6 +67,7 @@ interface EstoqueViewProps {
 
 export const EstoqueView: React.FC<EstoqueViewProps> = ({
   veiculos,
+  vendas = [],
   currentUser,
   onOpenDossie,
   onOpenNovoVeiculo,
@@ -247,10 +250,16 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
     setTimeout(() => setExportToast(null), 3500);
   };
 
+  // Filtro de estoque ativo de pátio por chassi: lista apenas carros em pátio, em trânsito ou em preparação
+  // Veículos já vendidos (status === 'Vendido' ou com registro na aba de vendas) são estritamente excluídos do estoque ativo
+  const veiculosEstoqueAtivo = useMemo(() => {
+    return veiculos.filter((v) => !checkIsVeiculoVendido(v, vendas));
+  }, [veiculos, vendas]);
+
   // Dynamic Brand & Color options with stock counts
   const brandOptions = useMemo(() => {
     const brandsMap = new Map<string, number>();
-    veiculos.forEach((v) => {
+    veiculosEstoqueAtivo.forEach((v) => {
       if (v.marca) {
         const key = v.marca.trim().toLowerCase();
         brandsMap.set(key, (brandsMap.get(key) || 0) + 1);
@@ -259,7 +268,7 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
 
     const allBrandsSet = new Set<string>();
     marcasList.forEach((m) => allBrandsSet.add(m.trim()));
-    veiculos.forEach((v) => {
+    veiculosEstoqueAtivo.forEach((v) => {
       if (v.marca) allBrandsSet.add(v.marca.trim());
     });
 
@@ -273,11 +282,11 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
           label: count > 0 ? `${marca} (${count})` : marca,
         };
       });
-  }, [veiculos, marcasList]);
+  }, [veiculosEstoqueAtivo, marcasList]);
 
   const colorOptions = useMemo(() => {
     const colorsMap = new Map<string, number>();
-    veiculos.forEach((v) => {
+    veiculosEstoqueAtivo.forEach((v) => {
       if (v.cor) {
         const key = v.cor.trim().toLowerCase();
         colorsMap.set(key, (colorsMap.get(key) || 0) + 1);
@@ -286,7 +295,7 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
 
     const allColorsSet = new Set<string>();
     coresList.forEach((c) => allColorsSet.add(c.trim()));
-    veiculos.forEach((v) => {
+    veiculosEstoqueAtivo.forEach((v) => {
       if (v.cor) allColorsSet.add(v.cor.trim());
     });
 
@@ -300,17 +309,17 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
           label: count > 0 ? `${cor} (${count})` : cor,
         };
       });
-  }, [veiculos, coresList]);
+  }, [veiculosEstoqueAtivo, coresList]);
 
   // Unique Years
   const uniqueAnos = useMemo(() => {
     const anos = new Set<number>();
-    veiculos.forEach((v) => {
+    veiculosEstoqueAtivo.forEach((v) => {
       if (v.anoModelo) anos.add(v.anoModelo);
       else if (v.ano) anos.add(v.ano);
     });
     return Array.from(anos).sort((a, b) => b - a);
-  }, [veiculos]);
+  }, [veiculosEstoqueAtivo]);
 
   // Count active filters
   const activeFiltersCount = useMemo(() => {
@@ -370,17 +379,16 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
 
   const statusCounts = useMemo(() => {
     return {
-      todos: veiculos.length,
-      disponivel: veiculos.filter((v) => v.status === 'Disponível').length,
-      alugado: veiculos.filter((v) => v.status === 'Alugado').length,
-      preparacao: veiculos.filter((v) => v.status === 'Em Preparação').length,
-      manutencao: veiculos.filter((v) => v.status === 'Em Manutenção').length,
-      vendido: veiculos.filter((v) => v.status === 'Vendido').length,
+      todos: veiculosEstoqueAtivo.length,
+      disponivel: veiculosEstoqueAtivo.filter((v) => v.status === 'Disponível').length,
+      alugado: veiculosEstoqueAtivo.filter((v) => v.status === 'Alugado').length,
+      preparacao: veiculosEstoqueAtivo.filter((v) => v.status === 'Em Preparação').length,
+      manutencao: veiculosEstoqueAtivo.filter((v) => v.status === 'Em Manutenção').length,
     };
-  }, [veiculos]);
+  }, [veiculosEstoqueAtivo]);
 
   const filteredVeiculos = useMemo(() => {
-    return veiculos
+    return veiculosEstoqueAtivo
       .filter((v) => {
         const matchesSearch =
           v.modelo.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -467,7 +475,7 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
         return 0;
       });
   }, [
-    veiculos,
+    veiculosEstoqueAtivo,
     searchTerm,
     statusFilter,
     marcaFilter,
@@ -488,8 +496,8 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
   }, [filteredVeiculos]);
 
   const totalSemNota = useMemo(() => {
-    return veiculos.filter((v) => v.status !== 'Vendido' && v.notaEntradaGerada === false).length;
-  }, [veiculos]);
+    return veiculosEstoqueAtivo.filter((v) => v.notaEntradaGerada === false).length;
+  }, [veiculosEstoqueAtivo]);
 
   return (
     <div className="space-y-6 animate-fadeIn text-slate-200">
@@ -677,23 +685,6 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
               {statusCounts.manutencao}
             </span>
           </button>
-
-          <button
-            onClick={() => setStatusFilter('Vendido')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer flex items-center gap-1.5 ${
-              statusFilter === 'Vendido'
-                ? 'bg-purple-600 text-white shadow-sm'
-                : 'bg-[#16171f] text-slate-400 hover:text-purple-400 border border-white/5'
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-purple-400" />
-            <span>Vendidos (Baixa)</span>
-            <span className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-              statusFilter === 'Vendido' ? 'bg-purple-700 text-white' : 'bg-purple-500/10 text-purple-400'
-            }`}>
-              {statusCounts.vendido}
-            </span>
-          </button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -729,7 +720,6 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
               <option value="Alugado">Alugado</option>
               <option value="Em Preparação">Em Preparação</option>
               <option value="Em Manutenção">Em Manutenção</option>
-              <option value="Vendido">Vendido</option>
             </select>
           </div>
 

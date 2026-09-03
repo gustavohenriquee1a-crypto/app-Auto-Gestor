@@ -29,7 +29,15 @@ import {
   Compass
 } from 'lucide-react';
 import { Veiculo, Usuario, VendaVeiculo } from '../types';
-import { formatCurrency, formatKm, formatDate, calculateAging, calculateCustoTotal } from '../utils/formatters';
+import { 
+  formatCurrency, 
+  formatKm, 
+  formatDate, 
+  calculateAging, 
+  calculateCustoTotal,
+  getVendaForVeiculo,
+  checkIsVeiculoVendido
+} from '../utils/formatters';
 
 interface CatalogoVendasViewProps {
   veiculos: Veiculo[];
@@ -70,27 +78,19 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
   const commissionRate = currentUser?.comissaoPadraoPercent || 1.5;
 
   // Helper para identificar a venda vinculada ao veículo (via v.venda ou lista global de vendas)
-  const getVendaForVeiculo = (v: Veiculo): VendaVeiculo | undefined => {
-    if (v.venda) return v.venda;
-    if (!vendas || vendas.length === 0) return undefined;
-    return vendas.find((vd) =>
-      vd.veiculoId === v.id ||
-      (vd.placa && v.placa && vd.placa.toUpperCase().trim() === v.placa.toUpperCase().trim()) ||
-      (vd.chassi && v.chassi && vd.chassi.toUpperCase().trim() === v.chassi.toUpperCase().trim())
-    );
+  const getVenda = (v: Veiculo): VendaVeiculo | undefined => {
+    return getVendaForVeiculo(v, vendas);
   };
 
   // Identifica com precisão se o veículo já foi vendido
-  const checkIsVeiculoVendido = (v: Veiculo): boolean => {
-    if (v.status === 'Vendido' || v.status_estoque === 'Vendido') return true;
-    if (Boolean(v.venda)) return true;
-    return Boolean(getVendaForVeiculo(v));
+  const isVendido = (v: Veiculo): boolean => {
+    return checkIsVeiculoVendido(v, vendas);
   };
 
   // Verifica se o usuário conectado foi quem realizou a venda deste veículo
   const checkIsMinhaVenda = (v: Veiculo, vendaParam?: VendaVeiculo): boolean => {
     if (!currentUser) return false;
-    const targetVenda = vendaParam || getVendaForVeiculo(v);
+    const targetVenda = vendaParam || getVenda(v);
     if (!targetVenda) return false;
 
     // Verificar ID do vendedor
@@ -109,41 +109,26 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
   };
 
   // Filter vehicles eligible for the sales catalog:
-  // - REGRA DE NEGÓCIO: Se o carro foi vendido:
-  //   * Administradores têm visão geral de todas as vendas da loja
-  //   * Vendedores vêem APENAS os veículos que eles próprios venderam
-  //   * Para os demais vendedores, o veículo vendido FICA INVISÍVEL no catálogo (não pode mais ser ofertado nem visualizado)
-  // - Veículos 'Em Trânsito' ou 'Alugado' não entram no Catálogo Comercial de Vendas.
+  // - REGRA DE NEGÓCIO: Veículos vendidos somem imediatamente desta vitrine comercial para todos os usuários.
+  //   Apenas veículos com status_estoque !== 'Vendido' E status !== 'Vendido' e sem registro de venda são exibidos no catálogo.
+  // - Veículos 'Em Trânsito' ou 'Alugado' também não entram no Catálogo Comercial de Vendas.
   const veiculosCatalogo = useMemo(() => {
     return veiculos.filter((v) => {
-      // 1. Veículos 'Em Trânsito' ou 'Alugado' NUNCA aparecem no catálogo comercial
+      // 1. Veículos com status ou status_estoque 'Vendido', ou que possuem registro de venda, SOMEM imediatamente desta vitrine
+      if (checkIsVeiculoVendido(v, vendas)) {
+        return false;
+      }
+
+      // 2. Veículos 'Em Trânsito' ou 'Alugado' não entram no Catálogo Comercial de Vendas
       if (v.status_estoque === 'Em Trânsito' || v.status === 'Alugado') {
         return false;
       }
 
-      const isVendido = checkIsVeiculoVendido(v);
-      const venda = getVendaForVeiculo(v);
-
-      if (isVendido) {
-        // Se foi vendido:
-        // Admin vê todas as vendas (visão geral)
-        if (isAdmin) {
-          return true;
-        }
-        // Vendedor que realizou a venda vê o veículo vendido por ele
-        if (checkIsMinhaVenda(v, venda)) {
-          return true;
-        }
-        // Para qualquer outro vendedor/usuário, fica completamente oculto do catálogo
-        return false;
-      }
-
-      // Se NÃO foi vendido:
-      // Exibir veículos disponíveis para venda: 'No Pátio' ou 'Em Preparação'
+      // 3. Exibir veículos disponíveis para venda: 'No Pátio' ou 'Em Preparação'
       const statusEstoque = v.status_estoque || (v.status === 'Em Preparação' ? 'Em Preparação' : 'No Pátio');
       return statusEstoque === 'No Pátio' || statusEstoque === 'Em Preparação';
     });
-  }, [veiculos, vendas, currentUser, isAdmin]);
+  }, [veiculos, vendas]);
 
   // Extract unique brands with vehicle counts
   const uniqueBrands = useMemo(() => {
@@ -222,15 +207,13 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
           v.placa.toLowerCase().includes(searchTerm.toLowerCase()) ||
           (v.cor && v.cor.toLowerCase().includes(searchTerm.toLowerCase()));
 
-        const isVendido = checkIsVeiculoVendido(v);
-        const isPrep = (v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação') && !isVendido;
-        const isPatio = (v.status === 'Disponível' || v.status_estoque === 'No Pátio') && !isPrep && !isVendido;
+        const isPrep = v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação';
+        const isPatio = !isPrep;
 
         const matchesStatus =
           statusFilter === 'Todos' ||
           (statusFilter === 'Disponível' && isPatio) ||
-          (statusFilter === 'Em Preparação' && isPrep) ||
-          (statusFilter === 'Vendidos' && isVendido);
+          (statusFilter === 'Em Preparação' && isPrep);
 
         const matchesMarca = marcaFilter === 'Todas' || v.marca === marcaFilter;
         const matchesCombustivel = combustivelFilter === 'Todos' || v.combustivel === combustivelFilter;
@@ -240,8 +223,7 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
         const matchesAnoMax = anoMax === '' || v.ano <= Number(anoMax);
 
         // Price filter (based on suggested sale price or FIPE)
-        const venda = getVendaForVeiculo(v);
-        const effectivePrice = isVendido && venda?.valorVenda ? venda.valorVenda : (v.valorVendaSugerido || v.valorFipe || 50000);
+        const effectivePrice = v.valorVendaSugerido || v.valorFipe || 50000;
         const matchesPrecoMin = precoMin === '' || effectivePrice >= Number(precoMin);
         const matchesPrecoMax = precoMax === '' || effectivePrice <= Number(precoMax);
 
@@ -257,13 +239,8 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
         );
       })
       .sort((a, b) => {
-        const isVendidoA = checkIsVeiculoVendido(a);
-        const isVendidoB = checkIsVeiculoVendido(b);
-        const vendaA = getVendaForVeiculo(a);
-        const vendaB = getVendaForVeiculo(b);
-
-        const priceA = isVendidoA && vendaA?.valorVenda ? vendaA.valorVenda : (a.valorVendaSugerido || a.valorFipe || 0);
-        const priceB = isVendidoB && vendaB?.valorVenda ? vendaB.valorVenda : (b.valorVendaSugerido || b.valorFipe || 0);
+        const priceA = a.valorVendaSugerido || a.valorFipe || 0;
+        const priceB = b.valorVendaSugerido || b.valorFipe || 0;
 
         if (sortOrder === 'preco-asc') return priceA - priceB;
         if (sortOrder === 'preco-desc') return priceB - priceA;
@@ -272,44 +249,29 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
         // Recentes
         return new Date(b.dataEntrada).getTime() - new Date(a.dataEntrada).getTime();
       });
-  }, [veiculosCatalogo, searchTerm, statusFilter, marcaFilter, combustivelFilter, anoMin, anoMax, precoMin, precoMax, sortOrder, currentUser, vendas]);
+  }, [veiculosCatalogo, searchTerm, statusFilter, marcaFilter, combustivelFilter, anoMin, anoMax, precoMin, precoMax, sortOrder]);
 
   // Calculate Catalog KPIs
   const stats = useMemo(() => {
     const totalCount = veiculosCatalogo.length;
-    const vendidos = veiculosCatalogo.filter((v) => checkIsVeiculoVendido(v));
-    const vendidosCount = vendidos.length;
-    const preparacaoCount = veiculosCatalogo.filter((v) => !checkIsVeiculoVendido(v) && (v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação')).length;
-    const disponiveisCount = veiculosCatalogo.filter((v) => !checkIsVeiculoVendido(v) && (v.status === 'Disponível' || v.status_estoque === 'No Pátio') && v.status !== 'Em Preparação' && v.status_estoque !== 'Em Preparação').length;
+    const preparacaoCount = veiculosCatalogo.filter((v) => v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação').length;
+    const disponiveisCount = totalCount - preparacaoCount;
 
     let totalValorEstoque = 0;
-    veiculosCatalogo.filter((v) => !checkIsVeiculoVendido(v)).forEach((v) => {
+    veiculosCatalogo.forEach((v) => {
       totalValorEstoque += v.valorVendaSugerido || v.valorFipe || 0;
     });
 
-    let totalValorVendido = 0;
-    let totalComissaoVendidos = 0;
-    vendidos.forEach((v) => {
-      const vd = getVendaForVeiculo(v);
-      const val = vd?.valorVenda || v.valorVendaEfetivo || v.valorVendaSugerido || 0;
-      totalValorVendido += val;
-      totalComissaoVendidos += vd?.comissaoValor || 0;
-    });
-
-    const activeShowroomCount = disponiveisCount + preparacaoCount;
-    const ticketMedio = activeShowroomCount > 0 ? totalValorEstoque / activeShowroomCount : 0;
+    const ticketMedio = totalCount > 0 ? totalValorEstoque / totalCount : 0;
 
     return {
       totalCount,
       disponiveisCount,
       preparacaoCount,
-      vendidosCount,
       totalValorEstoque,
-      totalValorVendido,
-      totalComissaoVendidos,
       ticketMedio,
     };
-  }, [veiculosCatalogo, vendas]);
+  }, [veiculosCatalogo]);
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -388,17 +350,15 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
         <div className="bg-[#111116] p-5 rounded-2xl border border-white/5 flex items-center justify-between">
           <div>
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              {isAdmin ? 'Total Vendidos (Loja)' : 'Minhas Vendas'}
+              Oficina / Preparação
             </span>
-            <p className="text-2xl font-black text-amber-400 mt-1">{stats.vendidosCount}</p>
+            <p className="text-2xl font-black text-amber-400 mt-1">{stats.preparacaoCount}</p>
             <span className="text-[11px] text-slate-500">
-              {isAdmin
-                ? `Total: ${formatCurrency(stats.totalValorVendido)}`
-                : `Comissão: ${formatCurrency(stats.totalComissaoVendidos)}`}
+              Revisão e estética para showroom
             </span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center font-bold">
-            <Award size={24} />
+            <Wrench size={24} />
           </div>
         </div>
       </div>
@@ -407,7 +367,7 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
       <div className="bg-[#111116] p-5 rounded-2xl border border-white/5 space-y-4">
         {/* Main Search and Quick Actions */}
         <div className="space-y-3">
-          {/* Status Filter Chips: Todos / Disponíveis / Em Preparação / Vendidos */}
+          {/* Status Filter Chips: Todos / Disponíveis / Em Preparação */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-slate-400 font-semibold uppercase text-[10px] mr-1">Status no Showroom:</span>
             <button
@@ -441,17 +401,6 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
             >
               <span className="w-2 h-2 rounded-full bg-amber-400" />
               🔧 Em Preparação / Oficina ({stats.preparacaoCount})
-            </button>
-            <button
-              onClick={() => setStatusFilter('Vendidos')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition border flex items-center gap-1.5 ${
-                statusFilter === 'Vendidos'
-                  ? 'bg-purple-600 text-white border-purple-500 shadow-xs'
-                  : 'bg-white/5 text-slate-300 border-white/5 hover:bg-white/10'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-purple-400" />
-              🏁 {isAdmin ? `Todas as Vendas (${stats.vendidosCount})` : `Minhas Vendas (${stats.vendidosCount})`}
             </button>
           </div>
 

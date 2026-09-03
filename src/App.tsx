@@ -113,7 +113,7 @@ import {
   ParametrosMovimentacaoVeiculo, 
   prepararMovimentacaoVeiculo 
 } from './services/movimentacaoVeiculoService';
-import { calculateAging, checkRevisaoNecessaria, calculateTotalDespesas } from './utils/formatters';
+import { calculateAging, checkRevisaoNecessaria, calculateTotalDespesas, checkIsVeiculoVendido } from './utils/formatters';
 
 const STORAGE_KEYS = {
   VEICULOS: 'autogestor_veiculos_v1',
@@ -418,6 +418,52 @@ export default function App() {
     localStorage.setItem('autogestor_contas_bancarias_v1', JSON.stringify(contasBancarias));
   }, [contasBancarias]);
 
+  // Reconciliação e persistência automática: garante que qualquer veículo que conste na lista/aba de vendas
+  // seja formalmente atualizado como 'Vendido' no estoque e no Firestore, impedindo contagem indevida
+  useEffect(() => {
+    if (!vendas || vendas.length === 0 || !veiculos || veiculos.length === 0) return;
+
+    const cleanPlaca = (p?: string) => (p || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const cleanChassi = (c?: string) => (c || '').trim().toUpperCase();
+
+    let needsStateUpdate = false;
+    const reconciled = veiculos.map((v) => {
+      const vPlaca = cleanPlaca(v.placa);
+      const vChassi = cleanChassi(v.chassi);
+
+      const matchingVenda = vendas.find((vd) => {
+        if (vd.veiculoId && (vd.veiculoId === v.id || vd.veiculoId === (v as any).veiculoId)) return true;
+        if (vd.id && vd.id === v.id) return true;
+        if (vPlaca && vd.placa && cleanPlaca(vd.placa) === vPlaca) return true;
+        if (vChassi && vd.chassi && vChassi.length >= 6 && cleanChassi(vd.chassi) === vChassi) return true;
+        return false;
+      });
+
+      if (matchingVenda) {
+        const isNotFormallyMarked = v.status !== 'Vendido' || v.status_estoque !== 'Vendido' || !v.venda;
+        if (isNotFormallyMarked) {
+          needsStateUpdate = true;
+          const updated: Veiculo = {
+            ...v,
+            status: 'Vendido',
+            status_estoque: 'Vendido',
+            dataVenda: v.dataVenda || matchingVenda.dataVenda,
+            venda: v.venda || matchingVenda,
+          };
+          saveVeiculoFirestore(updated).catch((err) => {
+            console.error('Erro ao persistir status de veículo vendido no Firestore:', err);
+          });
+          return updated;
+        }
+      }
+      return v;
+    });
+
+    if (needsStateUpdate) {
+      setVeiculos(reconciled);
+    }
+  }, [vendas, veiculos]);
+
   // Global counts for alerts and badges
   const counts = useMemo(() => {
     let alugados = 0;
@@ -426,8 +472,16 @@ export default function App() {
     let alertasAging = 0;
     let alertasPagamento = 0;
     let alertasRevisao = 0;
+    let estoqueAtivoCount = 0;
 
     veiculos.forEach((v) => {
+      const isVendido = checkIsVeiculoVendido(v, vendas);
+      if (isVendido) {
+        // Veículos vendidos não entram na contagem de estoque ativo nem do showroom comercial
+        return;
+      }
+
+      estoqueAtivoCount++;
       if (v.status === 'Alugado') alugados++;
       if (v.status === 'Disponível') disponiveis++;
       if (v.status_estoque === 'Em Trânsito') emTransito++;
@@ -480,7 +534,7 @@ export default function App() {
     });
 
     return {
-      totalVeiculos: veiculos.length,
+      totalVeiculos: estoqueAtivoCount,
       disponiveis,
       alugados,
       emTransito,
@@ -2447,6 +2501,7 @@ export default function App() {
           {activeTab === 'catalogo' && (
             <CatalogoVendasView
               veiculos={veiculos}
+              vendas={vendas}
               currentUser={currentUserProfile}
               onOpenVenda={openVenda}
               onOpenDossie={openDossie}
@@ -2459,6 +2514,7 @@ export default function App() {
               vendas={vendas}
               veiculos={veiculos}
               currentUser={currentUserProfile}
+              onOpenDossie={openDossie}
               onUpdateVendaComissao={handleUpdateVendaComissao}
               onUpdateVenda={handleUpdateVenda}
               onDeleteVenda={handleDeleteVenda}
@@ -2507,6 +2563,7 @@ export default function App() {
           {activeTab === 'estoque' && (
             <EstoqueView
               veiculos={veiculos}
+              vendas={vendas}
               currentUser={currentUserProfile}
               onOpenDossie={openDossie}
               onOpenNovoVeiculo={() => {
@@ -2554,6 +2611,7 @@ export default function App() {
           {activeTab === 'aging' && (
             <AgingView
               veiculos={veiculos}
+              vendas={vendas}
               onOpenDossie={openDossie}
               onOpenVenda={openVenda}
             />

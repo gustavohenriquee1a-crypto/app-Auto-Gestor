@@ -682,3 +682,46 @@ export const calculateDRESummary = (
   };
 };
 
+/**
+ * Helper unificado para buscar a venda correspondente a um veículo
+ */
+export const getVendaForVeiculo = (v: Veiculo, vendasList: VendaVeiculo[] = []): VendaVeiculo | undefined => {
+  if (!v) return undefined;
+  if (v.venda) return v.venda;
+  if (!vendasList || vendasList.length === 0) return undefined;
+
+  const cleanPlaca = (p?: string) => (p || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  const cleanChassi = (c?: string) => (c || '').trim().toUpperCase();
+
+  const vPlaca = cleanPlaca(v.placa);
+  const vChassi = cleanChassi(v.chassi);
+
+  return vendasList.find((vd) => {
+    if (vd.veiculoId && (vd.veiculoId === v.id || vd.veiculoId === (v as any).veiculoId)) return true;
+    if (vd.id && vd.id === v.id) return true;
+    if (vPlaca && vd.placa && cleanPlaca(vd.placa) === vPlaca) return true;
+    if (vChassi && vd.chassi && vChassi.length >= 6 && cleanChassi(vd.chassi) === vChassi) return true;
+    return false;
+  });
+};
+
+/**
+ * REGRA CRÍTICA DE NEGÓCIO: Identifica com precisão absoluta se um veículo já foi vendido.
+ * Um veículo é considerado vendido se:
+ * 1) Seu status ou status_estoque for 'Vendido'
+ * 2) Possui dataVenda preenchida ou objeto v.venda
+ * 3) Possui qualquer registro correspondente na lista global de vendas (por ID, placa ou chassi)
+ */
+export const checkIsVeiculoVendido = (v: Veiculo, vendasList: VendaVeiculo[] = []): boolean => {
+  if (!v) return false;
+  if (
+    v.status === 'Vendido' ||
+    v.status_estoque === 'Vendido' ||
+    Boolean(v.dataVenda) ||
+    Boolean(v.venda)
+  ) {
+    return true;
+  }
+  return Boolean(getVendaForVeiculo(v, vendasList));
+};
+

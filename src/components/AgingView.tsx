@@ -11,27 +11,30 @@ import {
   ShieldAlert,
   Percent
 } from 'lucide-react';
-import { Veiculo } from '../types';
+import { Veiculo, VendaVeiculo } from '../types';
 import { 
   formatCurrency, 
   formatDate, 
   formatKm, 
   calculateAging, 
-  calculateCustoTotal 
+  calculateCustoTotal,
+  checkIsVeiculoVendido
 } from '../utils/formatters';
 
 interface AgingViewProps {
   veiculos: Veiculo[];
+  vendas?: VendaVeiculo[];
   onOpenDossie: (veiculo: Veiculo) => void;
   onOpenVenda: (veiculo: Veiculo) => void;
 }
 
 export const AgingView: React.FC<AgingViewProps> = ({
   veiculos,
+  vendas = [],
   onOpenDossie,
   onOpenVenda,
 }) => {
-  const veiculosAtivos = veiculos.filter((v) => v.status !== 'Vendido');
+  const veiculosAtivos = veiculos.filter((v) => !checkIsVeiculoVendido(v, vendas));
 
   // Categorize by aging ranges
   const greenVehicles = veiculosAtivos.filter(

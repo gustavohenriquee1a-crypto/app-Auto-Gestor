@@ -47,7 +47,8 @@ import {
   formatKm, 
   calculateAging, 
   calculateCustoTotal,
-  checkRevisaoNecessaria
+  checkRevisaoNecessaria,
+  checkIsVeiculoVendido
 } from '../utils/formatters';
 
 interface DashboardViewProps {
@@ -74,7 +75,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [tipoGraficoOperacional, setTipoGraficoOperacional] = useState<'mesAtual' | 'evolucao'>('mesAtual');
 
   // 1. Calculations for KPIs
-  const veiculosAtivos = veiculos.filter(v => v.status !== 'Vendido');
+  const veiculosAtivos = veiculos.filter(v => !checkIsVeiculoVendido(v, vendas));
   const veiculosAlugados = veiculosAtivos.filter(v => v.status === 'Alugado');
   const taxaOcupacao = veiculosAtivos.length > 0 
     ? Math.round((veiculosAlugados.length / veiculosAtivos.length) * 100) 

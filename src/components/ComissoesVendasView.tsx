@@ -17,7 +17,8 @@ import {
   Eye,
   Trash2,
   FileCheck,
-  Printer
+  Printer,
+  FolderOpen
 } from 'lucide-react';
 import { VendaVeiculo, Usuario, Veiculo } from '../types';
 import { formatCurrency } from '../utils/formatters';
@@ -27,6 +28,7 @@ interface ComissoesVendasViewProps {
   vendas: VendaVeiculo[];
   veiculos?: Veiculo[];
   currentUser: Usuario | null;
+  onOpenDossie?: (veiculo: Veiculo) => void;
   onUpdateVendaComissao?: (vendaId: string, novoStatus: 'Pendente' | 'Paga') => void;
   onUpdateVenda?: (vendaAtualizada: VendaVeiculo) => Promise<void> | void;
   onDeleteVenda?: (vendaId: string) => Promise<void> | void;
@@ -36,6 +38,7 @@ export const ComissoesVendasView: React.FC<ComissoesVendasViewProps> = ({
   vendas,
   veiculos = [],
   currentUser,
+  onOpenDossie,
   onUpdateVendaComissao,
   onUpdateVenda,
   onDeleteVenda,
@@ -47,6 +50,16 @@ export const ComissoesVendasView: React.FC<ComissoesVendasViewProps> = ({
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
 
   const isAdminOrGestor = currentUser?.role === 'admin' || currentUser?.role === 'gestor';
+
+  const getVeiculoAssociado = (venda: VendaVeiculo | null): Veiculo | undefined => {
+    if (!venda || !veiculos || veiculos.length === 0) return undefined;
+    return veiculos.find((vec) => {
+      if (venda.veiculoId && vec.id === venda.veiculoId) return true;
+      if (venda.placa && vec.placa && vec.placa.trim().toUpperCase() === venda.placa.trim().toUpperCase()) return true;
+      if (venda.chassi && vec.chassi && vec.chassi.trim().toUpperCase() === venda.chassi.trim().toUpperCase()) return true;
+      return false;
+    });
+  };
 
   const handleOpenDetails = (v: VendaVeiculo) => {
     setSelectedVendaDetails(v);
@@ -413,6 +426,41 @@ export const ComissoesVendasView: React.FC<ComissoesVendasViewProps> = ({
                             <span>Detalhes</span>
                           </button>
 
+                          {isAdminOrGestor && onOpenDossie && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const vec = getVeiculoAssociado(v) || {
+                                  id: v.veiculoId || v.id,
+                                  modelo: v.modelo,
+                                  marca: v.marca || '',
+                                  ano: v.anoModelo || v.ano || new Date().getFullYear(),
+                                  placa: v.placa,
+                                  chassi: v.chassi || '',
+                                  cor: '',
+                                  combustivel: 'Flex',
+                                  kmAtual: v.kmVenda || 0,
+                                  custoAquisicao: v.valorCompra || 0,
+                                  valorVendaSugerido: v.valorVenda,
+                                  valorVendaEfetivo: v.valorVenda,
+                                  status: 'Vendido',
+                                  status_estoque: 'Vendido',
+                                  dataEntrada: v.dataEntrada || v.dataVenda,
+                                  dataVenda: v.dataVenda,
+                                  venda: v,
+                                  despesas: [],
+                                };
+                                onOpenDossie(vec);
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 font-bold text-[11px] flex items-center gap-1.5 transition cursor-pointer"
+                              title="Abrir Dossiê Completo do Veículo (Histórico, Custos e DRE)"
+                            >
+                              <FolderOpen size={13} />
+                              <span>Dossiê</span>
+                            </button>
+                          )}
+
                           {isAdminOrGestor && onUpdateVendaComissao && (
                             <button
                               type="button"
@@ -455,8 +503,9 @@ export const ComissoesVendasView: React.FC<ComissoesVendasViewProps> = ({
           isOpen={isDetailsOpen}
           onClose={handleCloseDetails}
           venda={selectedVendaDetails}
-          veiculoAssociado={veiculos.find((vec) => vec.id === selectedVendaDetails.veiculoId || vec.placa === selectedVendaDetails.placa)}
+          veiculoAssociado={getVeiculoAssociado(selectedVendaDetails)}
           currentUser={currentUser}
+          onOpenDossie={onOpenDossie}
           onUpdateVenda={onUpdateVenda}
           onDeleteVenda={onDeleteVenda}
         />

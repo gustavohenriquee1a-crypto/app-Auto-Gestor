@@ -590,6 +590,7 @@ export interface Veiculo {
   observacoes?: string;
   despesas: DespesaVeiculo[];
   contratoAtivo?: ContratoLocacao;
+  dataVenda?: string;
   venda?: VendaVeiculo;
   historicoStatus?: EventoHistoricoVeiculo[];
   historicoAuditoriaStatus?: LogAuditoriaStatusEstoque[];

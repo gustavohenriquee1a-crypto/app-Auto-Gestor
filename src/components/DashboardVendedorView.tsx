@@ -27,7 +27,7 @@ import {
   ShoppingBag
 } from 'lucide-react';
 import { Veiculo, VendaVeiculo, Usuario } from '../types';
-import { formatCurrency, formatKm } from '../utils/formatters';
+import { formatCurrency, formatKm, checkIsVeiculoVendido } from '../utils/formatters';
 
 interface DashboardVendedorViewProps {
   vendas: VendaVeiculo[];
@@ -154,11 +154,7 @@ export const DashboardVendedorView: React.FC<DashboardVendedorViewProps> = ({
   const carrosComerciais = useMemo(() => {
     return veiculos.filter((v) => {
       // 1. Excluir veículos vendidos de qualquer vitrine de vendas
-      if (
-        v.status_estoque === 'Vendido' ||
-        v.status === 'Vendido' ||
-        Boolean(v.venda)
-      ) {
+      if (checkIsVeiculoVendido(v, vendas)) {
         return false;
       }
       if (v.status_estoque === 'Em Trânsito' || v.status === 'Alugado') return false;
@@ -170,12 +166,10 @@ export const DashboardVendedorView: React.FC<DashboardVendedorViewProps> = ({
       if (catalogoTab === 'preparacao') return statusEstoque === 'Em Preparação' || v.status === 'Em Preparação';
       return true;
     });
-  }, [veiculos, catalogoTab]);
+  }, [veiculos, vendas, catalogoTab]);
 
   const countDisponiveis = veiculos.filter((v) => 
-    v.status_estoque !== 'Vendido' && 
-    v.status !== 'Vendido' && 
-    !v.venda && 
+    !checkIsVeiculoVendido(v, vendas) && 
     v.status_estoque !== 'Em Trânsito' && 
     v.status !== 'Alugado' && 
     (v.status === 'Disponível' || v.status_estoque === 'No Pátio') && 
@@ -183,9 +177,7 @@ export const DashboardVendedorView: React.FC<DashboardVendedorViewProps> = ({
   ).length;
 
   const countPreparacao = veiculos.filter((v) => 
-    v.status_estoque !== 'Vendido' && 
-    v.status !== 'Vendido' && 
-    !v.venda && 
+    !checkIsVeiculoVendido(v, vendas) && 
     v.status_estoque !== 'Em Trânsito' && 
     v.status !== 'Alugado' && 
     (v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação')

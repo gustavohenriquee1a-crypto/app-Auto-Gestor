@@ -1,0 +1,152 @@
+{
+  "entities": {
+    "Usuario": {
+      "title": "Usuario",
+      "description": "Usuário do sistema com perfil, status de aprovação e permissões granulares",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "UID do usuário no Firebase Auth" },
+        "email": { "type": "string", "description": "Email do usuário" },
+        "displayName": { "type": "string", "description": "Nome de exibição" },
+        "photoURL": { "type": "string", "description": "URL da foto de perfil" },
+        "role": { "type": "string", "description": "Função no sistema (admin, gestor, vendedor, operador)" },
+        "cargo": { "type": "string", "description": "Cargo ou função descritiva" },
+        "telefone": { "type": "string", "description": "Telefone ou WhatsApp de contato" },
+        "statusAprovacao": { "type": "string", "description": "Status de aprovação pelo admin (pendente, aprovado, recusado)" },
+        "tipoComissaoPadrao": { "type": "string", "description": "Tipo de comissão padrão (percentual ou fixo)" },
+        "comissaoPadraoPercent": { "type": "number", "description": "Percentual de comissão padrão do vendedor" },
+        "comissaoPadraoFixo": { "type": "number", "description": "Valor fixo em R$ de comissão padrão" },
+        "permissoes": {
+          "type": "object",
+          "description": "Permissões granulares de acesso a módulos e dados confidenciais",
+          "properties": {
+            "verEstoque": { "type": "boolean" },
+            "venderCarro": { "type": "boolean" },
+            "verCustosAquisicao": { "type": "boolean" },
+            "verFinanceiroDRE": { "type": "boolean" },
+            "gerenciarLocacao": { "type": "boolean" },
+            "gerenciarRevisoes": { "type": "boolean" },
+            "gerenciarUsuarios": { "type": "boolean" }
+          }
+        },
+        "ativo": { "type": "boolean", "description": "Status de acesso ativo ou bloqueado" },
+        "createdAt": { "type": "string", "description": "Data de criação da conta" },
+        "lastLoginAt": { "type": "string", "description": "Último login realizado" }
+      },
+      "required": ["uid", "email", "displayName"]
+    },
+    "Veiculo": {
+      "title": "Veiculo",
+      "description": "Entidade de Veículo no estoque ou frota",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID do veículo" },
+        "placa": { "type": "string", "description": "Placa do veículo" },
+        "chassi": { "type": "string", "description": "Chassi do veículo" },
+        "modelo": { "type": "string", "description": "Modelo do veículo" },
+        "marca": { "type": "string", "description": "Marca" },
+        "ano": { "type": "number", "description": "Ano de fabricação" },
+        "cor": { "type": "string", "description": "Cor" },
+        "combustivel": { "type": "string", "description": "Combustível" },
+        "kmAtual": { "type": "number", "description": "KM Atual" },
+        "kmUltimaRevisao": { "type": "number", "description": "KM da Última Revisão" },
+        "custoAquisicao": { "type": "number", "description": "Custo de Aquisição" },
+        "valorFipe": { "type": "number", "description": "Valor FIPE" },
+        "valorVendaSugerido": { "type": "number", "description": "Valor de Venda Sugerido" },
+        "dataEntrada": { "type": "string", "description": "Data de Entrada" },
+        "status": { "type": "string", "description": "Status" },
+        "localizacaoPatio": { "type": "string", "description": "Localização no Pátio" },
+        "fotoUrl": { "type": "string", "description": "URL da Foto" },
+        "observacoes": { "type": "string", "description": "Observações" }
+      },
+      "required": ["id", "placa", "chassi", "modelo", "custoAquisicao", "status"]
+    },
+    "VendaVeiculo": {
+      "title": "VendaVeiculo",
+      "description": "Registro de Venda de Veículo e Apuração de Comissão",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID da venda" },
+        "veiculoId": { "type": "string", "description": "ID do veículo" },
+        "placa": { "type": "string", "description": "Placa" },
+        "modelo": { "type": "string", "description": "Modelo" },
+        "chassi": { "type": "string", "description": "Chassi" },
+        "valorCompra": { "type": "number", "description": "Valor de compra" },
+        "totalDespesas": { "type": "number", "description": "Total de despesas" },
+        "custoTotal": { "type": "number", "description": "Custo total" },
+        "valorVenda": { "type": "number", "description": "Valor de venda" },
+        "lucroLiquido": { "type": "number", "description": "Lucro líquido" },
+        "margemLucroPercent": { "type": "number", "description": "Margem de lucro (%)" },
+        "dataEntrada": { "type": "string", "description": "Data de entrada" },
+        "dataVenda": { "type": "string", "description": "Data de venda" },
+        "diasEmPatio": { "type": "number", "description": "Dias em pátio" },
+        "compradorNome": { "type": "string", "description": "Nome do comprador" },
+        "compradorCpf": { "type": "string", "description": "CPF do comprador" },
+        "formaPagamento": { "type": "string", "description": "Forma de pagamento" },
+        "vendedorId": { "type": "string", "description": "UID do vendedor" },
+        "vendedorNome": { "type": "string", "description": "Nome do vendedor" },
+        "vendedorEmail": { "type": "string", "description": "Email do vendedor" },
+        "comissaoPercentual": { "type": "number", "description": "Percentual de comissão" },
+        "comissaoValor": { "type": "number", "description": "Valor em R$ da comissão" },
+        "comissaoStatus": { "type": "string", "description": "Status da comissão (Pendente, Paga)" },
+        "comissaoDataPagamento": { "type": "string", "description": "Data de liquidação da comissão" },
+        "observacoesVenda": { "type": "string", "description": "Observações da venda" }
+      },
+      "required": ["id", "veiculoId", "placa", "valorVenda", "dataVenda"]
+    },
+    "DespesaFixa": {
+      "title": "DespesaFixa",
+      "description": "Despesa Fixa Operacional",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID da despesa fixa" },
+        "categoria": { "type": "string", "description": "Categoria da despesa" },
+        "descricao": { "type": "string", "description": "Descrição" },
+        "valor": { "type": "number", "description": "Valor (R$)" },
+        "mesReferencia": { "type": "string", "description": "Mês de referência" },
+        "dataVencimento": { "type": "string", "description": "Data de vencimento" },
+        "status": { "type": "string", "description": "Status" }
+      },
+      "required": ["id", "descricao", "valor", "mesReferencia"]
+    },
+    "ConfiguracaoLoja": {
+      "title": "ConfiguracaoLoja",
+      "description": "Configurações globais da loja e identidade visual oficial",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID da configuração (geral)" },
+        "nomeLoja": { "type": "string", "description": "Nome fantasia da loja" },
+        "razaoSocial": { "type": "string", "description": "Razão social da empresa" },
+        "cnpj": { "type": "string", "description": "CNPJ oficial" },
+        "endereco": { "type": "string", "description": "Endereço completo da loja" },
+        "cidadeUf": { "type": "string", "description": "Cidade e UF" },
+        "telefone": { "type": "string", "description": "Telefone ou WhatsApp de atendimento" },
+        "logoUrl": { "type": "string", "description": "URL ou Base64 do logotipo oficial da loja para contratos e cabeçalho" },
+        "updatedAt": { "type": "string", "description": "Data da última atualização" }
+      },
+      "required": ["id"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "Usuario",
+      "description": "Perfis de usuários autorizados do sistema"
+    },
+    "/veiculos/{veiculoId}": {
+      "schema": "Veiculo",
+      "description": "Coleção de veículos no estoque e frota"
+    },
+    "/vendas/{vendaId}": {
+      "schema": "VendaVeiculo",
+      "description": "Coleção de vendas realizadas"
+    },
+    "/despesasFixas/{despesaId}": {
+      "schema": "DespesaFixa",
+      "description": "Coleção de despesas operacionais fixas"
+    },
+    "/configuracoes_loja/{configId}": {
+      "schema": "ConfiguracaoLoja",
+      "description": "Configurações globais da loja e logotipo oficial unificado"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "TROCA FÁCIL",
+  "description": "Autos e Repasse - Sistema completo de gestão de estoque, vendas, comissões, rede de fornecedores e prestadores, preparações e locação.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,692 @@
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { 
+  LayoutDashboard, 
+  Car, 
+  DollarSign, 
+  Clock, 
+  PlusCircle, 
+  ShieldCheck, 
+  Wrench, 
+  Users, 
+  LogOut, 
+  Sparkles, 
+  Award, 
+  Camera, 
+  Trash2, 
+  Key, 
+  Gauge, 
+  AlertTriangle, 
+  TrendingUp, 
+  Target, 
+  Building2, 
+  Truck, 
+  BarChart3, 
+  SlidersHorizontal, 
+  Receipt,
+  ChevronDown,
+  Briefcase,
+  Layers,
+  FolderCog,
+  Shield,
+  Calendar
+} from 'lucide-react';
+import { Usuario } from '../types';
+import { subscribeConfiguracoesLoja, saveConfiguracaoLojaFirestore, getConfiguracaoLojaFirestore } from '../services/firestoreService';
+
+interface SidebarProps {
+  activeTab: string;
+  setActiveTab: (tab: string) => void;
+  counts: {
+    totalVeiculos: number;
+    disponiveis: number;
+    alugados: number;
+    emTransito?: number;
+    alertasAging: number;
+    alertasPagamento: number;
+    alertasRevisao: number;
+    totalFornecedores?: number;
+    totalBancos?: number;
+    pendentesAprovacao?: number;
+    comissoesPendentes?: number;
+    despesasPendentes?: number;
+    recebiveisPendentes?: number;
+  };
+  onOpenNovoLancamento: () => void;
+  currentUser: Usuario | null;
+  onOpenUsuarios: () => void;
+  onOpenBackup?: () => void;
+  onLogout: () => void;
+}
+
+interface SubMenuItem {
+  id: string;
+  label: string;
+  icon: React.ElementType;
+  badge?: string | number | null;
+  badgeColor?: string;
+  alertCount?: number;
+  visible: boolean;
+  isActionModal?: boolean;
+  onActionClick?: () => void;
+}
+
+interface AccordionCategory {
+  id: 'comercial' | 'estoque_frota' | 'operacional' | 'financeiro' | 'administracao';
+  title: string;
+  icon: React.ElementType;
+  items: SubMenuItem[];
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({
+  activeTab,
+  setActiveTab,
+  counts,
+  onOpenNovoLancamento,
+  currentUser,
+  onOpenUsuarios,
+  onOpenBackup,
+  onLogout,
+}) => {
+  const isVendedor = currentUser?.role === 'vendedor';
+  const isAdmin = currentUser?.role === 'admin';
+  const perms = currentUser?.permissoes || {
+    verEstoque: true,
+    venderCarro: true,
+    verCustosAquisicao: true,
+    verFinanceiroDRE: true,
+    gerenciarLocacao: true,
+    gerenciarRevisoes: true,
+    gerenciarUsuarios: true,
+  };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [customLogo, setCustomLogo] = useState<string>('');
+
+  // Sincronização em tempo real do logotipo global da loja (documento 'geral' no Firestore)
+  useEffect(() => {
+    // Busca inicial imediata
+    getConfiguracaoLojaFirestore().then((cfg) => {
+      if (cfg?.logoUrl) {
+        setCustomLogo(cfg.logoUrl);
+      }
+    });
+
+    const unsub = subscribeConfiguracoesLoja((config) => {
+      if (config && config.logoUrl !== undefined) {
+        setCustomLogo(config.logoUrl || '');
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const handleLogoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!isAdmin) {
+      alert('Apenas administradores podem alterar o logotipo oficial da loja.');
+      return;
+    }
+
+    if (file.size > 3 * 1024 * 1024) {
+      alert('A imagem deve ter no máximo 3MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      if (base64) {
+        setCustomLogo(base64);
+        try {
+          await saveConfiguracaoLojaFirestore({
+            logoUrl: base64,
+            updatedBy: currentUser?.displayName || 'Administrador',
+            updatedByEmail: currentUser?.email || '',
+          });
+        } catch (err) {
+          console.error('Erro ao sincronizar logotipo no Firestore:', err);
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLogo = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isAdmin) return;
+    setCustomLogo('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    try {
+      await saveConfiguracaoLojaFirestore({
+        logoUrl: '',
+        updatedBy: currentUser?.displayName || 'Administrador',
+        updatedByEmail: currentUser?.email || '',
+      });
+    } catch (err) {
+      console.error('Erro ao remover logotipo no Firestore:', err);
+    }
+  };
+
+  // Definição estruturada dos Menus e Submenus categorizados
+  const categories: AccordionCategory[] = useMemo(() => {
+    return [
+      // 1. Comercial
+      {
+        id: 'comercial',
+        title: 'Comercial',
+        icon: Briefcase,
+        items: [
+          {
+            id: 'catalogo',
+            label: 'Catálogo de Vendas',
+            icon: Sparkles,
+            badge: `${counts.disponiveis} no pátio`,
+            badgeColor: 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30',
+            visible: perms.verCatalogo !== undefined ? perms.verCatalogo : perms.verEstoque !== false,
+          },
+          {
+            id: 'crm-analytics',
+            label: 'CRM & Inteligência de Vendas',
+            icon: Target,
+            badge: 'Leads & Niver',
+            badgeColor: 'bg-pink-500/20 text-pink-300 font-bold border border-pink-500/30',
+            visible: perms.verCrmAnalytics !== undefined 
+              ? perms.verCrmAnalytics 
+              : !isVendedor && (perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false),
+          },
+          {
+            id: 'vendedor-dash',
+            label: 'Dashboard do Vendedor',
+            icon: LayoutDashboard,
+            badge: `${currentUser?.comissaoPadraoPercent || 1.5}% Comis.`,
+            badgeColor: 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30',
+            visible: perms.verVendedorDash !== undefined ? perms.verVendedorDash : (isVendedor || perms.venderCarro !== false),
+          },
+          {
+            id: 'comissoes',
+            label: isVendedor ? 'Minhas Vendas & Comissões' : 'Comissões de Vendas',
+            icon: Award,
+            badge: (counts.comissoesPendentes || 0) > 0 ? `${counts.comissoesPendentes} pendentes` : isVendedor ? 'Extrato' : 'Ranking',
+            badgeColor: (counts.comissoesPendentes || 0) > 0 ? 'bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30 animate-pulse' : 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30',
+            alertCount: counts.comissoesPendentes || 0,
+            visible: perms.verComissoes !== undefined ? perms.verComissoes : true,
+          },
+          {
+            id: 'bancos',
+            label: 'Bancos & Financiamento',
+            icon: ShieldCheck,
+            badge: (counts.totalBancos ?? 0) > 0 ? `${counts.totalBancos}` : 'TAC',
+            badgeColor: 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30',
+            visible: perms.verBancos !== undefined 
+              ? perms.verBancos 
+              : (perms.gerenciarBancos !== false || perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false) && !isVendedor,
+          },
+        ],
+      },
+
+      // 2. Estoque & Frota
+      {
+        id: 'estoque_frota',
+        title: 'Estoque & Frota',
+        icon: Car,
+        items: [
+          {
+            id: 'estoque',
+            label: 'Estoque / Por Chassi',
+            icon: Car,
+            badge: counts.totalVeiculos,
+            badgeColor: 'bg-slate-700 text-slate-200 font-bold',
+            visible: perms.verEstoque !== undefined ? perms.verEstoque : !isVendedor,
+          },
+          {
+            id: 'aging',
+            label: 'Aging de Estoque (Giro)',
+            icon: Clock,
+            badge: counts.alertasAging > 0 ? `${counts.alertasAging} crítico` : null,
+            badgeColor: 'bg-rose-500 text-white font-bold animate-pulse',
+            alertCount: counts.alertasAging || 0,
+            visible: perms.verAging !== undefined ? perms.verAging : !isVendedor && perms.verEstoque !== false,
+          },
+          {
+            id: 'locacao-contratos',
+            label: 'Locação & Motoristas',
+            icon: Key,
+            badge: counts.alertasPagamento > 0 ? `${counts.alertasPagamento} pendentes` : `${counts.alugados} ativos`,
+            badgeColor: counts.alertasPagamento > 0 ? 'bg-amber-500 text-white font-bold animate-pulse' : 'bg-emerald-600/80 text-white',
+            alertCount: counts.alertasPagamento || 0,
+            visible: perms.verLocacaoContratos !== undefined ? perms.verLocacaoContratos : perms.gerenciarLocacao !== false,
+          },
+        ],
+      },
+
+      // 3. Operacional
+      {
+        id: 'operacional',
+        title: 'Operacional',
+        icon: Wrench,
+        items: [
+          {
+            id: 'funil-preparacao',
+            label: 'Funil de Preparação (Kanban)',
+            icon: SlidersHorizontal,
+            badge: 'Kanban Pátio',
+            badgeColor: 'bg-orange-500/20 text-orange-300 font-bold border border-orange-500/30',
+            visible: perms.verFunilPreparacao !== undefined 
+              ? perms.verFunilPreparacao 
+              : perms.gerenciarRevisoes !== false || currentUser?.role === 'admin' || currentUser?.role === 'gestor',
+          },
+          {
+            id: 'logistica',
+            label: 'Logística & Trânsito',
+            icon: Truck,
+            badge: (counts.emTransito ?? 0) > 0 ? `${counts.emTransito} em viagem` : null,
+            badgeColor: (counts.emTransito ?? 0) > 0 ? 'bg-indigo-500 text-white font-black animate-pulse' : 'bg-indigo-500/20 text-indigo-300 font-bold border border-indigo-500/30',
+            alertCount: counts.emTransito || 0,
+            visible: perms.verLogistica !== undefined 
+              ? perms.verLogistica 
+              : (perms.gerenciarLogistica !== false && perms.verEstoque !== false && !isVendedor),
+          },
+          {
+            id: 'revisoes',
+            label: 'Revisões & Manutenção',
+            icon: Wrench,
+            badge: counts.alertasRevisao > 0 ? `${counts.alertasRevisao} urgente` : null,
+            badgeColor: 'bg-red-600 text-white font-bold animate-pulse',
+            alertCount: counts.alertasRevisao || 0,
+            visible: perms.verRevisoes !== undefined ? perms.verRevisoes : perms.gerenciarRevisoes !== false,
+          },
+          {
+            id: 'fornecedores',
+            label: 'Fornecedores & Prestadores',
+            icon: Building2,
+            badge: (counts.totalFornecedores ?? 0) > 0 ? `${counts.totalFornecedores}` : null,
+            badgeColor: 'bg-indigo-500/20 text-indigo-300 font-bold border border-indigo-500/30',
+            visible: perms.verFornecedores !== undefined 
+              ? perms.verFornecedores 
+              : perms.gerenciarFornecedores !== false && !isVendedor,
+          },
+        ],
+      },
+
+      // 4. Financeiro
+      {
+        id: 'financeiro',
+        title: 'Financeiro',
+        icon: DollarSign,
+        items: [
+          {
+            id: 'contas-pagar',
+            label: 'Contas a Pagar',
+            icon: Receipt,
+            badge: (counts.despesasPendentes ?? 0) > 0 ? `${counts.despesasPendentes} pendentes` : null,
+            badgeColor: 'bg-amber-500 text-white font-bold animate-pulse',
+            alertCount: counts.despesasPendentes || 0,
+            visible: perms.verContasPagar !== undefined 
+              ? perms.verContasPagar 
+              : !isVendedor && perms.verFinanceiroDRE !== false,
+          },
+          {
+            id: 'contas-receber',
+            label: 'Contas a Receber',
+            icon: TrendingUp,
+            badge: (counts.recebiveisPendentes ?? 0) > 0 ? `${counts.recebiveisPendentes} pendentes` : null,
+            badgeColor: 'bg-emerald-500 text-white font-bold animate-pulse',
+            alertCount: counts.recebiveisPendentes || 0,
+            visible: perms.verContasReceber !== undefined 
+              ? perms.verContasReceber 
+              : !isVendedor && perms.verFinanceiroDRE !== false,
+          },
+          {
+            id: 'financeiro',
+            label: 'Financeiro & DRE',
+            icon: DollarSign,
+            badge: 'DRE',
+            badgeColor: 'bg-blue-900 text-blue-200',
+            visible: perms.verFinanceiroDRE !== undefined 
+              ? perms.verFinanceiroDRE 
+              : !isVendedor && perms.verFinanceiroDRE !== false,
+          },
+        ],
+      },
+
+      // 5. Administração
+      {
+        id: 'administracao',
+        title: 'Administração',
+        icon: FolderCog,
+        items: [
+          {
+            id: 'dash',
+            label: 'Painel Executivo',
+            icon: LayoutDashboard,
+            badge: null,
+            visible: perms.verPainelExecutivo !== undefined 
+              ? perms.verPainelExecutivo 
+              : !isVendedor && (perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false),
+          },
+          {
+            id: 'dashboard-executivo',
+            label: 'Dashboard Executivo Avançado',
+            icon: BarChart3,
+            badge: 'Gráficos & ROI',
+            badgeColor: 'bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30',
+            visible: perms.verDashboardExecutivo !== undefined 
+              ? perms.verDashboardExecutivo 
+              : !isVendedor && (perms.verCustosAquisicao !== false || perms.verFinanceiroDRE !== false),
+          },
+          {
+            id: 'usuarios-item',
+            label: 'Gestão de Usuários',
+            icon: Users,
+            badge: (counts.pendentesAprovacao ?? 0) > 0 ? `${counts.pendentesAprovacao} Novos` : 'RBAC',
+            badgeColor: (counts.pendentesAprovacao ?? 0) > 0 ? 'bg-amber-500 text-slate-950 font-bold animate-pulse' : 'bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono',
+            alertCount: counts.pendentesAprovacao || 0,
+            isActionModal: true,
+            onActionClick: onOpenUsuarios,
+            visible: perms.gerenciarUsuarios === true || (currentUser?.role === 'admin' && perms.gerenciarUsuarios !== false),
+          },
+          {
+            id: 'backup-item',
+            label: 'Backup de Segurança',
+            icon: ShieldCheck,
+            badge: 'JSON AES',
+            badgeColor: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono',
+            isActionModal: true,
+            onActionClick: onOpenBackup,
+            visible: Boolean(onOpenBackup && (perms.verBackupSeguranca !== false && (currentUser?.role === 'admin' || perms.gerenciarUsuarios || perms.verBackupSeguranca === true))),
+          },
+        ],
+      },
+    ];
+  }, [counts, perms, isVendedor, currentUser, onOpenUsuarios, onOpenBackup]);
+
+  // Função para descobrir a qual categoria a aba ativa pertence
+  const findCategoryForTab = (tab: string): string => {
+    for (const cat of categories) {
+      const match = cat.items.some(
+        (item) => item.id === tab || (item.id === 'locacao-contratos' && (tab === 'locacao' || tab.startsWith('locacao-')))
+      );
+      if (match) return cat.id;
+    }
+    return 'comercial';
+  };
+
+  // Estado dos Accordions abertos/fechados (guarda múltiplos ou abre a categoria correspondente)
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
+    const initialCategory = findCategoryForTab(activeTab);
+    return {
+      comercial: true,
+      estoque_frota: true,
+      operacional: true,
+      financeiro: true,
+      administracao: true,
+      [initialCategory]: true,
+    };
+  });
+
+  // Auto-expande o menu pai se a aba mudar externamente
+  useEffect(() => {
+    const currentCategory = findCategoryForTab(activeTab);
+    setOpenSections((prev) => ({
+      ...prev,
+      [currentCategory]: true,
+    }));
+  }, [activeTab]);
+
+  const toggleSection = (categoryId: string) => {
+    setOpenSections((prev) => ({
+      ...prev,
+      [categoryId]: !prev[categoryId],
+    }));
+  };
+
+  return (
+    <aside id="main-sidebar" className="h-screen max-h-screen sticky top-0 flex flex-col w-64 xl:w-72 bg-[#0a0a0d] text-slate-200 border-r border-white/5 shrink-0 select-none overflow-hidden">
+      {/* Input oculto para upload de logotipo - ADMIN ONLY */}
+      {isAdmin && (
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleLogoFileChange}
+          accept="image/*"
+          className="hidden"
+          id="sidebar-logo-file-input"
+        />
+      )}
+
+      {/* Cabeçalho da Marca / Logo */}
+      <div className="p-4 xl:p-5 border-b border-white/5 flex items-center justify-between relative shrink-0">
+        <div className="flex items-center gap-3">
+          <div
+            onClick={() => {
+              if (isAdmin) {
+                fileInputRef.current?.click();
+              }
+            }}
+            className={`group relative w-10 h-10 xl:w-11 xl:h-11 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 text-white font-black text-xl overflow-hidden border border-white/10 shrink-0 ${
+              isAdmin ? 'cursor-pointer hover:border-blue-400 transition' : 'cursor-default'
+            }`}
+            title={isAdmin ? "Clique para alterar o logotipo oficial da loja (Apenas Administrador)" : "Logotipo Oficial da Loja"}
+          >
+            {customLogo ? (
+              <img
+                src={customLogo}
+                alt="Logo AutoGestor"
+                className="w-full h-full object-contain p-1 rounded-xl bg-[#0e1017]"
+              />
+            ) : (
+              <Car size={20} className="stroke-[2.5]" />
+            )}
+
+            {isAdmin && (
+              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                <Camera size={15} className="text-white drop-shadow" />
+              </div>
+            )}
+          </div>
+
+          <div className="min-w-0">
+            <span className="font-extrabold text-base xl:text-lg tracking-tight text-white flex items-center gap-1.5 truncate">
+              TROCA <span className="text-blue-400">FÁCIL</span>
+            </span>
+            <p className="text-[10px] xl:text-[11px] text-slate-400 font-medium truncate">Autos e Repasse</p>
+          </div>
+        </div>
+
+        {customLogo && isAdmin && (
+          <button
+            onClick={handleRemoveLogo}
+            className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg bg-white/5 hover:bg-rose-500/10 border border-white/5 transition shrink-0 cursor-pointer"
+            title="Restaurar logo padrão (Admin)"
+          >
+            <Trash2 size={13} />
+          </button>
+        )}
+      </div>
+
+      {/* Botão de Ação Rápida */}
+      <div className="p-3 xl:p-4 pb-2 shrink-0">
+        <button
+          id="btn-sidebar-quick-action"
+          onClick={onOpenNovoLancamento}
+          className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold text-xs xl:text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition duration-150 active:scale-[0.98] cursor-pointer"
+        >
+          <PlusCircle size={17} />
+          <span>Novo Lançamento</span>
+        </button>
+      </div>
+
+      {/* Navegação Vertical com Menus Expansíveis (Accordions) */}
+      <nav className="flex-1 px-2.5 xl:px-3 space-y-2 overflow-y-auto pt-2 pb-4 scrollbar-thin scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
+        {categories.map((category) => {
+          const visibleItems = category.items.filter((item) => item.visible);
+          // Oculta a categoria inteira caso não haja nenhuma rota autorizada para o perfil (RBAC)
+          if (visibleItems.length === 0) return null;
+
+          const isExpanded = !!openSections[category.id];
+          const CategoryIcon = category.icon;
+
+          // Consolidação de todos os alertas / badges numéricos dos subitens desta categoria
+          const totalCategoryAlerts = visibleItems.reduce((sum, item) => {
+            return sum + (item.alertCount || 0);
+          }, 0);
+
+          // Verifica se algum item interno está atualmente ativo
+          const isAnyChildActive = visibleItems.some((item) => {
+            return activeTab === item.id || (item.id === 'locacao-contratos' && (activeTab === 'locacao' || activeTab.startsWith('locacao-')));
+          });
+
+          return (
+            <div key={category.id} className="rounded-2xl bg-white/[0.02] border border-white/[0.04] overflow-hidden transition-all">
+              {/* Header do Accordion (Menu Pai) */}
+              <button
+                id={`accordion-header-${category.id}`}
+                type="button"
+                onClick={() => toggleSection(category.id)}
+                className={`w-full flex items-center justify-between px-3 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer ${
+                  isAnyChildActive && !isExpanded
+                    ? 'bg-blue-600/10 text-blue-300'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.03]'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className={`p-1 rounded-lg ${isAnyChildActive ? 'bg-blue-500/20 text-blue-400' : 'bg-white/5 text-slate-400'}`}>
+                    <CategoryIcon size={14} />
+                  </div>
+                  <span className="truncate">{category.title}</span>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Badge Consolidado exibido quando o menu pai está FECHADO e possui itens pendentes */}
+                  {!isExpanded && totalCategoryAlerts > 0 && (
+                    <span 
+                      className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 animate-pulse shadow-sm shadow-amber-500/20"
+                      title={`${totalCategoryAlerts} item(ns) pendente(s) nesta categoria`}
+                    >
+                      {totalCategoryAlerts}
+                    </span>
+                  )}
+
+                  {/* Ícone de Toggle Chevron */}
+                  <ChevronDown
+                    size={14}
+                    className={`text-slate-500 transition-transform duration-200 ${
+                      isExpanded ? 'rotate-180 text-slate-300' : ''
+                    }`}
+                  />
+                </div>
+              </button>
+
+              {/* Submenus (Filhos) com transição expansível */}
+              {isExpanded && (
+                <div className="px-1.5 pb-2 pt-0.5 space-y-0.5 animate-in fade-in duration-150">
+                  {visibleItems.map((item) => {
+                    const SubIcon = item.icon;
+                    const isActive = 
+                      activeTab === item.id || 
+                      (item.id === 'locacao-contratos' && (activeTab === 'locacao' || activeTab.startsWith('locacao-')));
+
+                    return (
+                      <button
+                        id={`nav-item-${item.id}`}
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          if (item.isActionModal && item.onActionClick) {
+                            item.onActionClick();
+                          } else {
+                            setActiveTab(item.id);
+                          }
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all duration-150 group cursor-pointer ${
+                          isActive
+                            ? 'bg-blue-600/15 text-blue-400 border border-blue-500/30 shadow-sm font-semibold'
+                            : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <SubIcon
+                            size={16}
+                            className={`shrink-0 transition-colors ${
+                              isActive ? 'text-blue-400' : 'text-slate-400 group-hover:text-slate-200'
+                            }`}
+                          />
+                          <span className="truncate">{item.label}</span>
+                        </div>
+
+                        {item.badge !== null && item.badge !== undefined && (
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ml-1.5 ${
+                              item.badgeColor || 'bg-slate-800 text-slate-300'
+                            }`}
+                          >
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </nav>
+
+      {/* Perfil do Usuário & Sair */}
+      <div className="p-3 border-t border-white/5 bg-[#0e0f14]">
+        {currentUser ? (
+          <div className="p-2.5 rounded-2xl bg-[#14151c] border border-white/5 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              {currentUser.photoURL ? (
+                <img
+                  src={currentUser.photoURL}
+                  alt={currentUser.displayName}
+                  referrerPolicy="no-referrer"
+                  className="w-9 h-9 rounded-xl object-cover border border-white/10 shrink-0"
+                />
+              ) : (
+                <div className="w-9 h-9 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0 font-bold text-xs">
+                  {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : 'U'}
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-white truncate leading-tight">
+                  {currentUser.displayName}
+                </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-[10px] text-blue-400 font-semibold uppercase bg-blue-500/10 px-1 rounded">
+                    {currentUser.role}
+                  </span>
+                  <span className="text-[10px] text-slate-400 truncate max-w-[80px]">
+                    {currentUser.email}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              id="btn-sidebar-logout"
+              type="button"
+              onClick={onLogout}
+              title="Sair da conta"
+              className="w-8 h-8 rounded-xl bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 flex items-center justify-center transition shrink-0 cursor-pointer"
+            >
+              <LogOut size={15} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck size={14} className="text-emerald-400" />
+              Sessão Ativa
+            </span>
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+};

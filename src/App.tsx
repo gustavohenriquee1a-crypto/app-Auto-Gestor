@@ -249,6 +249,7 @@ export default function App() {
   const [isNovaDespesaOpen, setIsNovaDespesaOpen] = useState(false);
   const [despesaTargetVeiculo, setDespesaTargetVeiculo] = useState<Veiculo | null>(null);
   const [despesaToEdit, setDespesaToEdit] = useState<DespesaVeiculo | null>(null);
+  const [despesaVinculadaOrigem, setDespesaVinculadaOrigem] = useState<DespesaVeiculo | undefined>(undefined);
   const [isNovoContratoOpen, setIsNovoContratoOpen] = useState(false);
   const [contratoTargetVeiculo, setContratoTargetVeiculo] = useState<Veiculo | null>(null);
   const [isVendaModalOpen, setIsVendaModalOpen] = useState(false);
@@ -761,25 +762,47 @@ export default function App() {
   // 2. Lançar ou Editar Custo / Despesa / Comissão no Chassi
   const handleSaveDespesa = async (
     veiculoIdOrData: string | Omit<DespesaVeiculo, 'id'>,
-    maybeData?: Omit<DespesaVeiculo, 'id'>,
+    maybeData?: Omit<DespesaVeiculo, 'id'> | Omit<DespesaVeiculo, 'id'>[],
     despesaIdToEdit?: string
   ) => {
     let targetVeiculoId: string;
-    let despesaData: Omit<DespesaVeiculo, 'id'>;
+    const novasDespesas: DespesaVeiculo[] = [];
 
     if (typeof veiculoIdOrData === 'string' && maybeData) {
       targetVeiculoId = veiculoIdOrData;
-      despesaData = maybeData;
+      if (Array.isArray(maybeData)) {
+        // Múltiplas despesas (ex: Entrada + Restante ou Parcelamento em série)
+        let idEntrada: string | undefined = undefined;
+        const now = Date.now();
+        maybeData.forEach((item, index) => {
+          const id = `desp-parc-${now}-${index + 1}-${Math.random().toString(36).substring(2, 5)}`;
+          if (index === 0 && item.tipoVinculo === 'entrada') {
+            idEntrada = id;
+          }
+          const despFinal: DespesaVeiculo = {
+            ...item,
+            id,
+            veiculoId: targetVeiculoId,
+            despesaOrigemId: item.despesaOrigemId === 'TEMP_ENTRADA_ID' && idEntrada ? idEntrada : item.despesaOrigemId,
+          };
+          novasDespesas.push(despFinal);
+        });
+      } else {
+        novasDespesas.push({
+          ...maybeData,
+          id: despesaIdToEdit || `desp-${Date.now()}`,
+          veiculoId: targetVeiculoId,
+        });
+      }
     } else {
-      despesaData = veiculoIdOrData as Omit<DespesaVeiculo, 'id'>;
-      targetVeiculoId = despesaData.veiculoId;
+      const single = veiculoIdOrData as Omit<DespesaVeiculo, 'id'>;
+      targetVeiculoId = single.veiculoId;
+      novasDespesas.push({
+        ...single,
+        id: despesaIdToEdit || `desp-${Date.now()}`,
+        veiculoId: targetVeiculoId,
+      });
     }
-
-    const novaDespesa: DespesaVeiculo = {
-      ...despesaData,
-      id: despesaIdToEdit || `desp-${Date.now()}`,
-      veiculoId: targetVeiculoId,
-    };
 
     let targetVeiculoUpdated: Veiculo | null = null;
 
@@ -788,9 +811,9 @@ export default function App() {
         if (v.id === targetVeiculoId) {
           let updatedDespesas: DespesaVeiculo[];
           if (despesaIdToEdit) {
-            updatedDespesas = (v.despesas || []).map((d) => (d.id === despesaIdToEdit ? novaDespesa : d));
+            updatedDespesas = (v.despesas || []).map((d) => (d.id === despesaIdToEdit ? novasDespesas[0] : d));
           } else {
-            updatedDespesas = [novaDespesa, ...(v.despesas || [])];
+            updatedDespesas = [...novasDespesas, ...(v.despesas || [])];
           }
           const updated: Veiculo = {
             ...v,
@@ -807,6 +830,39 @@ export default function App() {
       await saveVeiculoFirestore(targetVeiculoUpdated);
       if (dossieVeiculo?.id === targetVeiculoId) {
         setDossieVeiculo(targetVeiculoUpdated);
+      }
+    }
+
+    // Processamento de baixa bancária automática para despesas quitadas no ato
+    for (const desp of novasDespesas) {
+      if (desp.statusPagamento === 'Pago' && desp.contaBancariaId) {
+        const conta = contasBancarias.find((c) => c.id === desp.contaBancariaId);
+        if (conta) {
+          const movId = `mov-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+          const novaMov: MovimentacaoConta = {
+            id: movId,
+            contaId: conta.id,
+            contaNome: conta.nome,
+            tipo: 'Despesa',
+            categoria: desp.categoria,
+            valor: desp.valor,
+            data: desp.dataPagamento || desp.data,
+            descricao: desp.descricao,
+            veiculoId: targetVeiculoId,
+            placa: desp.placa,
+            formaPagamento: desp.formaPagamento || 'PIX',
+            criadoPor: currentUserProfile?.displayName || 'Administrador',
+            createdAt: new Date().toISOString(),
+          };
+          const contaAtualizada: ContaBancariaCaixa = {
+            ...conta,
+            saldoAtual: (conta.saldoAtual || 0) - desp.valor,
+            historicoMovimentacoes: [novaMov, ...(conta.historicoMovimentacoes || [])],
+          };
+          setContasBancarias((prev) => prev.map((c) => (c.id === conta.id ? contaAtualizada : c)));
+          await saveContaBancariaFirestore(contaAtualizada);
+          await saveMovimentacaoContaFirestore(novaMov);
+        }
       }
     }
   };
@@ -2110,15 +2166,17 @@ export default function App() {
     setIsDossieOpen(true);
   };
 
-  const openNovaDespesa = (veiculo?: Veiculo) => {
+  const openNovaDespesa = (veiculo?: Veiculo, despesaVinculada?: DespesaVeiculo) => {
     setDespesaTargetVeiculo(veiculo || null);
     setDespesaToEdit(null);
+    setDespesaVinculadaOrigem(despesaVinculada || undefined);
     setIsNovaDespesaOpen(true);
   };
 
   const openEditDespesa = (veiculo: Veiculo, despesa: DespesaVeiculo) => {
     setDespesaTargetVeiculo(veiculo);
     setDespesaToEdit(despesa);
+    setDespesaVinculadaOrigem(undefined);
     setIsNovaDespesaOpen(true);
   };
 
@@ -2735,6 +2793,7 @@ export default function App() {
               veiculos={veiculos}
               vendas={vendas}
               despesasFixas={despesasFixas}
+              fornecedores={fornecedores}
               usuarios={allUsersList}
               currentUser={currentUserProfile}
               onOpenNovaDespesaFixa={() => setIsNovaDespesaFixaOpen(true)}
@@ -2803,7 +2862,7 @@ export default function App() {
           veiculo={dossieVeiculo}
           isOpen={isDossieOpen}
           onClose={() => setIsDossieOpen(false)}
-          onOpenNovaDespesa={(v) => openNovaDespesa(v)}
+          onOpenNovaDespesa={(v, despOrigem) => openNovaDespesa(v, despOrigem)}
           onOpenAbastecimento={(v) => openAbastecimento(v)}
           onOpenVenda={(v) => openVenda(v)}
           onDeleteDespesa={handleDeleteDespesa}
@@ -2839,12 +2898,15 @@ export default function App() {
           onClose={() => {
             setIsNovaDespesaOpen(false);
             setDespesaToEdit(null);
+            setDespesaVinculadaOrigem(undefined);
           }}
           veiculos={veiculos}
           defaultVeiculo={despesaTargetVeiculo}
           despesaToEdit={despesaToEdit}
+          despesaVinculadaOrigem={despesaVinculadaOrigem}
           usuarios={allUsersList}
           fornecedores={fornecedores}
+          contasBancarias={contasBancarias}
           onSaveDespesa={handleSaveDespesa}
         />
       )}

@@ -16,7 +16,13 @@ import {
   Wallet,
   ShieldCheck,
   Fuel,
-  Gauge
+  Gauge,
+  Split,
+  Link2,
+  Layers,
+  ListOrdered,
+  Coins,
+  ArrowRight
 } from 'lucide-react';
 import { 
   Veiculo, 
@@ -34,12 +40,13 @@ interface ModalNovaDespesaProps {
   veiculos: Veiculo[];
   defaultVeiculo?: Veiculo | null;
   despesaToEdit?: DespesaVeiculo | null;
+  despesaVinculadaOrigem?: DespesaVeiculo | null;
   usuarios?: Usuario[];
   fornecedores?: FornecedorPrestador[];
   contasBancarias?: ContaBancariaCaixa[];
   onSaveDespesa: (
-    veiculoIdOrData: string | Omit<DespesaVeiculo, 'id'>,
-    despesaData?: Omit<DespesaVeiculo, 'id'>,
+    veiculoIdOrData: string | Omit<DespesaVeiculo, 'id'> | Omit<DespesaVeiculo, 'id'>[],
+    despesaData?: Omit<DespesaVeiculo, 'id'> | Omit<DespesaVeiculo, 'id'>[],
     despesaId?: string
   ) => void;
 }
@@ -69,6 +76,7 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
   veiculos,
   defaultVeiculo,
   despesaToEdit,
+  despesaVinculadaOrigem,
   usuarios = [],
   fornecedores: initialFornecedores,
   contasBancarias: initialContasBancarias,
@@ -99,6 +107,45 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
   const [dataPagamento, setDataPagamento] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedContaBancariaId, setSelectedContaBancariaId] = useState<string>('');
   const [formaPagamento, setFormaPagamento] = useState<string>('PIX');
+
+  // Condição de Pagamento, Parcelamento e Vínculo de Restante
+  const [tipoCondicao, setTipoCondicao] = useState<'a_vista' | 'entrada_restante' | 'parcelado' | 'restante_vinculado'>('a_vista');
+  const [valorTotalAcordo, setValorTotalAcordo] = useState<number | string>(1000);
+  const [valorEntrada, setValorEntrada] = useState<number | string>(300);
+  const [dataVencimentoRestante, setDataVencimentoRestante] = useState<string>('');
+  const [formaPagamentoRestante, setFormaPagamentoRestante] = useState<string>('PIX');
+  const [entradaPagaHoje, setEntradaPagaHoje] = useState<boolean>(true);
+
+  // Parcelamento múltiplo (2x a 12x)
+  const [qtdParcelas, setQtdParcelas] = useState<number>(3);
+  const [intervaloDias, setIntervaloDias] = useState<number>(30);
+  const [primeiraParcelaPagaHoje, setPrimeiraParcelaPagaHoje] = useState<boolean>(true);
+
+  // Vínculo com despesa pré-existente
+  const [despesaPaiSelecionadaId, setDespesaPaiSelecionadaId] = useState<string>('');
+  const [grupoParcelamentoId, setGrupoParcelamentoId] = useState<string>('');
+  const [parcelaNumero, setParcelaNumero] = useState<number>(1);
+  const [totalParcelas, setTotalParcelas] = useState<number>(1);
+
+  // Helper de cálculo de datas
+  const addDaysToDate = (baseDateStr: string, daysToAdd: number): string => {
+    try {
+      const parts = (baseDateStr || '').split('-');
+      if (parts.length === 3) {
+        const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        d.setDate(d.getDate() + daysToAdd);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+      const d = new Date(baseDateStr);
+      d.setDate(d.getDate() + daysToAdd);
+      return d.toISOString().split('T')[0];
+    } catch {
+      return baseDateStr;
+    }
+  };
 
   // Campos específicos de Comissão
   const [modoVinculoComissao, setModoVinculoComissao] = useState<'previsao_generica' | 'usuario_sistema' | 'externo'>('previsao_generica');
@@ -140,7 +187,38 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    if (despesaToEdit) {
+    if (despesaVinculadaOrigem) {
+      setSelectedVeiculoId(despesaVinculadaOrigem.veiculoId);
+      setCategoria(despesaVinculadaOrigem.categoria || 'Peças');
+      const cleanDesc = despesaVinculadaOrigem.descricao.replace(/^\[.*?\]\s*/, '');
+      setDescricao(`Restante - ${cleanDesc}`);
+      setFornecedor(despesaVinculadaOrigem.fornecedor || '');
+      setSelectedFornecedorId(despesaVinculadaOrigem.fornecedorId || '');
+      setNfNumero('');
+      setTipoCondicao('restante_vinculado');
+      setDespesaPaiSelecionadaId(despesaVinculadaOrigem.id);
+      
+      const hoje = new Date().toISOString().split('T')[0];
+      setData(hoje);
+      setDataPagamento(hoje);
+      setDataVencimento(addDaysToDate(hoje, 30));
+      setStatusPagamento('Pendente');
+      setExigibilidade(despesaVinculadaOrigem.exigibilidade || 'imediata');
+      setSelectedContaBancariaId('');
+      setFormaPagamento('PIX');
+
+      if (despesaVinculadaOrigem.valorTotalAcordo && despesaVinculadaOrigem.valorTotalAcordo > despesaVinculadaOrigem.valor) {
+        const saldoRestante = Number((despesaVinculadaOrigem.valorTotalAcordo - despesaVinculadaOrigem.valor).toFixed(2));
+        setValor(saldoRestante);
+        setValorTotalAcordo(despesaVinculadaOrigem.valorTotalAcordo);
+      } else {
+        setValor(despesaVinculadaOrigem.valor);
+        setValorTotalAcordo(despesaVinculadaOrigem.valor);
+      }
+      setGrupoParcelamentoId(despesaVinculadaOrigem.grupoParcelamentoId || '');
+      setParcelaNumero((despesaVinculadaOrigem.parcelaNumero || 1) + 1);
+      setTotalParcelas(despesaVinculadaOrigem.totalParcelas || 2);
+    } else if (despesaToEdit) {
       setSelectedVeiculoId(despesaToEdit.veiculoId);
       setCategoria(despesaToEdit.categoria || 'Peças');
       setDescricao(despesaToEdit.descricao || '');
@@ -160,6 +238,17 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
       setDataPagamento(despesaToEdit.dataPagamento || despesaToEdit.data || new Date().toISOString().split('T')[0]);
       setSelectedContaBancariaId(despesaToEdit.contaBancariaId || '');
       setFormaPagamento(despesaToEdit.formaPagamento || 'PIX');
+
+      // Vínculo e Parcelamento
+      setTipoCondicao(
+        despesaToEdit.tipoCondicao ||
+        (despesaToEdit.despesaOrigemId ? 'restante_vinculado' : (despesaToEdit.parcelaNumero ? 'parcelado' : 'a_vista'))
+      );
+      setDespesaPaiSelecionadaId(despesaToEdit.despesaOrigemId || '');
+      setValorTotalAcordo(despesaToEdit.valorTotalAcordo || despesaToEdit.valor || 0);
+      setParcelaNumero(despesaToEdit.parcelaNumero || 1);
+      setTotalParcelas(despesaToEdit.totalParcelas || 1);
+      setGrupoParcelamentoId(despesaToEdit.grupoParcelamentoId || '');
 
       // Campos de combustível
       setLitrosAbastecidos(despesaToEdit.litrosAbastecidos || '');
@@ -203,6 +292,19 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
       setStatusPagamento('Pago');
       setSelectedContaBancariaId('');
       setFormaPagamento('PIX');
+      setTipoCondicao('a_vista');
+      setValorTotalAcordo(350);
+      setValorEntrada(150);
+      setDataVencimentoRestante(addDaysToDate(today, 30));
+      setFormaPagamentoRestante('PIX');
+      setEntradaPagaHoje(true);
+      setQtdParcelas(3);
+      setIntervaloDias(30);
+      setPrimeiraParcelaPagaHoje(true);
+      setDespesaPaiSelecionadaId('');
+      setGrupoParcelamentoId('');
+      setParcelaNumero(1);
+      setTotalParcelas(1);
       setModoVinculoComissao('previsao_generica');
       setBeneficiarioUsuarioId('');
       setBeneficiarioNome('');
@@ -212,7 +314,7 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
       setMotivoSaidaAbastecimento('Revisão / Oficina');
       setTipoCombustivelAbastecido('Gasolina Comum');
     }
-  }, [defaultVeiculo, veiculos, despesaToEdit, isOpen, usuarios]);
+  }, [defaultVeiculo, veiculos, despesaToEdit, despesaVinculadaOrigem, isOpen, usuarios]);
 
   if (!isOpen) return null;
 
@@ -373,6 +475,137 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
       }
     }
 
+    // Caso 1: Entrada + Restante do Pagamento (Criação de 2 despesas vinculadas)
+    if (!isEditing && tipoCondicao === 'entrada_restante') {
+      const numTotal = Number(valorTotalAcordo);
+      const numEntrada = Number(valorEntrada);
+      const numRestante = Number((numTotal - numEntrada).toFixed(2));
+
+      if (numTotal <= 0 || isNaN(numTotal) || numEntrada <= 0 || isNaN(numEntrada) || numRestante <= 0) {
+        alert('Para o acordo Entrada + Restante, o Valor Total deve ser maior que o Valor da Entrada.');
+        return;
+      }
+
+      const grupoId = `grp-parc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
+      const itemEntrada: Omit<DespesaVeiculo, 'id'> = {
+        ...payload,
+        descricao: `[Entrada 1/2] ${descricao.trim()}`,
+        valor: numEntrada,
+        tipoCondicao: 'entrada_restante',
+        tipoVinculo: 'entrada',
+        parcelaNumero: 1,
+        totalParcelas: 2,
+        valorTotalAcordo: numTotal,
+        grupoParcelamentoId: grupoId,
+        statusPagamento: entradaPagaHoje ? 'Pago' : 'Pendente',
+        dataPagamento: entradaPagaHoje ? (dataPagamento || data) : undefined,
+        dataVencimento: !entradaPagaHoje ? (dataVencimento || data) : undefined,
+        contaBancariaId: entradaPagaHoje && selectedContaBancariaId ? selectedContaBancariaId : undefined,
+        contaBancariaNome: entradaPagaHoje && selectedConta ? selectedConta.nome : undefined,
+        formaPagamento: entradaPagaHoje ? formaPagamento : undefined,
+      };
+
+      const itemRestante: Omit<DespesaVeiculo, 'id'> = {
+        ...payload,
+        descricao: `[Restante 2/2] ${descricao.trim()}`,
+        valor: numRestante,
+        tipoCondicao: 'entrada_restante',
+        tipoVinculo: 'restante',
+        parcelaNumero: 2,
+        totalParcelas: 2,
+        valorTotalAcordo: numTotal,
+        grupoParcelamentoId: grupoId,
+        despesaOrigemId: 'TEMP_ENTRADA_ID',
+        despesaOrigemDescricao: itemEntrada.descricao,
+        statusPagamento: 'Pendente',
+        data: data,
+        dataVencimento: dataVencimentoRestante || addDaysToDate(data, 30),
+        formaPagamento: formaPagamentoRestante,
+        contaBancariaId: undefined,
+        contaBancariaNome: undefined,
+        dataPagamento: undefined,
+      };
+
+      onSaveDespesa(selectedVeiculoId, [itemEntrada, itemRestante]);
+      onClose();
+      return;
+    }
+
+    // Caso 2: Parcelamento Múltiplo (2x a 12x)
+    if (!isEditing && tipoCondicao === 'parcelado') {
+      const numTotal = Number(valorTotalAcordo || valor);
+      const qtd = Number(qtdParcelas);
+
+      if (numTotal <= 0 || isNaN(numTotal) || qtd < 2) {
+        alert('Por favor informe um valor total válido e no mínimo 2 parcelas.');
+        return;
+      }
+
+      const valorBaseParcela = Math.floor((numTotal / qtd) * 100) / 100;
+      const diffCentavos = Number((numTotal - (valorBaseParcela * qtd)).toFixed(2));
+      const grupoId = `grp-parc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
+      const parcelas: Omit<DespesaVeiculo, 'id'>[] = [];
+      for (let i = 1; i <= qtd; i++) {
+        const isPrimeira = i === 1;
+        const isUltima = i === qtd;
+        const valParcela = isUltima ? Number((valorBaseParcela + diffCentavos).toFixed(2)) : valorBaseParcela;
+        const vencimentoCalculado = addDaysToDate(data, (i - 1) * intervaloDias);
+        const isPaga = isPrimeira && primeiraParcelaPagaHoje;
+
+        parcelas.push({
+          ...payload,
+          descricao: `[Parcela ${i}/${qtd}] ${descricao.trim()}`,
+          valor: valParcela,
+          tipoCondicao: 'parcelado',
+          tipoVinculo: 'parcela',
+          parcelaNumero: i,
+          totalParcelas: qtd,
+          valorTotalAcordo: numTotal,
+          grupoParcelamentoId: grupoId,
+          statusPagamento: isPaga ? 'Pago' : 'Pendente',
+          data: data,
+          dataVencimento: vencimentoCalculado,
+          dataPagamento: isPaga ? (dataPagamento || data) : undefined,
+          contaBancariaId: isPaga && selectedContaBancariaId ? selectedContaBancariaId : undefined,
+          contaBancariaNome: isPaga && selectedConta ? selectedConta.nome : undefined,
+          formaPagamento: isPaga ? formaPagamento : formaPagamentoRestante,
+        });
+      }
+
+      onSaveDespesa(selectedVeiculoId, parcelas);
+      onClose();
+      return;
+    }
+
+    // Caso 3: Restante Vinculado a uma despesa anterior
+    if (tipoCondicao === 'restante_vinculado') {
+      const despesaPai = currentVeiculo.despesas?.find((d) => d.id === despesaPaiSelecionadaId);
+      payload.tipoCondicao = 'restante_vinculado';
+      payload.tipoVinculo = 'restante';
+      payload.despesaOrigemId = despesaPaiSelecionadaId || undefined;
+      payload.despesaOrigemDescricao = despesaPai ? despesaPai.descricao : undefined;
+      payload.valorTotalAcordo = Number(valorTotalAcordo) > 0 
+        ? Number(valorTotalAcordo) 
+        : (despesaPai?.valorTotalAcordo || (despesaPai ? Number((despesaPai.valor + numVal).toFixed(2)) : numVal));
+      payload.grupoParcelamentoId = grupoParcelamentoId || despesaPai?.grupoParcelamentoId || undefined;
+      payload.parcelaNumero = parcelaNumero || 2;
+      payload.totalParcelas = totalParcelas || 2;
+    } else if (isEditing) {
+      payload.tipoCondicao = tipoCondicao;
+      payload.tipoVinculo = despesaToEdit?.tipoVinculo;
+      payload.despesaOrigemId = despesaPaiSelecionadaId || despesaToEdit?.despesaOrigemId;
+      payload.despesaOrigemDescricao = despesaToEdit?.despesaOrigemDescricao;
+      payload.valorTotalAcordo = Number(valorTotalAcordo) > 0 ? Number(valorTotalAcordo) : undefined;
+      payload.grupoParcelamentoId = grupoParcelamentoId || despesaToEdit?.grupoParcelamentoId;
+      payload.parcelaNumero = parcelaNumero;
+      payload.totalParcelas = totalParcelas;
+    } else {
+      payload.tipoCondicao = 'a_vista';
+      payload.tipoVinculo = undefined;
+    }
+
     onSaveDespesa(selectedVeiculoId, payload, despesaToEdit ? despesaToEdit.id : undefined);
     onClose();
   };
@@ -434,8 +667,520 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
               )}
             </div>
 
-            {/* Categoria e Valor */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {/* Banner de Edição com Vínculo Financeiro */}
+            {isEditing && (despesaToEdit?.tipoVinculo || despesaToEdit?.despesaOrigemId || despesaToEdit?.parcelaNumero) && (
+              <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl flex items-center gap-2.5 text-xs text-blue-200 animate-fadeIn">
+                <Link2 size={16} className="text-blue-400 shrink-0" />
+                <div>
+                  <strong className="text-blue-300">Despesa Vinculada a Acordo:</strong>
+                  <span className="ml-1 text-[11px] text-blue-200/90">
+                    {despesaToEdit.tipoVinculo === 'entrada' && `Entrada / Sinal (Parcela ${despesaToEdit.parcelaNumero || 1} de ${despesaToEdit.totalParcelas || 2})`}
+                    {despesaToEdit.tipoVinculo === 'restante' && `Restante do Pagamento ${despesaToEdit.despesaOrigemDescricao ? `(Ref: ${despesaToEdit.despesaOrigemDescricao})` : ''}`}
+                    {despesaToEdit.tipoVinculo === 'parcela' && `Parcela ${despesaToEdit.parcelaNumero}/${despesaToEdit.totalParcelas}`}
+                    {despesaToEdit.valorTotalAcordo && ` • Acordo Total: R$ ${despesaToEdit.valorTotalAcordo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Seletor da Condição de Pagamento e Vínculo (Quando criando nova despesa) */}
+            {!isEditing && (
+              <div className="p-3.5 bg-white/[0.02] border border-white/10 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-200 font-bold text-xs flex items-center gap-1.5">
+                    <Split size={14} className="text-orange-400" />
+                    Condição de Pagamento / Modalidade de Custo *
+                  </label>
+                  <span className="text-[10px] text-slate-400">Parcelamento & Restante</span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTipoCondicao('a_vista')}
+                    className={`p-2.5 rounded-xl text-left border transition cursor-pointer flex flex-col justify-between ${
+                      tipoCondicao === 'a_vista'
+                        ? 'bg-orange-600/25 border-orange-500 text-white shadow-sm'
+                        : 'bg-black/20 text-slate-400 border-white/5 hover:bg-white/5'
+                    }`}
+                  >
+                    <span className="font-bold text-xs flex items-center gap-1">
+                      💵 À Vista / Única
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">Lançamento direto</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTipoCondicao('entrada_restante');
+                      if (Number(valor) > 0) {
+                        setValorTotalAcordo(Number(valor));
+                        setValorEntrada(Math.round(Number(valor) * 0.4));
+                      }
+                    }}
+                    className={`p-2.5 rounded-xl text-left border transition cursor-pointer flex flex-col justify-between ${
+                      tipoCondicao === 'entrada_restante'
+                        ? 'bg-amber-600/25 border-amber-500 text-white shadow-sm'
+                        : 'bg-black/20 text-slate-400 border-white/5 hover:bg-white/5'
+                    }`}
+                  >
+                    <span className="font-bold text-xs flex items-center gap-1 text-amber-300">
+                      ⚖️ Entrada + Restante
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">Sinal + saldo futuro</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTipoCondicao('parcelado');
+                      if (Number(valor) > 0) {
+                        setValorTotalAcordo(Number(valor));
+                      }
+                    }}
+                    className={`p-2.5 rounded-xl text-left border transition cursor-pointer flex flex-col justify-between ${
+                      tipoCondicao === 'parcelado'
+                        ? 'bg-indigo-600/25 border-indigo-500 text-white shadow-sm'
+                        : 'bg-black/20 text-slate-400 border-white/5 hover:bg-white/5'
+                    }`}
+                  >
+                    <span className="font-bold text-xs flex items-center gap-1 text-indigo-300">
+                      💳 Parcelado (X vezes)
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">2x, 3x até 12x</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTipoCondicao('restante_vinculado');
+                      const candidato = currentVeiculo?.despesas?.find((d) => d.id !== despesaToEdit?.id);
+                      if (candidato && !despesaPaiSelecionadaId) {
+                        setDespesaPaiSelecionadaId(candidato.id);
+                        setCategoria(candidato.categoria);
+                        if (candidato.fornecedor) setFornecedor(candidato.fornecedor);
+                        if (candidato.fornecedorId) setSelectedFornecedorId(candidato.fornecedorId);
+                        const cleanDesc = candidato.descricao.replace(/^\[.*?\]\s*/, '');
+                        setDescricao(`Restante - ${cleanDesc}`);
+                        if (candidato.valorTotalAcordo && candidato.valorTotalAcordo > candidato.valor) {
+                          setValor(Number((candidato.valorTotalAcordo - candidato.valor).toFixed(2)));
+                          setValorTotalAcordo(candidato.valorTotalAcordo);
+                        } else {
+                          setValor(candidato.valor);
+                          setValorTotalAcordo(candidato.valor);
+                        }
+                      }
+                    }}
+                    className={`p-2.5 rounded-xl text-left border transition cursor-pointer flex flex-col justify-between ${
+                      tipoCondicao === 'restante_vinculado'
+                        ? 'bg-blue-600/25 border-blue-500 text-white shadow-sm'
+                        : 'bg-black/20 text-slate-400 border-white/5 hover:bg-white/5'
+                    }`}
+                  >
+                    <span className="font-bold text-xs flex items-center gap-1 text-blue-300">
+                      🔗 Vincular Restante
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">A despesa já existente</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Painel Específico: Entrada + Restante */}
+            {tipoCondicao === 'entrada_restante' && !isEditing && (
+              <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-3.5 animate-fadeIn">
+                <div className="flex items-center justify-between pb-2 border-b border-amber-500/20">
+                  <div className="flex items-center gap-2">
+                    <Split size={16} className="text-amber-400" />
+                    <span className="font-bold text-amber-300 uppercase tracking-wide text-xs">
+                      Divisão de Pagamento: Entrada + Restante
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-amber-200/80 font-semibold">Gera 2 lançamentos vinculados</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-slate-300 font-bold mb-1">Valor Total Acordado (R$) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={valorTotalAcordo}
+                      onChange={(e) => {
+                        const t = Number(e.target.value);
+                        setValorTotalAcordo(e.target.value);
+                        if (t > 0 && Number(valorEntrada) >= t) {
+                          setValorEntrada(Number((t * 0.5).toFixed(2)));
+                        }
+                      }}
+                      className="w-full p-2.5 rounded-xl border border-white/10 font-black text-base bg-[#16171f] text-slate-100 font-mono outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-300 font-bold mb-1">Valor da Entrada / Sinal (R$) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={valorEntrada}
+                      onChange={(e) => setValorEntrada(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-emerald-500/40 font-black text-base bg-[#16171f] text-emerald-400 font-mono outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-300 font-bold mb-1">Saldo Restante Futuro (R$)</label>
+                    <div className="w-full p-2.5 rounded-xl border border-amber-500/40 bg-amber-500/15 font-black text-base text-amber-300 font-mono flex items-center justify-between">
+                      <span>
+                        R$ {Math.max(0, Number(valorTotalAcordo || 0) - Number(valorEntrada || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200 uppercase font-sans">
+                        Calculado
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Configuração da Entrada e do Restante */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {/* Bloco da Entrada */}
+                  <div className="p-3 bg-black/40 border border-emerald-500/20 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-emerald-300 text-xs flex items-center gap-1">
+                        🟢 1ª Parte: Entrada / Sinal
+                      </span>
+                      <span className="text-[11px] text-emerald-400 font-mono font-bold">
+                        R$ {Number(valorEntrada || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setEntradaPagaHoje(true)}
+                        className={`p-1.5 rounded-lg font-bold border transition text-center cursor-pointer ${
+                          entradaPagaHoje
+                            ? 'bg-emerald-600/30 border-emerald-500 text-emerald-200'
+                            : 'bg-white/5 border-white/10 text-slate-400'
+                        }`}
+                      >
+                        ✓ Paga Imediatamente
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEntradaPagaHoje(false)}
+                        className={`p-1.5 rounded-lg font-bold border transition text-center cursor-pointer ${
+                          !entradaPagaHoje
+                            ? 'bg-amber-600/30 border-amber-500 text-amber-200'
+                            : 'bg-white/5 border-white/10 text-slate-400'
+                        }`}
+                      >
+                        ⏳ Entrada Pendente
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Bloco do Restante */}
+                  <div className="p-3 bg-black/40 border border-amber-500/20 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-300 text-xs flex items-center gap-1">
+                        🟡 2ª Parte: Restante a Pagar
+                      </span>
+                      <span className="text-[11px] text-amber-400 font-mono font-bold">
+                        R$ {Math.max(0, Number(valorTotalAcordo || 0) - Number(valorEntrada || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 text-[10px] mb-1">Previsão de Vencimento do Restante:</label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="date"
+                          value={dataVencimentoRestante || addDaysToDate(data, 30)}
+                          onChange={(e) => setDataVencimentoRestante(e.target.value)}
+                          className="flex-1 p-1.5 rounded-lg border border-white/10 bg-[#16171f] text-slate-200 text-xs outline-none focus:border-amber-500 font-mono"
+                        />
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setDataVencimentoRestante(addDaysToDate(data, 15))}
+                            className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-[10px] text-slate-300 transition cursor-pointer"
+                          >
+                            +15d
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDataVencimentoRestante(addDaysToDate(data, 30))}
+                            className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-[10px] text-slate-300 transition cursor-pointer"
+                          >
+                            +30d
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Painel Específico: Parcelado */}
+            {tipoCondicao === 'parcelado' && !isEditing && (
+              <div className="p-4 bg-indigo-500/10 border border-indigo-500/30 rounded-2xl space-y-3.5 animate-fadeIn">
+                <div className="flex items-center justify-between pb-2 border-b border-indigo-500/20">
+                  <div className="flex items-center gap-2">
+                    <ListOrdered size={16} className="text-indigo-400" />
+                    <span className="font-bold text-indigo-300 uppercase tracking-wide text-xs">
+                      Parcelamento da Despesa do Veículo
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-indigo-200/80 font-semibold">{qtdParcelas} parcelas automáticas</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-slate-300 font-bold mb-1">Valor Total a Parcelar (R$) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={valorTotalAcordo || valor}
+                      onChange={(e) => {
+                        setValorTotalAcordo(e.target.value);
+                        setValor(e.target.value);
+                      }}
+                      className="w-full p-2.5 rounded-xl border border-white/10 font-black text-base bg-[#16171f] text-indigo-300 font-mono outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-300 font-bold mb-1">Número de Parcelas *</label>
+                    <select
+                      value={qtdParcelas}
+                      onChange={(e) => setQtdParcelas(Number(e.target.value))}
+                      className="w-full p-2.5 rounded-xl border border-indigo-500/30 font-bold bg-[#16171f] text-slate-200 outline-none focus:border-indigo-500"
+                    >
+                      {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => {
+                        const tot = Number(valorTotalAcordo || valor || 0);
+                        const parc = tot > 0 ? (tot / n).toFixed(2) : '0,00';
+                        return (
+                          <option key={n} value={n}>
+                            {n}x de R$ {Number(parc).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-300 font-bold mb-1">Intervalo entre Parcelas</label>
+                    <select
+                      value={intervaloDias}
+                      onChange={(e) => setIntervaloDias(Number(e.target.value))}
+                      className="w-full p-2.5 rounded-xl border border-white/10 font-semibold bg-[#16171f] text-slate-200 outline-none focus:border-indigo-500"
+                    >
+                      <option value={30}>🗓️ Mensal (a cada 30 dias)</option>
+                      <option value={15}>🗓️ Quinzenal (a cada 15 dias)</option>
+                      <option value={7}>🗓️ Semanal (a cada 7 dias)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-black/40 border border-indigo-500/20 rounded-xl flex-wrap gap-2">
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-slate-200 text-xs">
+                      1ª Parcela Paga Hoje (Entrada no Ato)?
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Se marcado, a Parcela 1/{qtdParcelas} será quitada agora e as demais ficarão em Contas a Pagar.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPrimeiraParcelaPagaHoje(true)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                        primeiraParcelaPagaHoje
+                          ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-slate-400'
+                      }`}
+                    >
+                      Sim (1ª Paga Hoje)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrimeiraParcelaPagaHoje(false)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                        !primeiraParcelaPagaHoje
+                          ? 'bg-amber-600/30 border-amber-500 text-amber-300'
+                          : 'bg-white/5 border-white/10 text-slate-400'
+                      }`}
+                    >
+                      Não (Todas Pendentes)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Pré-visualização das Parcelas */}
+                <div className="p-3 bg-black/30 border border-white/5 rounded-xl space-y-1.5">
+                  <div className="text-[11px] text-indigo-300 font-bold flex items-center justify-between">
+                    <span>Cronograma das Parcelas:</span>
+                    <span className="font-mono text-slate-400">Total: R$ {Number(valorTotalAcordo || valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                    {Array.from({ length: qtdParcelas }).map((_, idx) => {
+                      const num = idx + 1;
+                      const tot = Number(valorTotalAcordo || valor || 0);
+                      const vBase = Math.floor((tot / qtdParcelas) * 100) / 100;
+                      const diff = Number((tot - (vBase * qtdParcelas)).toFixed(2));
+                      const vFinal = num === qtdParcelas ? vBase + diff : vBase;
+                      const venc = addDaysToDate(data, idx * intervaloDias);
+                      const isPaid = num === 1 && primeiraParcelaPagaHoje;
+
+                      return (
+                        <div key={num} className={`p-2 rounded-lg border text-[11px] space-y-1 ${
+                          isPaid ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-white/5 border-white/10 text-slate-300'
+                        }`}>
+                          <div className="flex items-center justify-between font-bold">
+                            <span>Parcela {num}/{qtdParcelas}</span>
+                            <span className="text-[9px] px-1 rounded bg-black/40">
+                              {isPaid ? 'Paga Hoje' : 'Pendente'}
+                            </span>
+                          </div>
+                          <div className="font-mono font-bold text-xs">
+                            R$ {Number(vFinal).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            Venc: {venc ? venc.split('-').reverse().join('/') : '-'}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Painel Específico: Restante Vinculado */}
+            {tipoCondicao === 'restante_vinculado' && (
+              <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-2xl space-y-3.5 animate-fadeIn">
+                <div className="flex items-center justify-between pb-2 border-b border-blue-500/20">
+                  <div className="flex items-center gap-2">
+                    <Link2 size={16} className="text-blue-400" />
+                    <span className="font-bold text-blue-300 uppercase tracking-wide text-xs">
+                      Vincular como Restante / Complemento de Pagamento
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-blue-200/80 font-semibold">Despesa Vinculada</span>
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">
+                    Selecione a Despesa de Origem / Entrada a Vincular: *
+                  </label>
+                  {currentVeiculo && currentVeiculo.despesas && currentVeiculo.despesas.length > 0 ? (
+                    <select
+                      value={despesaPaiSelecionadaId}
+                      onChange={(e) => {
+                        const selId = e.target.value;
+                        setDespesaPaiSelecionadaId(selId);
+                        const despesaPai = currentVeiculo.despesas?.find((d) => d.id === selId);
+                        if (despesaPai) {
+                          setCategoria(despesaPai.categoria);
+                          if (despesaPai.fornecedor) setFornecedor(despesaPai.fornecedor);
+                          if (despesaPai.fornecedorId) setSelectedFornecedorId(despesaPai.fornecedorId);
+                          const cleanDesc = despesaPai.descricao.replace(/^\[.*?\]\s*/, '');
+                          setDescricao(`Restante - ${cleanDesc}`);
+                          if (despesaPai.valorTotalAcordo && despesaPai.valorTotalAcordo > despesaPai.valor) {
+                            setValor(Number((despesaPai.valorTotalAcordo - despesaPai.valor).toFixed(2)));
+                            setValorTotalAcordo(despesaPai.valorTotalAcordo);
+                          } else {
+                            setValor(despesaPai.valor);
+                            setValorTotalAcordo(despesaPai.valor);
+                          }
+                        }
+                      }}
+                      className="w-full p-2.5 rounded-xl border border-blue-500/40 bg-[#16171f] text-slate-200 font-bold outline-none focus:border-blue-400 text-xs"
+                    >
+                      <option value="">-- Selecione a despesa que receberá este restante --</option>
+                      {currentVeiculo.despesas
+                        .filter((d) => d.id !== despesaToEdit?.id)
+                        .map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.descricao} — R$ {d.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({d.data ? d.data.split('-').reverse().join('/') : ''} - {d.statusPagamento})
+                          </option>
+                        ))}
+                    </select>
+                  ) : (
+                    <div className="p-3 bg-black/40 border border-white/10 rounded-xl text-slate-400 text-xs">
+                      Este veículo ainda não possui despesas registradas para vincular. Selecione "À Vista" ou "Entrada + Restante".
+                    </div>
+                  )}
+                </div>
+
+                {/* Card com detalhes da Despesa Pai Selecionada */}
+                {(() => {
+                  const pai = currentVeiculo?.despesas?.find((d) => d.id === despesaPaiSelecionadaId);
+                  if (!pai) return null;
+                  return (
+                    <div className="p-3 bg-black/40 border border-blue-500/20 rounded-xl space-y-1 text-xs">
+                      <div className="flex items-center justify-between text-blue-300 font-bold">
+                        <span>📋 Despesa de Origem: {pai.descricao}</span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] ${pai.statusPagamento === 'Pago' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                          {pai.statusPagamento}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-slate-300 pt-1">
+                        <div>Categoria: <strong className="text-white">{pai.categoria}</strong></div>
+                        <div>Valor Pago Anteriormente: <strong className="text-emerald-400 font-mono">R$ {pai.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></div>
+                        <div>Fornecedor: <strong className="text-white">{pai.fornecedor || 'Não informado'}</strong></div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Categoria e Valor (Exibidos em À Vista ou Restante Vinculado) */}
+            {(tipoCondicao === 'a_vista' || tipoCondicao === 'restante_vinculado' || isEditing) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">Categoria da Despesa *</label>
+                  <select
+                    value={categoria}
+                    onChange={(e) => handleCategoriaChange(e.target.value as CategoriaDespesa)}
+                    className="w-full p-2.5 rounded-xl border border-white/10 font-semibold bg-[#16171f] text-slate-200 outline-none focus:border-blue-500"
+                  >
+                    {CATEGORIAS_DESPESA.map((cat) => (
+                      <option key={cat.value} value={cat.value} className="bg-[#16171f] text-slate-200">
+                        {cat.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">
+                    {tipoCondicao === 'restante_vinculado' ? 'Valor do Restante a Pagar (R$) *' : 'Valor da Despesa (R$) *'}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    value={valor}
+                    onChange={(e) => setValor(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-white/10 font-black text-base bg-[#16171f] text-emerald-400 font-mono outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Categoria quando em Entrada + Restante ou Parcelado */}
+            {(tipoCondicao === 'entrada_restante' || tipoCondicao === 'parcelado') && !isEditing && (
               <div>
                 <label className="block text-slate-300 font-bold mb-1">Categoria da Despesa *</label>
                 <select
@@ -450,20 +1195,7 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
                   ))}
                 </select>
               </div>
-
-              <div>
-                <label className="block text-slate-300 font-bold mb-1">Valor da Despesa (R$) *</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                  value={valor}
-                  onChange={(e) => setValor(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-white/10 font-black text-base bg-[#16171f] text-emerald-400 font-mono outline-none focus:border-emerald-500"
-                />
-              </div>
-            </div>
+            )}
 
             {/* Seção Especial para Comissão */}
             {categoria === 'Comissão' && (

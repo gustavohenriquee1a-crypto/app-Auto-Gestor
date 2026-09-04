@@ -39,7 +39,8 @@ import {
   Printer,
   FileCheck,
   User,
-  Fuel
+  Fuel,
+  Link2
 } from 'lucide-react';
 import { 
   Veiculo, 
@@ -72,7 +73,7 @@ interface DossieModalProps {
   veiculo: Veiculo;
   isOpen: boolean;
   onClose: () => void;
-  onOpenNovaDespesa: (veiculo: Veiculo) => void;
+  onOpenNovaDespesa: (veiculo: Veiculo, despesaVinculadaOrigem?: DespesaVeiculo) => void;
   onOpenAbastecimento?: (veiculo: Veiculo) => void;
   onOpenVenda: (veiculo: Veiculo) => void;
   onDeleteDespesa: (veiculoId: string, despesaId: string) => void;
@@ -1633,11 +1634,38 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                                 ⚡ Venda Automática
                               </span>
                             )}
+                            {/* Badges de Parcelamento e Restante Vinculado */}
+                            {desp.tipoVinculo === 'entrada' && (
+                              <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                🟢 Entrada / Sinal
+                              </span>
+                            )}
+                            {desp.tipoVinculo === 'restante' && (
+                              <span className="text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                🟡 Restante do Pagamento
+                              </span>
+                            )}
+                            {desp.tipoVinculo === 'parcela' && (
+                              <span className="text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                💳 Parcela {desp.parcelaNumero}/{desp.totalParcelas}
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs font-semibold text-slate-200">
                             {desp.descricao}
                           </p>
                           <div className="flex items-center gap-3 text-[11px] text-slate-400 flex-wrap">
+                            {desp.despesaOrigemDescricao && (
+                              <span className="text-amber-400/90 font-medium flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                                <Link2 size={11} className="text-amber-400" />
+                                Vinculada a: <strong>{desp.despesaOrigemDescricao}</strong>
+                              </span>
+                            )}
+                            {desp.valorTotalAcordo !== undefined && desp.valorTotalAcordo > 0 && (
+                              <span className="text-slate-300 bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                                Acordo Total: <strong className="text-white font-mono">{formatCurrencyDetailed(desp.valorTotalAcordo)}</strong>
+                              </span>
+                            )}
                             <span>
                               {desp.categoria === 'Comissão' ? 'Beneficiário / Vendedor:' : desp.categoria === 'Combustível' ? 'Posto de Combustível:' : 'Fornecedor:'}{' '}
                               <strong className="text-slate-300">{desp.beneficiarioNome || desp.fornecedor}</strong>
@@ -1678,6 +1706,18 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                               title="Registrar pagamento e dar baixa agora"
                             >
                               <CheckCircle2 size={13} /> Quitar
+                            </button>
+                          )}
+
+                          {/* Botão de Lançar Restante Vinculado */}
+                          {canViewCosts && desp.tipoVinculo !== 'restante' && desp.tipoCondicao !== 'parcelado' && (
+                            <button
+                              onClick={() => onOpenNovaDespesa(veiculo, desp)}
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition flex items-center gap-1 cursor-pointer"
+                              title="Lançar o restante do pagamento vinculado a este custo"
+                            >
+                              <Link2 size={12} />
+                              <span className="hidden sm:inline">+ Restante</span>
                             </button>
                           )}
 

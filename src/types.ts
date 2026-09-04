@@ -105,6 +105,15 @@ export interface DespesaVeiculo {
   formaPagamento?: string;
   observacaoPagamento?: string;
   observacoes?: string;
+  // Parcelamento e Vínculo entre Despesas ("Restante do Pagamento", Entrada, Parcelas)
+  tipoCondicao?: 'a_vista' | 'entrada_restante' | 'parcelado' | 'restante_vinculado';
+  tipoVinculo?: 'entrada' | 'restante' | 'parcela' | 'complemento';
+  despesaOrigemId?: string; // ID da despesa pai/origem à qual este restante ou complemento se vincula
+  despesaOrigemDescricao?: string; // Descrição rápida de referência da despesa pai
+  grupoParcelamentoId?: string; // Identificador comum a todas as parcelas ou partes do mesmo acordo
+  parcelaNumero?: number; // Número da parcela (ex: 1, 2, 3...)
+  totalParcelas?: number; // Total de parcelas do acordo (ex: 2, 3...)
+  valorTotalAcordo?: number; // Valor integral contratado/acordado
 }
 
 export interface PagamentoAluguel {
@@ -803,6 +812,11 @@ export interface MovimentacaoConta {
   motivo?: string;
   comprovanteNumero?: string;
   observacoes?: string;
+  // Roteamento contábil e referências do Lançamento Expresso
+  destinoRoteamento?: 'despesa_fixa' | 'veiculo_estoque' | 'veiculo_locacao' | 'retirada_socio' | 'avulso';
+  pagadorRecebedor?: string;
+  despesaFixaId?: string;
+  despesaVeiculoId?: string;
 }
 
 export interface FechamentoCaixaDiario {

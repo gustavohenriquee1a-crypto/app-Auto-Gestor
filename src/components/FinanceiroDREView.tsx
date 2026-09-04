@@ -72,7 +72,8 @@ import {
   ContaBancariaCaixa, 
   FechamentoCaixaDiario,
   MovimentacaoConta,
-  Usuario
+  Usuario,
+  FornecedorPrestador
 } from '../types';
 import { 
   formatCurrency, 
@@ -97,11 +98,13 @@ import {
 } from '../services/firestoreService';
 import { ModalTransferenciaEntreContas } from './ModalTransferenciaEntreContas';
 import { FechamentoFolhaView } from './FechamentoFolhaView';
+import { ModalLancamentoExpresso } from './ModalLancamentoExpresso';
 
 interface FinanceiroDREViewProps {
   veiculos: Veiculo[];
   vendas: VendaVeiculo[];
   despesasFixas: DespesaFixa[];
+  fornecedores?: FornecedorPrestador[];
   usuarios?: Usuario[];
   currentUser?: Usuario | null;
   onOpenNovaDespesaFixa: () => void;
@@ -117,6 +120,7 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
   veiculos,
   vendas,
   despesasFixas,
+  fornecedores = [],
   usuarios = [],
   currentUser,
   onOpenNovaDespesaFixa,
@@ -128,6 +132,11 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
   const [activeTab, setActiveTab] = useState<TabFinanceiro>('dre');
   const [filtroPeriodo, setFiltroPeriodo] = useState<string>('todos');
   const [tooltipAtivo, setTooltipAtivo] = useState<string | null>(null);
+
+  // Módulo de Lançamento Expresso & Conciliação
+  const [modalLancamentoExpressoOpen, setModalLancamentoExpressoOpen] = useState<boolean>(false);
+  const [movimentacaoParaEditar, setMovimentacaoParaEditar] = useState<MovimentacaoConta | null>(null);
+  const [feedbackMensagemExpresso, setFeedbackMensagemExpresso] = useState<string | null>(null);
 
   // Extrair lista de meses únicos com movimentações para o filtro
   const listaMesesDisponiveis = useMemo(() => {
@@ -674,8 +683,39 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
               <Users size={14} /> Fechamento de Folha & RH
             </button>
           </div>
+
+          {/* Botão de Destaque: Lançamento Expresso */}
+          <button
+            onClick={() => {
+              setMovimentacaoParaEditar(null);
+              setModalLancamentoExpressoOpen(true);
+            }}
+            className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-600 hover:via-orange-600 hover:to-rose-600 text-white text-xs font-black flex items-center gap-2 shadow-lg shadow-rose-500/25 cursor-pointer transition-all active:scale-95"
+            title="Lançamento Expresso de Caixa, Despesa de Veículo, Pró-labore ou Fornecedor"
+          >
+            <Zap size={15} className="animate-pulse" />
+            <span>Lançamento Expresso</span>
+          </button>
         </div>
       </div>
+
+      {/* Banner de Feedback de Lançamento Expresso */}
+      {feedbackMensagemExpresso && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/60 to-purple-950/60 border border-indigo-500/40 text-indigo-200 flex items-center justify-between gap-3 shadow-lg shadow-indigo-950/50 animate-fadeIn">
+          <div className="flex items-center gap-2.5 text-xs font-semibold">
+            <div className="w-7 h-7 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+              <CheckCircle2 size={16} />
+            </div>
+            <span>{feedbackMensagemExpresso}</span>
+          </div>
+          <button
+            onClick={() => setFeedbackMensagemExpresso(null)}
+            className="p-1 rounded-lg hover:bg-white/10 text-indigo-400 hover:text-white cursor-pointer"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Banner de Notificação de Transferência */}
       {notificacaoTransferencia && (
@@ -2099,16 +2139,28 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                 </p>
               </div>
 
-              {/* Botão de Ação Rápida de Transferência no Extrato */}
-              <button
-                onClick={() => {
-                  setContaOrigemPreSelecionadaId(undefined);
-                  setModalTransferenciaOpen(true);
-                }}
-                className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer self-start md:self-auto transition"
-              >
-                <ArrowLeftRight size={14} /> Nova Transferência
-              </button>
+              {/* Botões de Ação Rápida no Extrato */}
+              <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+                <button
+                  onClick={() => {
+                    setMovimentacaoParaEditar(null);
+                    setModalLancamentoExpressoOpen(true);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition"
+                  title="Lançamento Expresso de Caixa e Giro"
+                >
+                  <Zap size={14} /> Lançamento Expresso
+                </button>
+                <button
+                  onClick={() => {
+                    setContaOrigemPreSelecionadaId(undefined);
+                    setModalTransferenciaOpen(true);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition"
+                >
+                  <ArrowLeftRight size={14} /> Nova Transferência
+                </button>
+              </div>
             </div>
 
             {/* Barra de Filtros do Extrato */}
@@ -2260,13 +2312,25 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
 
                           {/* Ações */}
                           <td className="py-3 px-3.5 whitespace-nowrap text-center">
-                            <button
-                              onClick={() => handleDeleteMovimentacao(mov.id)}
-                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
-                              title="Excluir do extrato"
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => {
+                                  setMovimentacaoParaEditar(mov);
+                                  setModalLancamentoExpressoOpen(true);
+                                }}
+                                className="p-1 rounded text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 transition cursor-pointer"
+                                title="Editar lançamento (Regra Saldo Diferencial)"
+                              >
+                                <Edit3 size={13} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteMovimentacao(mov.id)}
+                                className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
+                                title="Excluir do extrato"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2499,6 +2563,29 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
           contaOrigemPreSelecionadaId={contaOrigemPreSelecionadaId}
           currentUser={currentUser}
           onConfirmarTransferencia={handleConfirmarTransferencia}
+        />
+      )}
+
+      {/* Modal de Lançamento Expresso & Conciliação com Regra de Saldo Diferencial */}
+      {modalLancamentoExpressoOpen && (
+        <ModalLancamentoExpresso
+          isOpen={modalLancamentoExpressoOpen}
+          onClose={() => {
+            setModalLancamentoExpressoOpen(false);
+            setMovimentacaoParaEditar(null);
+          }}
+          contasBancarias={contasBancarias}
+          veiculos={veiculos}
+          fornecedores={fornecedores}
+          usuarios={usuarios}
+          currentUser={currentUser}
+          movimentacaoToEdit={movimentacaoParaEditar}
+          onSuccess={(msg) => {
+            setFeedbackMensagemExpresso(msg);
+            setTimeout(() => {
+              setFeedbackMensagemExpresso(null);
+            }, 7000);
+          }}
         />
       )}
     </div>

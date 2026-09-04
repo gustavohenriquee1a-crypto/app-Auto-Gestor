@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Award,
@@ -53,7 +53,29 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
   onUpdateVenda,
   onDeleteVenda,
 }) => {
+  const isAdmin = currentUser?.role === 'admin';
   const isAdminOrGestor = currentUser?.role === 'admin' || currentUser?.role === 'gestor';
+
+  // Buscar dados cadastrais completos do vendedor na lista de usuários do sistema
+  const vendedorUser = useMemo(() => {
+    if (!venda) return null;
+    return (
+      usuarios.find((u) => u.uid === venda.vendedorId) ||
+      usuarios.find(
+        (u) =>
+          u.displayName &&
+          venda.vendedorNome &&
+          u.displayName.trim().toLowerCase() === venda.vendedorNome.trim().toLowerCase()
+      ) ||
+      usuarios.find(
+        (u) =>
+          u.email &&
+          venda.vendedorEmail &&
+          u.email.trim().toLowerCase() === venda.vendedorEmail.trim().toLowerCase()
+      ) ||
+      null
+    );
+  }, [usuarios, venda]);
 
   // State for Transfer Modal
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -167,6 +189,15 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
     const dataPagamentoFormatada = comissaoDataPagamento
       ? new Date(comissaoDataPagamento + 'T12:00:00').toLocaleDateString('pt-BR')
       : dataHojeFormatada;
+
+    const vendedorNomeCompleto = vendedorUser?.displayName || venda.vendedorNome || 'Não especificado';
+    const vendedorCpfCnpj = vendedorUser?.cpfCnpj || 'Não informado';
+    const vendedorTelefone = vendedorUser?.telefone || 'Não informado';
+    const vendedorEmail = vendedorUser?.email || venda.vendedorEmail || 'Não informado';
+    const vendedorCargo = vendedorUser?.cargo || (vendedorUser?.role === 'admin' ? 'Administrador' : 'Vendedor');
+    const vendedorPix = vendedorUser?.dadosBancarios?.chavePix 
+      ? `${vendedorUser.dadosBancarios.chavePix} (${vendedorUser.dadosBancarios.tipoChavePix || 'PIX'}${vendedorUser.dadosBancarios.banco ? ` • Banco: ${vendedorUser.dadosBancarios.banco}` : ''})`
+      : '';
 
     const htmlContent = `
       <!DOCTYPE html>
@@ -307,13 +338,31 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
         <div class="section">
           <div class="section-title">Dados do Vendedor / Beneficiário</div>
           <div class="row">
-            <span class="label">Nome do Vendedor:</span>
-            <span class="value">${venda.vendedorNome || 'Não especificado'}</span>
+            <span class="label">Nome Completo:</span>
+            <span class="value"><strong>${vendedorNomeCompleto}</strong></span>
           </div>
           <div class="row">
-            <span class="label">E-mail / Identificação:</span>
-            <span class="value">${venda.vendedorEmail || 'Vendedor cadastrado no sistema'}</span>
+            <span class="label">CPF ou CNPJ:</span>
+            <span class="value"><strong>${vendedorCpfCnpj}</strong></span>
           </div>
+          <div class="row">
+            <span class="label">Telefone de Contato:</span>
+            <span class="value">${vendedorTelefone}</span>
+          </div>
+          <div class="row">
+            <span class="label">E-mail de Cadastro:</span>
+            <span class="value">${vendedorEmail}</span>
+          </div>
+          <div class="row">
+            <span class="label">Cargo / Função:</span>
+            <span class="value">${vendedorCargo}</span>
+          </div>
+          ${vendedorPix ? `
+          <div class="row">
+            <span class="label">Chave PIX / Recebimento:</span>
+            <span class="value">${vendedorPix}</span>
+          </div>
+          ` : ''}
         </div>
 
         <div class="section">
@@ -351,13 +400,13 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
         <div class="signatures">
           <div class="sig-box">
             <div class="sig-line"></div>
-            <div class="sig-name">${venda.vendedorNome || 'Vendedor Beneficiário'}</div>
-            <div class="sig-role">Assinatura do Vendedor</div>
+            <div class="sig-name">${vendedorNomeCompleto}</div>
+            <div class="sig-role">CPF/CNPJ: ${vendedorCpfCnpj} • Vendedor / Beneficiário</div>
           </div>
           <div class="sig-box">
             <div class="sig-line"></div>
             <div class="sig-name">${currentUser?.displayName || 'Administração / Gerência'}</div>
-            <div class="sig-role">Diretoria / Financeiro Loja</div>
+            <div class="sig-role">AutoGestor Pro • Quitação de Comissão</div>
           </div>
         </div>
 
@@ -414,7 +463,7 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
           </div>
 
           <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-            {isAdminOrGestor && onOpenDossie && (
+            {isAdmin && onOpenDossie && (
               <button
                 type="button"
                 onClick={handleOpenDossieCompleto}
@@ -427,14 +476,16 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
               </button>
             )}
 
-            <button
-              onClick={handleImprimirRecibo}
-              className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 font-semibold text-xs border border-white/10 flex items-center gap-1.5 cursor-pointer transition"
-              title="Gerar e imprimir recibo oficial de comissão"
-            >
-              <Printer size={14} className="text-purple-400" />
-              <span className="hidden sm:inline">Imprimir Recibo</span>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={handleImprimirRecibo}
+                className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 font-semibold text-xs border border-white/10 flex items-center gap-1.5 cursor-pointer transition"
+                title="Gerar e imprimir recibo oficial de comissão"
+              >
+                <Printer size={14} className="text-purple-400" />
+                <span className="hidden sm:inline">Imprimir Recibo</span>
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
@@ -446,8 +497,8 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
 
         {/* Corpo do Modal (Scrollável) */}
         <div className="p-6 overflow-y-auto space-y-6 text-xs text-slate-300 flex-1">
-          {/* BANNER ADMINISTRATIVO DE DOSSIÊ DO VEÍCULO VENDIDO */}
-          {isAdminOrGestor && (
+          {/* BANNER ADMINISTRATIVO DE DOSSIÊ DO VEÍCULO VENDIDO - SOMENTE ADMIN */}
+          {isAdmin && (
             <div className="p-3.5 bg-gradient-to-r from-blue-950/40 via-indigo-950/30 to-purple-950/20 rounded-2xl border border-blue-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold shrink-0">
@@ -478,8 +529,8 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
             </div>
           )}
 
-          {/* 1. SEÇÃO DE CARDS DE RESUMO FINANCEIRO DA TRANSAÇÃO */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* 1. SEÇÃO DE CARDS DE RESUMO FINANCEIRO DA TRANSAÇÃO (RBAC: Lucro Real e Custo Total exclusivos de ADMIN) */}
+          <div className={`grid grid-cols-1 ${isAdmin ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-2'} gap-3`}>
             <div className="bg-[#16171f] p-3.5 rounded-2xl border border-white/5">
               <span className="text-[11px] text-slate-400 font-semibold uppercase">Valor da Venda</span>
               <p className="text-lg font-black text-white font-mono mt-0.5">
@@ -488,35 +539,40 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
               <span className="text-[10px] text-slate-500 font-mono">Faturamento Bruto</span>
             </div>
 
-            <div className="bg-[#16171f] p-3.5 rounded-2xl border border-emerald-500/20">
-              <span className="text-[11px] text-emerald-400 font-semibold uppercase">Lucro Líquido Real</span>
-              <p className="text-lg font-black text-emerald-400 font-mono mt-0.5">
-                {formatCurrency(venda.lucroLiquido)}
-              </p>
-              <span className="text-[10px] text-emerald-500/80 font-mono">
-                Margem: {formatPercent(venda.margemLucroPercent || (venda.valorVenda > 0 ? (venda.lucroLiquido / venda.valorVenda) * 100 : 0))}
-              </span>
-            </div>
+            {isAdmin && (
+              <div className="bg-[#16171f] p-3.5 rounded-2xl border border-emerald-500/20">
+                <span className="text-[11px] text-emerald-400 font-semibold uppercase">Lucro Líquido Real</span>
+                <p className="text-lg font-black text-emerald-400 font-mono mt-0.5">
+                  {formatCurrency(venda.lucroLiquido)}
+                </p>
+                <span className="text-[10px] text-emerald-500/80 font-mono">
+                  Margem: {formatPercent(venda.margemLucroPercent || (venda.valorVenda > 0 ? (venda.lucroLiquido / venda.valorVenda) * 100 : 0))}
+                </span>
+              </div>
+            )}
 
             <div className="bg-[#16171f] p-3.5 rounded-2xl border border-amber-500/20">
-              <span className="text-[11px] text-amber-400 font-semibold uppercase">Comissão do Vendedor</span>
+              <span className="text-[11px] text-amber-400 font-semibold uppercase">Comissão da Venda</span>
               <p className="text-lg font-black text-amber-400 font-mono mt-0.5">
                 {formatCurrency(venda.comissaoValor)}
               </p>
-              <span className="text-[10px] text-amber-500/80">
-                {venda.vendedorNome || 'Vendedor'}
+              <span className="text-[10px] text-amber-500/80 flex items-center gap-1">
+                <span>Beneficiário: {venda.vendedorNome || 'Vendedor'}</span>
+                <span>• Status: {comissaoStatus}</span>
               </span>
             </div>
 
-            <div className="bg-[#16171f] p-3.5 rounded-2xl border border-blue-500/20">
-              <span className="text-[11px] text-blue-400 font-semibold uppercase">Custo Total Veículo</span>
-              <p className="text-lg font-black text-blue-400 font-mono mt-0.5">
-                {formatCurrency(venda.custoTotal)}
-              </p>
-              <span className="text-[10px] text-slate-500">
-                Compra ({formatCurrency(venda.valorCompra)}) + Desp. ({formatCurrency(venda.totalDespesas)})
-              </span>
-            </div>
+            {isAdmin && (
+              <div className="bg-[#16171f] p-3.5 rounded-2xl border border-blue-500/20">
+                <span className="text-[11px] text-blue-400 font-semibold uppercase">Custo Total Veículo</span>
+                <p className="text-lg font-black text-blue-400 font-mono mt-0.5">
+                  {formatCurrency(venda.custoTotal)}
+                </p>
+                <span className="text-[10px] text-slate-500">
+                  Compra ({formatCurrency(venda.valorCompra)}) + Desp. ({formatCurrency(venda.totalDespesas)})
+                </span>
+              </div>
+            )}
           </div>
 
           {/* 2. COMO FOI FECHADA / PECHADA A VENDA */}
@@ -680,7 +736,8 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
           </div>
 
           {/* 3. GESTÃO E QUITAÇÃO DA COMISSÃO DO VENDEDOR (ADMINISTRADOR) */}
-          <form onSubmit={handleSalvarComissao} className="bg-gradient-to-br from-[#181a24] to-[#12131c] p-5 rounded-2xl border border-purple-500/30 space-y-5">
+          {isAdmin && (
+            <form onSubmit={handleSalvarComissao} className="bg-gradient-to-br from-[#181a24] to-[#12131c] p-5 rounded-2xl border border-purple-500/30 space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-500/20 pb-3">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold">
@@ -845,9 +902,10 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
               </div>
             )}
           </form>
+          )}
 
-          {/* 4. ZONA DE EXCLUSÃO DA VENDA (SOMENTE ADMIN/GESTOR) */}
-          {isAdminOrGestor && (
+          {/* 4. ZONA DE EXCLUSÃO DA VENDA (SOMENTE ADMIN) */}
+          {isAdmin && (
             <div className="p-4 rounded-2xl bg-rose-950/20 border border-rose-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h5 className="font-bold text-rose-300 text-xs flex items-center gap-1.5">
@@ -877,7 +935,7 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
             <span className="text-[11px] text-slate-500">
               ID da Transação: <span className="font-mono text-slate-400">{venda.id}</span>
             </span>
-            {isAdminOrGestor && (
+            {isAdmin && (
               <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[10px] font-bold">
                 Auditoria Admin
               </span>
@@ -885,7 +943,7 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
           </div>
 
           <div className="flex items-center gap-2">
-            {isAdminOrGestor && onOpenDossie && (
+            {isAdmin && onOpenDossie && (
               <button
                 type="button"
                 onClick={handleOpenDossieCompleto}

@@ -51,6 +51,7 @@ import {
   getDefaultPermissionsForRole,
   MASTER_ADMIN_EMAIL,
 } from '../services/authService';
+import { ModalMeuPerfil } from './ModalMeuPerfil';
 
 interface UsuariosModalProps {
   isOpen: boolean;
@@ -68,6 +69,7 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
   const [activeTab, setActiveTab] = useState<'pendentes' | 'aprovados' | 'recusados'>('pendentes');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUserForPerms, setSelectedUserForPerms] = useState<Usuario | null>(null);
+  const [editingUserPerfil, setEditingUserPerfil] = useState<Usuario | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Edit Permissions State
@@ -105,6 +107,32 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
 
   if (!isOpen) return null;
 
+  // RBAC: Somente Administradores têm acesso ao gerenciador de usuários e dados cadastrais da equipe
+  if (currentUser?.role !== 'admin') {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
+        <div className="bg-[#0e0f14] border border-red-500/30 rounded-3xl p-6 text-center max-w-md shadow-2xl space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-400 flex items-center justify-center mx-auto">
+            <Lock size={24} />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-white">Acesso Exclusivo para Administradores</h3>
+            <p className="text-xs text-slate-400 mt-1">
+              A gestão de usuários e visualização dos dados cadastrais da equipe é estritamente restrita a administradores do sistema.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold transition cursor-pointer"
+          >
+            Fechar Janela
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const pendentes = users.filter((u) => u.statusAprovacao === 'pendente');
   const aprovados = users.filter((u) => u.statusAprovacao === 'aprovado' && u.ativo !== false);
   const recusados = users.filter((u) => u.statusAprovacao === 'recusado' || (u.statusAprovacao !== 'pendente' && u.ativo === false));
@@ -117,7 +145,9 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
         u.displayName?.toLowerCase().includes(q) ||
         u.email?.toLowerCase().includes(q) ||
         u.cargo?.toLowerCase().includes(q) ||
-        u.role?.toLowerCase().includes(q)
+        u.role?.toLowerCase().includes(q) ||
+        u.cpfCnpj?.toLowerCase().includes(q) ||
+        u.telefone?.toLowerCase().includes(q)
     );
   };
 
@@ -464,9 +494,22 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
                         </div>
                         <p className="text-xs text-slate-400 font-mono mt-0.5">{u.email}</p>
                         <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1 flex-wrap">
-                          {u.telefone && (
-                            <span className="flex items-center gap-1">
-                              <Phone size={11} className="text-slate-500" /> {u.telefone}
+                          {u.cpfCnpj ? (
+                            <span className="flex items-center gap-1 text-slate-300">
+                              <FileText size={11} className="text-purple-400" /> CPF/CNPJ: <strong className="font-mono text-white">{u.cpfCnpj}</strong>
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-slate-500 italic">
+                              <FileText size={11} /> CPF/CNPJ: Não cadastrado
+                            </span>
+                          )}
+                          {u.telefone ? (
+                            <span className="flex items-center gap-1 text-slate-300">
+                              <Phone size={11} className="text-emerald-400" /> Tel: <strong className="text-white">{u.telefone}</strong>
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-slate-500 italic">
+                              <Phone size={11} /> Tel: Não informado
                             </span>
                           )}
                           <span>Função sugerida: <strong className="text-blue-400">{u.cargo || u.role}</strong></span>
@@ -477,6 +520,16 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
 
                     {/* Explicit Approval Actions */}
                     <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setEditingUserPerfil(u)}
+                        className="px-3 py-2 rounded-xl bg-purple-600/15 hover:bg-purple-600/25 text-purple-300 border border-purple-500/20 font-bold text-xs transition flex items-center gap-1 cursor-pointer"
+                        title="Visualizar e alterar ficha cadastral completa antes de aprovar"
+                      >
+                        <UserCheck size={14} className="text-purple-400" />
+                        <span>Ver / Alterar Cadastro</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => handleQuickApprove(u, 'vendedor')}
@@ -578,11 +631,45 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
                               <span>Aprovado em: <strong className="text-slate-300">{new Date(u.dataAprovacao).toLocaleDateString('pt-BR')}</strong></span>
                             )}
                           </div>
+
+                          {/* Dados Cadastrais Registrados pelo Usuário ou Administrador */}
+                          <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1.5 flex-wrap pt-1.5 border-t border-white/5">
+                            <span className="flex items-center gap-1">
+                              <FileText size={11} className={u.cpfCnpj ? 'text-purple-400' : 'text-slate-600'} />
+                              CPF/CNPJ: {u.cpfCnpj ? <strong className="font-mono text-white">{u.cpfCnpj}</strong> : <span className="text-slate-500 italic">Não informado</span>}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Phone size={11} className={u.telefone ? 'text-emerald-400' : 'text-slate-600'} />
+                              Tel: {u.telefone ? <strong className="text-white">{u.telefone}</strong> : <span className="text-slate-500 italic">Não informado</span>}
+                            </span>
+                            {u.dadosBancarios?.chavePix && (
+                              <span className="flex items-center gap-1">
+                                <DollarSign size={11} className="text-amber-400" />
+                                PIX: <strong className="font-mono text-amber-300">{u.dadosBancarios.chavePix}</strong>
+                              </span>
+                            )}
+                            {u.enderecoCompleto?.cidade && (
+                              <span className="flex items-center gap-1">
+                                <Building2 size={11} className="text-blue-400" />
+                                {u.enderecoCompleto.cidade}{u.enderecoCompleto.uf ? `/${u.enderecoCompleto.uf}` : ''}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
                       {/* Permissions summary & Edit Button */}
                       <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setEditingUserPerfil(u)}
+                          className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-purple-200 border border-purple-500/30 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                          title="Visualizar e alterar os dados cadastrais completos (CPF, Telefone, Endereço, Bancários, Vínculo)"
+                        >
+                          <UserCheck size={14} className="text-purple-400" />
+                          <span>Ver / Alterar Cadastro</span>
+                        </button>
+
                         <button
                           type="button"
                           onClick={() => handleOpenPermsModal(u)}
@@ -705,6 +792,29 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4 text-xs">
+              {/* Ficha Cadastral do Usuário */}
+              <div className="p-3 bg-purple-950/30 border border-purple-500/30 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
+                    <UserCheck size={16} />
+                  </div>
+                  <div>
+                    <h5 className="font-bold text-white text-xs">Dados Cadastrais do Usuário</h5>
+                    <p className="text-[11px] text-slate-400">
+                      CPF: <span className="font-mono text-purple-300 font-medium">{selectedUserForPerms.cpfCnpj || 'Não cadastrado'}</span> • Tel: <span className="text-white font-medium">{selectedUserForPerms.telefone || 'Não informado'}</span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingUserPerfil(selectedUserForPerms)}
+                  className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer transition shadow shrink-0"
+                >
+                  <UserCheck size={13} />
+                  <span>Ver / Alterar Cadastro</span>
+                </button>
+              </div>
+
               {/* Role & Commission */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1371,6 +1481,26 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal para o Administrador Visualizar e Alterar Dados Cadastrais do Usuário */}
+      {editingUserPerfil && (
+        <ModalMeuPerfil
+          isOpen={!!editingUserPerfil}
+          onClose={() => setEditingUserPerfil(null)}
+          currentUser={currentUser}
+          targetUser={editingUserPerfil}
+          onSaveSuccess={(updated) => {
+            setUsers((prev) =>
+              prev.map((usr) => (usr.uid === updated.uid ? { ...usr, ...updated } : usr))
+            );
+            if (selectedUserForPerms?.uid === updated.uid) {
+              setSelectedUserForPerms((prev) => (prev ? { ...prev, ...updated } : null));
+            }
+            setEditingUserPerfil(null);
+            showFeedback(`Dados cadastrais de ${updated.displayName} salvos com sucesso!`);
+          }}
+        />
       )}
     </div>
   );

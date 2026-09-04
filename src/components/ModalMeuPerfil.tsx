@@ -250,8 +250,36 @@ export const ModalMeuPerfil: React.FC<ModalMeuPerfilProps> = ({
     }
   };
 
+  if (!isOpen || !user) return null;
+
+  // RBAC: Se for edição de outro usuário e o usuário atual NÃO for admin, bloqueia o acesso imediatamente
+  if (isEditingOtherUser && !isAdmin) {
+    return (
+      <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
+        <div className="bg-[#0e0f14] border border-red-500/30 rounded-3xl p-6 text-center max-w-md shadow-2xl space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-400 flex items-center justify-center mx-auto">
+            <Lock size={24} />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-white">Acesso Restrito ao Administrador</h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Apenas administradores possuem autorização para visualizar ou alterar dados cadastrais de outros usuários. Você só tem permissão para visualizar e atualizar seu próprio cadastro.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold transition cursor-pointer"
+          >
+            Fechar Janela
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm overflow-y-auto animate-fadeIn">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm overflow-y-auto animate-fadeIn">
       <div className="relative w-full max-w-3xl bg-[#0e0f14] border border-white/10 rounded-3xl shadow-2xl overflow-hidden my-auto flex flex-col max-h-[92vh]">
         {/* Header do Modal */}
         <div className="flex items-center justify-between p-5 border-b border-white/5 bg-[#12131a]">

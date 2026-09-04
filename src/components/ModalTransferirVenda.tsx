@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   ArrowRightLeft,
@@ -11,17 +11,19 @@ import {
   Loader2,
   ShieldAlert,
   Sparkles,
-  FileText
+  FileText,
+  BadgeCheck
 } from 'lucide-react';
 import { VendaVeiculo, Usuario } from '../types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 import { saveVendaFirestore } from '../services/firestoreService';
+import { subscribeAllUsers } from '../services/authService';
 
 interface ModalTransferirVendaProps {
   isOpen: boolean;
   onClose: () => void;
   venda: VendaVeiculo | null;
-  usuarios: Usuario[];
+  usuarios?: Usuario[];
   currentUser: Usuario | null;
   onTransferenciaSucesso?: (vendaAtualizada: VendaVeiculo) => void;
 }
@@ -30,10 +32,12 @@ export const ModalTransferirVenda: React.FC<ModalTransferirVendaProps> = ({
   isOpen,
   onClose,
   venda,
-  usuarios,
+  usuarios = [],
   currentUser,
   onTransferenciaSucesso,
 }) => {
+  const [internalUsers, setInternalUsers] = useState<Usuario[]>(usuarios);
+  const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(false);
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [isManualSeller, setIsManualSeller] = useState(false);
   const [manualNome, setManualNome] = useState('');
@@ -47,8 +51,46 @@ export const ModalTransferirVenda: React.FC<ModalTransferirVendaProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Vendedor selecionado no dropdown
-  const targetUser = usuarios.find((u) => u.uid === selectedUserId);
+  // Sincroniza se a lista recebida via props mudar
+  useEffect(() => {
+    if (usuarios && usuarios.length > 0) {
+      setInternalUsers(usuarios);
+    }
+  }, [usuarios]);
+
+  // Se o modal for aberto, subscreve aos usuários em tempo real para garantir lista completa e atualizada
+  useEffect(() => {
+    if (isOpen) {
+      setIsLoadingUsers(true);
+      const unsubscribe = subscribeAllUsers((users) => {
+        if (users && users.length > 0) {
+          setInternalUsers(users);
+        }
+        setIsLoadingUsers(false);
+      });
+      return () => unsubscribe();
+    }
+  }, [isOpen]);
+
+  // Filtrar estritamente usuários cadastrados no sistema e JÁ AUTORIZADOS (statusAprovacao='aprovado' e ativo!=false)
+  const usuariosAutorizados = useMemo(() => {
+    return internalUsers
+      .filter((u) => {
+        const isAprovado = u.statusAprovacao === 'aprovado' || (!u.statusAprovacao && u.role === 'admin');
+        const isAtivo = u.ativo !== false;
+        return isAprovado && isAtivo;
+      })
+      .sort((a, b) => {
+        const nomeA = a.displayName || a.email || '';
+        const nomeB = b.displayName || b.email || '';
+        return nomeA.localeCompare(nomeB, 'pt-BR', { sensitivity: 'base' });
+      });
+  }, [internalUsers]);
+
+  // Vendedor selecionado
+  const targetUser = useMemo(() => {
+    return usuariosAutorizados.find((u) => u.uid === selectedUserId) || internalUsers.find((u) => u.uid === selectedUserId);
+  }, [usuariosAutorizados, internalUsers, selectedUserId]);
 
   useEffect(() => {
     if (venda && isOpen) {
@@ -70,7 +112,6 @@ export const ModalTransferirVenda: React.FC<ModalTransferirVendaProps> = ({
     if (!targetUser) return venda.comissaoValor || 0;
 
     const valorVenda = venda.valorVenda || 0;
-    const lucroLiquido = venda.lucroLiquido || 0;
 
     // Regra fixa em R$
     if (targetUser.tipoComissaoPadrao === 'fixo' && targetUser.comissaoPadraoFixo !== undefined) {
@@ -119,11 +160,11 @@ export const ModalTransferirVenda: React.FC<ModalTransferirVendaProps> = ({
       novoVendedorEmail = manualEmail.trim() || undefined;
     } else {
       if (!selectedUserId) {
-        setError('Por favor, selecione um vendedor cadastrado ou marque a opção manual.');
+        setError('Por favor, selecione um vendedor autorizado cadastrado no sistema.');
         return;
       }
       if (!targetUser) {
-        setError('Usuário de destino não encontrado.');
+        setError('Usuário de destino não encontrado entre os autorizados.');
         return;
       }
       novoVendedorId = targetUser.uid;
@@ -246,36 +287,115 @@ export const ModalTransferirVenda: React.FC<ModalTransferirVendaProps> = ({
           )}
 
           {/* Seleção do Novo Vendedor */}
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-slate-200">
-                Novo Vendedor Responsável <span className="text-rose-400">*</span>
+              <label htmlFor="select-novo-vendedor" className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                <span>Novo Vendedor Responsável</span>
+                <span className="text-rose-400">*</span>
+                <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <CheckCircle2 size={11} />
+                  <span>{usuariosAutorizados.length} {usuariosAutorizados.length === 1 ? 'autorizado' : 'autorizados'}</span>
+                </span>
               </label>
               <button
                 type="button"
-                onClick={() => setIsManualSeller(!isManualSeller)}
+                onClick={() => {
+                  setIsManualSeller(!isManualSeller);
+                  setError(null);
+                }}
                 className="text-[11px] text-purple-400 hover:text-purple-300 underline font-semibold cursor-pointer"
               >
-                {isManualSeller ? 'Selecionar da Lista de Usuários' : 'Digitar nome manualmente'}
+                {isManualSeller ? 'Selecionar da Lista de Usuários Autorizados' : 'Digitar nome manualmente'}
               </button>
             </div>
 
             {!isManualSeller ? (
-              <select
-                value={selectedUserId}
-                onChange={(e) => setSelectedUserId(e.target.value)}
-                className="w-full bg-[#16171f] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-purple-500 outline-none"
-              >
-                <option value="">-- Selecione o colaborador na lista --</option>
-                {usuarios.map((u) => (
-                  <option key={u.uid} value={u.uid}>
-                    {u.displayName} ({u.cargo || u.role}) - {u.email}
-                  </option>
-                ))}
-              </select>
+              <div className="space-y-2">
+                <div className="relative">
+                  <select
+                    id="select-novo-vendedor"
+                    value={selectedUserId}
+                    onChange={(e) => {
+                      setSelectedUserId(e.target.value);
+                      setError(null);
+                    }}
+                    className="w-full bg-[#16171f] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:border-purple-500 outline-none transition cursor-pointer"
+                  >
+                    <option value="">
+                      {isLoadingUsers && usuariosAutorizados.length === 0
+                        ? 'Carregando usuários autorizados...'
+                        : usuariosAutorizados.length === 0
+                        ? '-- Nenhum usuário autorizado encontrado no sistema --'
+                        : '-- Selecione o novo vendedor autorizado --'}
+                    </option>
+                    {usuariosAutorizados.map((u) => {
+                      const isCurrentSeller =
+                        (venda.vendedorId && u.uid === venda.vendedorId) ||
+                        (venda.vendedorNome && u.displayName && u.displayName.trim().toLowerCase() === venda.vendedorNome.trim().toLowerCase());
+
+                      const cargo = u.cargo || (u.role === 'admin' ? 'Administrador' : u.role === 'gestor' ? 'Gestor' : 'Vendedor');
+                      const regraComissao =
+                        u.tipoComissaoPadrao === 'fixo' && u.comissaoPadraoFixo !== undefined
+                          ? ` | R$ ${u.comissaoPadraoFixo} fixo`
+                          : u.comissaoPadraoPercent !== undefined
+                          ? ` | ${u.comissaoPadraoPercent}% padrão`
+                          : '';
+
+                      return (
+                        <option
+                          key={u.uid}
+                          value={u.uid}
+                          disabled={isCurrentSeller}
+                        >
+                          {u.displayName} ({cargo}{regraComissao}) - {u.email}
+                          {isCurrentSeller ? ' ← [Vendedor Atual desta Venda]' : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                {/* Card de Informações do Novo Vendedor Selecionado */}
+                {targetUser && (
+                  <div className="p-3.5 rounded-2xl bg-purple-950/20 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs animate-fadeIn">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/40 text-purple-300 flex items-center justify-center font-bold text-sm shrink-0">
+                        {targetUser.displayName ? targetUser.displayName.charAt(0).toUpperCase() : 'U'}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white text-xs">{targetUser.displayName}</span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                            <CheckCircle2 size={10} />
+                            <span>Autorizado & Ativo</span>
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-400 block">{targetUser.email}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300 font-mono">
+                        {targetUser.cargo || (targetUser.role === 'admin' ? 'Administrador' : targetUser.role === 'gestor' ? 'Gestor' : 'Vendedor')}
+                      </span>
+                      {targetUser.tipoVinculo && (
+                        <span className="px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-blue-300 font-bold uppercase">
+                          {targetUser.tipoVinculo}
+                        </span>
+                      )}
+                      <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300 font-medium">
+                        {targetUser.tipoComissaoPadrao === 'fixo' && targetUser.comissaoPadraoFixo !== undefined
+                          ? `Fixo: R$ ${targetUser.comissaoPadraoFixo}`
+                          : `${targetUser.comissaoPadraoPercent || 1.5}% padrão`}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <input
+                  id="input-manual-vendedor-nome"
                   type="text"
                   placeholder="Nome do Novo Vendedor"
                   value={manualNome}
@@ -283,6 +403,7 @@ export const ModalTransferirVenda: React.FC<ModalTransferirVendaProps> = ({
                   className="w-full bg-[#16171f] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 outline-none"
                 />
                 <input
+                  id="input-manual-vendedor-email"
                   type="email"
                   placeholder="E-mail (opcional)"
                   value={manualEmail}

@@ -2524,6 +2524,7 @@ export default function App() {
             <ComissoesVendasView
               vendas={vendas}
               veiculos={veiculos}
+              usuarios={allUsersList}
               currentUser={currentUserProfile}
               onOpenDossie={openDossie}
               onUpdateVendaComissao={handleUpdateVendaComissao}

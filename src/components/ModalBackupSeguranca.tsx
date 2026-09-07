@@ -226,10 +226,10 @@ export const ModalBackupSeguranca: React.FC<ModalBackupSegurancaProps> = ({
 
       const res = await restoreDataToFirestore(
         {
-          veiculos: decryptedResult.data.veiculos || [],
-          vendas: decryptedResult.data.vendas || [],
-          despesasFixas: decryptedResult.data.despesasFixas || [],
-          profissoes: decryptedResult.data.profissoes || [],
+          veiculos: decryptedResult?.data?.veiculos || [],
+          vendas: decryptedResult?.data?.vendas || [],
+          despesasFixas: decryptedResult?.data?.despesasFixas || [],
+          profissoes: decryptedResult?.data?.profissoes || [],
         },
         restoreMode
       );
@@ -610,15 +610,15 @@ export const ModalBackupSeguranca: React.FC<ModalBackupSegurancaProps> = ({
                     <div className="grid grid-cols-3 gap-2.5 pt-1">
                       <div className="bg-[#101117] p-3 rounded-xl border border-white/5">
                         <span className="text-[10px] text-slate-400 font-semibold uppercase">Veículos</span>
-                        <p className="text-lg font-black text-white mt-0.5">{decryptedResult.data.veiculos?.length || 0}</p>
+                        <p className="text-lg font-black text-white mt-0.5">{decryptedResult?.data?.veiculos?.length || 0}</p>
                       </div>
                       <div className="bg-[#101117] p-3 rounded-xl border border-white/5">
                         <span className="text-[10px] text-slate-400 font-semibold uppercase">Vendas</span>
-                        <p className="text-lg font-black text-emerald-400 mt-0.5">{decryptedResult.data.vendas?.length || 0}</p>
+                        <p className="text-lg font-black text-emerald-400 mt-0.5">{decryptedResult?.data?.vendas?.length || 0}</p>
                       </div>
                       <div className="bg-[#101117] p-3 rounded-xl border border-white/5">
                         <span className="text-[10px] text-slate-400 font-semibold uppercase">Despesas Fixas</span>
-                        <p className="text-lg font-black text-amber-400 mt-0.5">{decryptedResult.data.despesasFixas?.length || 0}</p>
+                        <p className="text-lg font-black text-amber-400 mt-0.5">{decryptedResult?.data?.despesasFixas?.length || 0}</p>
                       </div>
                     </div>
 

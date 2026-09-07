@@ -22,39 +22,75 @@ export const isCategoriaRepasseDistribuicao = (categoria?: string): boolean => {
   );
 };
 
-export const formatCurrency = (val: number): string => {
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val || 0);
+export const normalizeDateString = (dateVal: any): string => {
+  if (!dateVal) return '';
+  if (typeof dateVal === 'string') return dateVal;
+  if (typeof dateVal === 'object') {
+    if (typeof dateVal.toDate === 'function') {
+      try {
+        return dateVal.toDate().toISOString().split('T')[0];
+      } catch {
+        // fallback
+      }
+    }
+    if ('seconds' in dateVal && typeof dateVal.seconds === 'number') {
+      try {
+        return new Date(dateVal.seconds * 1000).toISOString().split('T')[0];
+      } catch {
+        // fallback
+      }
+    }
+    if (dateVal instanceof Date) {
+      try {
+        return isNaN(dateVal.getTime()) ? '' : dateVal.toISOString().split('T')[0];
+      } catch {
+        // fallback
+      }
+    }
+  }
+  return String(dateVal || '');
 };
 
-export const formatCurrencyDetailed = (val: number): string => {
+export const formatCurrency = (val: number | string | undefined | null): string => {
+  const num = typeof val === 'number' ? val : Number(val);
+  const safeVal = isNaN(num) ? 0 : num;
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(val || 0);
+  }).format(safeVal);
+};
+
+export const formatCurrencyDetailed = (val: number | string | undefined | null): string => {
+  const num = typeof val === 'number' ? val : Number(val);
+  const safeVal = isNaN(num) ? 0 : num;
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(safeVal);
 };
 
 export const formatPercent = (val: number): string => {
   return `${(val || 0).toFixed(1)}%`;
 };
 
-export const formatDate = (dateStr: string): string => {
+export const formatDate = (dateStr: any): string => {
   if (!dateStr) return '-';
   try {
-    const parts = dateStr.split('-');
+    const normalized = normalizeDateString(dateStr);
+    if (!normalized) return '-';
+    const dateOnly = normalized.split('T')[0];
+    const parts = dateOnly.split('-');
     if (parts.length === 3) {
       return `${parts[2]}/${parts[1]}/${parts[0]}`;
     }
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('pt-BR');
+    const d = new Date(normalized);
+    return isNaN(d.getTime()) ? normalized : d.toLocaleDateString('pt-BR');
   } catch {
-    return dateStr;
+    return typeof dateStr === 'string' ? dateStr : '-';
   }
 };
 
@@ -425,6 +461,10 @@ export interface DRESummaryData {
   repassesPorCategoria: GrupoRepasseDistribuicao[];
   quantidadeRepassesEDistribuicoes: number;
 
+  // 6. Marketing e Tráfego Pago Pós-Venda Atribuído a Chassi
+  totalMarketingPosVenda: number;
+  pctMarketingPosVenda: number;
+
   // Resultado Final: Lucro Líquido Real & Margem Líquida
   lucroLiquidoReal: number;
   margemLiquidaPercent: number;
@@ -626,8 +666,15 @@ export const calculateDRESummary = (
   const totalRepassesEDistribuicoes = totalRepassesParceiros + totalDistribuicaoSocios + totalBonusFuncionarios + totalProLabore;
   const pctRepassesEDistribuicoes = getPct(totalRepassesEDistribuicoes);
 
-  // 8. Lucro Líquido Real da Operação (após deduzir Despesas Fixas, Provisões e Repasses/Distribuições)
-  const lucroLiquidoReal = receitaOperacionalBruta - cmvTotal - totalDespesasFixas - totalProvisoes - totalRepassesEDistribuicoes;
+  // 8. Despesa de Marketing & Tráfego Pago Pós-Venda Atribuído ao Chassi
+  // REGRA CONTÁBIL CRÍTICA:
+  // Este valor é deduzido do lucro líquido final no DRE, mas NÃO recalcula nem altera
+  // a comissão já fixada e salva para os vendedores (cmvComissoesVendidos permanece inalterada).
+  const totalMarketingPosVenda = vendasFiltradas.reduce((sum, v) => sum + (v.despesaMarketingAplicadaPosVenda || 0), 0);
+  const pctMarketingPosVenda = getPct(totalMarketingPosVenda);
+
+  // 9. Lucro Líquido Real da Operação (após deduzir Despesas Fixas, Provisões, Repasses/Distribuições e Marketing Pós-Venda)
+  const lucroLiquidoReal = receitaOperacionalBruta - cmvTotal - totalDespesasFixas - totalProvisoes - totalRepassesEDistribuicoes - totalMarketingPosVenda;
   const margemLiquidaPercent = getPct(lucroLiquidoReal);
 
   return {
@@ -672,6 +719,9 @@ export const calculateDRESummary = (
     pctRepassesEDistribuicoes,
     repassesPorCategoria,
     quantidadeRepassesEDistribuicoes: repassesItens.length,
+
+    totalMarketingPosVenda,
+    pctMarketingPosVenda,
 
     lucroLiquidoReal,
     margemLiquidaPercent,

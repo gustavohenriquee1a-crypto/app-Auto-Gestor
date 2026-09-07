@@ -315,3 +315,61 @@ export function exportProfissoesSegmentosCsv(profissoes: any[], customFilename?:
   const filename = customFilename || `Perfil_Profissoes_Clientes_TrocaFacil_${new Date().toISOString().split('T')[0]}`;
   downloadCsv(csvContent, filename);
 }
+
+/**
+ * 7. Exporta Relatório de Performance de Marketing, Atribuição & CAC por Canal
+ */
+export function exportPerformanceMarketingCsv(
+  metricasMarketing: Array<{
+    canal: string;
+    vendasQtd: number;
+    percentualVendas: number;
+    receitaTotal: number;
+    ticketMedio: number;
+    custoVeiculos: number;
+    comissoesPagas: number;
+    custoMarketingTotal: number;
+    cac: number;
+    lucroLiquidoReal: number;
+    margemLiquidaPercent: number;
+    roas: number;
+    roi: number;
+  }>,
+  customFilename?: string
+) {
+  const headers = [
+    'Canal / Origem do Lead',
+    'Vendas Concluídas (Qtd)',
+    'Share de Vendas (%)',
+    'Receita Bruta Total (R$)',
+    'Ticket Médio de Venda (R$)',
+    'Custo dos Carros + Oficina (R$)',
+    'Comissões Vendedores [Protegidas] (R$)',
+    'Investimento em Marketing / Anúncios (R$)',
+    'CAC por Carro Vendido (R$)',
+    'Lucro Líquido Real (R$)',
+    'Margem Líquida (%)',
+    'ROAS (Receita / Mkt)',
+    'ROI sobre Marketing (%)'
+  ];
+
+  const rows = metricasMarketing.map((m) => [
+    m.canal,
+    m.vendasQtd,
+    `${Number(m.percentualVendas || 0).toFixed(1).replace('.', ',')}%`,
+    Number(m.receitaTotal || 0).toFixed(2).replace('.', ','),
+    Number(m.ticketMedio || 0).toFixed(2).replace('.', ','),
+    Number(m.custoVeiculos || 0).toFixed(2).replace('.', ','),
+    Number(m.comissoesPagas || 0).toFixed(2).replace('.', ','),
+    Number(m.custoMarketingTotal || 0).toFixed(2).replace('.', ','),
+    Number(m.cac || 0).toFixed(2).replace('.', ','),
+    Number(m.lucroLiquidoReal || 0).toFixed(2).replace('.', ','),
+    `${Number(m.margemLiquidaPercent || 0).toFixed(1).replace('.', ',')}%`,
+    Number(m.roas || 0).toFixed(2).replace('.', ','),
+    `${Number(m.roi || 0).toFixed(1).replace('.', ',')}%`
+  ].map(escapeCsvValue).join(';'));
+
+  const csvContent = [headers.join(';'), ...rows].join('\r\n');
+  const filename = customFilename || `Performance_Marketing_CAC_${new Date().toISOString().split('T')[0]}`;
+  downloadCsv(csvContent, filename);
+}

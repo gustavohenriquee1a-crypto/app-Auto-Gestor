@@ -39,8 +39,12 @@ import {
   Compass,
   FileText,
   SlidersHorizontal,
+  Plus,
+  Calculator,
+  Layers,
+  HelpCircle,
 } from 'lucide-react';
-import { Usuario, RoleUsuario, PermissoesUsuario, StatusAprovacao } from '../types';
+import { Usuario, RoleUsuario, PermissoesUsuario, StatusAprovacao, RegraRemuneracao } from '../types';
 import {
   subscribeAllUsers,
   approveUserInFirestore,
@@ -80,8 +84,97 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
   const [tempComissao, setTempComissao] = useState<number>(1.5);
   const [tempComissaoFixo, setTempComissaoFixo] = useState<number>(500);
   const [tempComissaoBonusTac, setTempComissaoBonusTac] = useState<number>(20);
+  const [tempRegrasRemuneracao, setTempRegrasRemuneracao] = useState<RegraRemuneracao[]>([]);
   const [tempPermissoes, setTempPermissoes] = useState<PermissoesUsuario>(() => getDefaultPermissionsForRole('vendedor'));
   const [isSaving, setIsSaving] = useState(false);
+
+  // Manipuladores de Regras Dinâmicas de Remuneração
+  const handleAddRegra = () => {
+    const novaRegra: RegraRemuneracao = {
+      id: `reg_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      tipoBase: 'Fixo por Carro',
+      formato: 'Valor Fixo',
+      valorOrPercentual: 200,
+      condicaoGatilho: 'Sempre',
+      descricao: 'Regra Adicional',
+    };
+    setTempRegrasRemuneracao((prev) => [...prev, novaRegra]);
+  };
+
+  const handleUpdateRegra = (id: string, updates: Partial<RegraRemuneracao>) => {
+    setTempRegrasRemuneracao((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
+    );
+  };
+
+  const handleRemoveRegra = (id: string) => {
+    setTempRegrasRemuneracao((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const handleApplyPreset = (preset: 'fixo_simples' | 'fixo_tac' | 'lucro' | 'venda_bruta') => {
+    if (preset === 'fixo_simples') {
+      setTempRegrasRemuneracao([
+        {
+          id: `reg_${Date.now()}_1`,
+          tipoBase: 'Fixo por Carro',
+          formato: 'Valor Fixo',
+          valorOrPercentual: 500,
+          condicaoGatilho: 'Sempre',
+          descricao: 'R$ 500 Fixo por Veículo Vendido',
+        },
+      ]);
+      setTempRegraComissao('vendedor_padrao');
+      setTempComissaoFixo(500);
+    } else if (preset === 'fixo_tac') {
+      setTempRegrasRemuneracao([
+        {
+          id: `reg_${Date.now()}_1`,
+          tipoBase: 'Fixo por Carro',
+          formato: 'Valor Fixo',
+          valorOrPercentual: 200,
+          condicaoGatilho: 'Sempre',
+          descricao: 'Fixo Base por Carro',
+        },
+        {
+          id: `reg_${Date.now()}_2`,
+          tipoBase: 'Retorno TAC',
+          formato: 'Percentual',
+          valorOrPercentual: 30,
+          condicaoGatilho: 'Apenas se houver TAC',
+          descricao: '30% sobre Retorno TAC de Financiamento',
+        },
+      ]);
+      setTempRegraComissao('vendedor_bonus_tac');
+      setTempComissaoFixo(200);
+      setTempComissaoBonusTac(30);
+    } else if (preset === 'lucro') {
+      setTempRegrasRemuneracao([
+        {
+          id: `reg_${Date.now()}_1`,
+          tipoBase: 'Lucro do Veículo',
+          formato: 'Percentual',
+          valorOrPercentual: 10,
+          condicaoGatilho: 'Sempre',
+          descricao: '10% sobre o Lucro Líquido Real da Venda',
+        },
+      ]);
+      setTempRegraComissao('admin_gerente');
+      setTempComissao(10);
+    } else if (preset === 'venda_bruta') {
+      setTempRegrasRemuneracao([
+        {
+          id: `reg_${Date.now()}_1`,
+          tipoBase: 'Venda Bruta',
+          formato: 'Percentual',
+          valorOrPercentual: 1.5,
+          condicaoGatilho: 'Sempre',
+          descricao: '1.5% sobre Valor Bruto de Venda',
+        },
+      ]);
+      setTempRegraComissao('percentual_venda');
+      setTempComissao(1.5);
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -174,6 +267,66 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
     setTempComissao(user.comissaoPadraoPercent ?? (regra === 'admin_gerente' ? 10 : 1.5));
     setTempComissaoFixo(user.comissaoPadraoFixo ?? 500);
     setTempComissaoBonusTac(user.comissaoBonusTacPercent ?? 20);
+
+    // Carregar regras dinâmicas ou converter perfil legado
+    if (user.regrasRemuneracao && Array.isArray(user.regrasRemuneracao) && user.regrasRemuneracao.length > 0) {
+      setTempRegrasRemuneracao([...user.regrasRemuneracao]);
+    } else {
+      if (regra === 'vendedor_bonus_tac') {
+        setTempRegrasRemuneracao([
+          {
+            id: `reg_${Date.now()}_1`,
+            tipoBase: 'Fixo por Carro',
+            formato: 'Valor Fixo',
+            valorOrPercentual: user.comissaoPadraoFixo ?? 400,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Fixo Base por Carro Vendido',
+          },
+          {
+            id: `reg_${Date.now()}_2`,
+            tipoBase: 'Retorno TAC',
+            formato: 'Percentual',
+            valorOrPercentual: user.comissaoBonusTacPercent ?? 20,
+            condicaoGatilho: 'Apenas se houver TAC',
+            descricao: 'Bônus sobre Retorno TAC Bancária',
+          },
+        ]);
+      } else if (regra === 'admin_gerente') {
+        setTempRegrasRemuneracao([
+          {
+            id: `reg_${Date.now()}_1`,
+            tipoBase: 'Lucro do Veículo',
+            formato: 'Percentual',
+            valorOrPercentual: user.comissaoPadraoPercent ?? 10,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Participação sobre Lucro Líquido Real',
+          },
+        ]);
+      } else if (regra === 'percentual_venda') {
+        setTempRegrasRemuneracao([
+          {
+            id: `reg_${Date.now()}_1`,
+            tipoBase: 'Venda Bruta',
+            formato: 'Percentual',
+            valorOrPercentual: user.comissaoPadraoPercent ?? 1.5,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Comissão percentual sobre valor de venda',
+          },
+        ]);
+      } else {
+        setTempRegrasRemuneracao([
+          {
+            id: `reg_${Date.now()}_1`,
+            tipoBase: 'Fixo por Carro',
+            formato: 'Valor Fixo',
+            valorOrPercentual: user.comissaoPadraoFixo ?? 500,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Comissão Fixa por Veículo Vendido',
+          },
+        ]);
+      }
+    }
+
     setTempPermissoes(
       user.permissoes ? { ...getDefaultPermissionsForRole(user.role || 'vendedor'), ...user.permissoes } : getDefaultPermissionsForRole(user.role || 'vendedor')
     );
@@ -187,31 +340,47 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
       
       const tipoComissaoFinal = (tempRegraComissao === 'vendedor_padrao' ? 'fixo' : 'percentual') as any;
 
+      // Sincronizar campos legados com a primeira regra aplicável
+      let legacyFixo: number | undefined = tempComissaoFixo;
+      let legacyPercent: number | undefined = tempComissao;
+      let legacyTac: number | undefined = tempComissaoBonusTac;
+
+      const rf = tempRegrasRemuneracao.find((r) => r.tipoBase === 'Fixo por Carro');
+      if (rf) legacyFixo = rf.valorOrPercentual;
+
+      const rt = tempRegrasRemuneracao.find((r) => r.tipoBase === 'Retorno TAC');
+      if (rt) legacyTac = rt.valorOrPercentual;
+
+      const rp = tempRegrasRemuneracao.find((r) => r.tipoBase === 'Lucro do Veículo' || r.tipoBase === 'Venda Bruta');
+      if (rp) legacyPercent = rp.valorOrPercentual;
+
       if (isPending) {
         await approveUserInFirestore(
           selectedUserForPerms.uid,
           tempRole,
           tempPermissoes,
-          tempRegraComissao === 'vendedor_padrao' ? undefined : tempComissao,
+          legacyPercent,
           currentUser?.email || MASTER_ADMIN_EMAIL,
           tipoComissaoFinal,
-          tempRegraComissao === 'vendedor_padrao' || tempRegraComissao === 'vendedor_bonus_tac' ? tempComissaoFixo : undefined,
+          legacyFixo,
           tempRegraComissao,
-          tempRegraComissao === 'vendedor_bonus_tac' ? tempComissaoBonusTac : undefined
+          legacyTac,
+          tempRegrasRemuneracao
         );
-        showFeedback(`Usuário ${selectedUserForPerms.displayName} aprovado com perfil de comissão definido!`);
+        showFeedback(`Usuário ${selectedUserForPerms.displayName} aprovado com motor de comissões configurado!`);
       } else {
         await updateUserPermissionsInFirestore(selectedUserForPerms.uid, {
           permissoes: tempPermissoes,
           role: tempRole,
           cargo: tempCargo,
+          regrasRemuneracao: tempRegrasRemuneracao,
           regraComissaoPadrao: tempRegraComissao,
           tipoComissaoPadrao: tipoComissaoFinal,
-          comissaoPadraoPercent: tempRegraComissao === 'vendedor_padrao' ? undefined : tempComissao,
-          comissaoPadraoFixo: tempRegraComissao === 'vendedor_padrao' || tempRegraComissao === 'vendedor_bonus_tac' ? tempComissaoFixo : undefined,
-          comissaoBonusTacPercent: tempRegraComissao === 'vendedor_bonus_tac' ? tempComissaoBonusTac : undefined,
+          comissaoPadraoPercent: legacyPercent,
+          comissaoPadraoFixo: legacyFixo,
+          comissaoBonusTacPercent: legacyTac,
         });
-        showFeedback(`Permissões e plano de comissão de ${selectedUserForPerms.displayName} atualizados!`);
+        showFeedback(`Fórmula de remuneração e permissões de ${selectedUserForPerms.displayName} atualizadas!`);
       }
       setSelectedUserForPerms(null);
     } catch (err) {
@@ -835,193 +1004,203 @@ export const UsuariosModal: React.FC<UsuariosModalProps> = ({
                   </select>
                 </div>
 
-                <div className="col-span-2 space-y-2">
-                  <label className="block text-slate-300 font-bold text-xs">
-                    Modelo de Comissionamento Pré-Fixado (Definido pelo Administrador) *
-                  </label>
+                <div className="col-span-2 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="block text-slate-200 font-bold text-xs flex items-center gap-1.5">
+                        <Calculator size={14} className="text-amber-400" />
+                        Motor de Comissões Dinâmicas & Construtor de Fórmulas *
+                      </label>
+                      <p className="text-[11px] text-slate-400">
+                        Crie regras cumulativas ou condicionais (Ex: R$ 200 fixos por carro + 30% do Retorno TAC em vendas com financiamento).
+                      </p>
+                    </div>
+                  </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  {/* Presets Rápidos */}
+                  <div className="flex flex-wrap items-center gap-1.5 p-2 bg-[#111116] rounded-xl border border-white/5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1">Modelos Rápidos:</span>
                     <button
                       type="button"
-                      onClick={() => setTempRegraComissao('vendedor_padrao')}
-                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex items-center justify-between ${
-                        tempRegraComissao === 'vendedor_padrao'
-                          ? 'bg-emerald-500/15 border-emerald-500/50 text-white shadow'
-                          : 'bg-[#16171f] border-white/10 text-slate-400 hover:text-slate-200'
-                      }`}
+                      onClick={() => handleApplyPreset('fixo_simples')}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[11px] font-medium transition cursor-pointer"
                     >
-                      <div>
-                        <span className="block font-bold text-[11px] text-emerald-400">1. Fixo por Carro</span>
-                        <span className="text-[10px] text-slate-400">R$ Fixo por veículo vendido</span>
-                      </div>
-                      {tempRegraComissao === 'vendedor_padrao' && <Check size={14} className="text-emerald-400" />}
+                      R$ 500 Fixo
                     </button>
-
                     <button
                       type="button"
-                      onClick={() => setTempRegraComissao('vendedor_bonus_tac')}
-                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex items-center justify-between ${
-                        tempRegraComissao === 'vendedor_bonus_tac'
-                          ? 'bg-blue-500/15 border-blue-500/50 text-white shadow'
-                          : 'bg-[#16171f] border-white/10 text-slate-400 hover:text-slate-200'
-                      }`}
+                      onClick={() => handleApplyPreset('fixo_tac')}
+                      className="px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 text-[11px] font-medium transition cursor-pointer"
                     >
-                      <div>
-                        <span className="block font-bold text-[11px] text-blue-400">2. Fixo + Bônus TAC</span>
-                        <span className="text-[10px] text-slate-400">Fixo + % do retorno do banco</span>
-                      </div>
-                      {tempRegraComissao === 'vendedor_bonus_tac' && <Check size={14} className="text-blue-400" />}
+                      R$ 200 Fixo + 30% TAC
                     </button>
-
                     <button
                       type="button"
-                      onClick={() => setTempRegraComissao('admin_gerente')}
-                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex items-center justify-between ${
-                        tempRegraComissao === 'admin_gerente'
-                          ? 'bg-purple-500/15 border-purple-500/50 text-white shadow'
-                          : 'bg-[#16171f] border-white/10 text-slate-400 hover:text-slate-200'
-                      }`}
+                      onClick={() => handleApplyPreset('lucro')}
+                      className="px-2.5 py-1 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-400 text-[11px] font-medium transition cursor-pointer"
                     >
-                      <div>
-                        <span className="block font-bold text-[11px] text-purple-400">3. % do Lucro Bruto</span>
-                        <span className="text-[10px] text-slate-400">Margem líquida da venda</span>
-                      </div>
-                      {tempRegraComissao === 'admin_gerente' && <Check size={14} className="text-purple-400" />}
+                      10% Lucro Veículo
                     </button>
-
                     <button
                       type="button"
-                      onClick={() => setTempRegraComissao('percentual_venda')}
-                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex items-center justify-between ${
-                        tempRegraComissao === 'percentual_venda'
-                          ? 'bg-amber-500/15 border-amber-500/50 text-white shadow'
-                          : 'bg-[#16171f] border-white/10 text-slate-400 hover:text-slate-200'
-                      }`}
+                      onClick={() => handleApplyPreset('venda_bruta')}
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-[11px] font-medium transition cursor-pointer"
                     >
-                      <div>
-                        <span className="block font-bold text-[11px] text-amber-400">4. % Valor do Carro</span>
-                        <span className="text-[10px] text-slate-400">% bruta sobre o valor de venda</span>
-                      </div>
-                      {tempRegraComissao === 'percentual_venda' && <Check size={14} className="text-amber-400" />}
+                      1.5% Venda Bruta
                     </button>
                   </div>
 
-                  {/* Detalhes e Inputs dos valores da regra */}
-                  <div className="p-3 rounded-xl bg-[#16171f] border border-white/10 space-y-2.5">
-                    {tempRegraComissao === 'vendedor_padrao' && (
-                      <div>
-                        <label className="block text-slate-400 text-[11px] font-bold mb-1">
-                          Valor Fixo da Comissão (R$ por veículo):
-                        </label>
-                        <div className="relative">
-                          <DollarSign size={13} className="absolute left-3 top-3 text-emerald-400" />
-                          <input
-                            type="number"
-                            step="50"
-                            min="0"
-                            value={tempComissaoFixo}
-                            onChange={(e) => setTempComissaoFixo(Number(e.target.value))}
-                            className="w-full pl-9 pr-3 py-2 rounded-xl border border-white/10 bg-[#111116] text-emerald-400 outline-none focus:border-emerald-500 font-mono font-bold text-xs"
-                            placeholder="500.00"
-                          />
-                        </div>
-                        <p className="text-[10px] text-slate-500 mt-1">
-                          Na tela de venda, o vendedor verá exatamente este valor fixo sem opção de alterar.
-                        </p>
-                      </div>
-                    )}
+                  {/* Lista de Regras Configuradas */}
+                  <div className="space-y-2.5">
+                    {tempRegrasRemuneracao.map((regra, index) => (
+                      <div
+                        key={regra.id || index}
+                        className="p-3 rounded-xl bg-[#16171f] border border-white/10 hover:border-white/20 transition space-y-2.5"
+                      >
+                        <div className="flex items-center justify-between pb-1.5 border-b border-white/5">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-black flex items-center justify-center">
+                              {index + 1}
+                            </span>
+                            <span className="font-bold text-white text-xs">
+                              {regra.descricao || `Regra de Remuneração #${index + 1}`}
+                            </span>
+                          </div>
 
-                    {tempRegraComissao === 'vendedor_bonus_tac' && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-slate-400 text-[11px] font-bold mb-1">
-                            Valor Fixo Base (R$):
-                          </label>
-                          <div className="relative">
-                            <DollarSign size={13} className="absolute left-3 top-3 text-emerald-400" />
-                            <input
-                              type="number"
-                              step="50"
-                              min="0"
-                              value={tempComissaoFixo}
-                              onChange={(e) => setTempComissaoFixo(Number(e.target.value))}
-                              className="w-full pl-9 pr-3 py-2 rounded-xl border border-white/10 bg-[#111116] text-emerald-400 outline-none focus:border-emerald-500 font-mono font-bold text-xs"
-                              placeholder="400.00"
-                            />
+                          {tempRegrasRemuneracao.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveRegra(regra.id)}
+                              className="p-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
+                              title="Remover esta regra"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                          {/* 1. Base de Cálculo */}
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                              Base de Cálculo
+                            </label>
+                            <select
+                              value={regra.tipoBase}
+                              onChange={(e) => {
+                                const newBase = e.target.value as any;
+                                const isFixo = newBase === 'Fixo por Carro';
+                                handleUpdateRegra(regra.id, {
+                                  tipoBase: newBase,
+                                  formato: isFixo ? 'Valor Fixo' : 'Percentual',
+                                  condicaoGatilho: newBase === 'Retorno TAC' ? 'Apenas se houver TAC' : regra.condicaoGatilho,
+                                });
+                              }}
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-white/10 bg-[#111116] text-white text-xs outline-none focus:border-blue-500 cursor-pointer"
+                            >
+                              <option value="Fixo por Carro">Fixo por Carro</option>
+                              <option value="Retorno TAC">Retorno TAC Banco</option>
+                              <option value="Lucro do Veículo">Lucro do Veículo</option>
+                              <option value="Venda Bruta">Venda Bruta</option>
+                            </select>
+                          </div>
+
+                          {/* 2. Formato */}
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                              Formato
+                            </label>
+                            <select
+                              value={regra.formato}
+                              onChange={(e) => handleUpdateRegra(regra.id, { formato: e.target.value as any })}
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-white/10 bg-[#111116] text-white text-xs outline-none focus:border-blue-500 cursor-pointer"
+                            >
+                              <option value="Valor Fixo">Valor Fixo (R$)</option>
+                              <option value="Percentual">Percentual (%)</option>
+                            </select>
+                          </div>
+
+                          {/* 3. Valor / Alíquota */}
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                              {regra.formato === 'Percentual' ? 'Alíquota (%)' : 'Valor (R$)'}
+                            </label>
+                            <div className="relative">
+                              {regra.formato === 'Percentual' ? (
+                                <Percent size={12} className="absolute left-2.5 top-2.5 text-blue-400" />
+                              ) : (
+                                <DollarSign size={12} className="absolute left-2.5 top-2.5 text-emerald-400" />
+                              )}
+                              <input
+                                type="number"
+                                step={regra.formato === 'Percentual' ? '0.1' : '10'}
+                                min="0"
+                                value={regra.valorOrPercentual}
+                                onChange={(e) => handleUpdateRegra(regra.id, { valorOrPercentual: Number(e.target.value) })}
+                                className="w-full pl-7 pr-2.5 py-1.5 rounded-lg border border-white/10 bg-[#111116] text-white text-xs font-mono font-bold outline-none focus:border-blue-500"
+                              />
+                            </div>
+                          </div>
+
+                          {/* 4. Condição Gatilho */}
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                              Condição Gatilho
+                            </label>
+                            <select
+                              value={regra.condicaoGatilho}
+                              onChange={(e) => handleUpdateRegra(regra.id, { condicaoGatilho: e.target.value as any })}
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-white/10 bg-[#111116] text-amber-300 text-xs outline-none focus:border-amber-500 cursor-pointer font-medium"
+                            >
+                              <option value="Sempre">Sempre (Toda Venda)</option>
+                              <option value="Apenas se houver TAC">Apenas se houver TAC</option>
+                              <option value="Apenas se for Financiado">Apenas Financiado</option>
+                            </select>
                           </div>
                         </div>
 
+                        {/* Rótulo / Descrição da Regra */}
                         <div>
-                          <label className="block text-slate-400 text-[11px] font-bold mb-1">
-                            + Bônus sobre TAC do Banco (%):
-                          </label>
-                          <div className="relative">
-                            <Percent size={13} className="absolute left-3 top-3 text-blue-400" />
-                            <input
-                              type="number"
-                              step="1"
-                              min="0"
-                              max="100"
-                              value={tempComissaoBonusTac}
-                              onChange={(e) => setTempComissaoBonusTac(Number(e.target.value))}
-                              className="w-full pl-9 pr-3 py-2 rounded-xl border border-white/10 bg-[#111116] text-blue-400 outline-none focus:border-blue-500 font-mono font-bold text-xs"
-                              placeholder="20"
-                            />
-                          </div>
-                        </div>
-                        <p className="col-span-2 text-[10px] text-slate-500">
-                          Na venda financiada, o vendedor verá o fixo + o percentual da TAC calculado automaticamente.
-                        </p>
-                      </div>
-                    )}
-
-                    {tempRegraComissao === 'admin_gerente' && (
-                      <div>
-                        <label className="block text-slate-400 text-[11px] font-bold mb-1">
-                          Percentual sobre o Lucro Bruto Apurado (%):
-                        </label>
-                        <div className="relative">
-                          <Percent size={13} className="absolute left-3 top-3 text-purple-400" />
                           <input
-                            type="number"
-                            step="0.5"
-                            min="0"
-                            max="100"
-                            value={tempComissao}
-                            onChange={(e) => setTempComissao(Number(e.target.value))}
-                            className="w-full pl-9 pr-3 py-2 rounded-xl border border-white/10 bg-[#111116] text-purple-400 outline-none focus:border-purple-500 font-mono font-bold text-xs"
-                            placeholder="10.0"
+                            type="text"
+                            value={regra.descricao || ''}
+                            onChange={(e) => handleUpdateRegra(regra.id, { descricao: e.target.value })}
+                            placeholder="Rótulo da regra (Ex: Fixo Base, Bônus Retorno Financiamento, etc.)"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-white/5 bg-[#111116] text-slate-300 text-[11px] outline-none focus:border-blue-500/50"
                           />
                         </div>
-                        <p className="text-[10px] text-slate-500 mt-1">
-                          Calculado sobre (Valor Venda - Custo Compra - Despesas Recondicionamento).
-                        </p>
                       </div>
-                    )}
+                    ))}
+                  </div>
 
-                    {tempRegraComissao === 'percentual_venda' && (
-                      <div>
-                        <label className="block text-slate-400 text-[11px] font-bold mb-1">
-                          Percentual sobre o Valor Bruto de Venda do Veículo (%):
-                        </label>
-                        <div className="relative">
-                          <Percent size={13} className="absolute left-3 top-3 text-amber-400" />
-                          <input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            max="100"
-                            value={tempComissao}
-                            onChange={(e) => setTempComissao(Number(e.target.value))}
-                            className="w-full pl-9 pr-3 py-2 rounded-xl border border-white/10 bg-[#111116] text-amber-400 outline-none focus:border-amber-500 font-mono font-bold text-xs"
-                            placeholder="1.5"
-                          />
-                        </div>
-                        <p className="text-[10px] text-slate-500 mt-1">
-                          Ex: 1.5% em um carro de R$ 60.000,00 gerará R$ 900,00 de comissão.
-                        </p>
-                      </div>
-                    )}
+                  {/* Botão Adicionar Regra */}
+                  <button
+                    type="button"
+                    onClick={handleAddRegra}
+                    className="w-full py-2 px-3 rounded-xl border border-dashed border-blue-500/40 hover:border-blue-500 hover:bg-blue-500/5 text-blue-400 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Plus size={14} />
+                    <span>Adicionar Mais uma Regra à Fórmula</span>
+                  </button>
+
+                  {/* Prévia da Fórmula Ativa */}
+                  <div className="p-3 rounded-xl bg-blue-950/20 border border-blue-500/20 space-y-1.5">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-blue-400 block flex items-center gap-1">
+                      <Sparkles size={12} />
+                      Fórmula de Remuneração Ativa ({tempRegrasRemuneracao.length} {tempRegrasRemuneracao.length === 1 ? 'regra' : 'regras'}):
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+                      {tempRegrasRemuneracao.map((r, i) => (
+                        <React.Fragment key={r.id || i}>
+                          {i > 0 && <span className="text-amber-400 font-black">+</span>}
+                          <span className="px-2 py-0.5 rounded-lg bg-[#111116] border border-white/10 text-slate-200">
+                            {r.formato === 'Percentual' ? `${r.valorOrPercentual}%` : `R$ ${r.valorOrPercentual}`} sobre{' '}
+                            <strong className="text-blue-300">{r.tipoBase}</strong>{' '}
+                            <span className="text-[10px] text-slate-400">({r.condicaoGatilho})</span>
+                          </span>
+                        </React.Fragment>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>

@@ -107,13 +107,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Sincronização em tempo real do logotipo global da loja (documento 'geral' no Firestore)
   useEffect(() => {
-    // Busca inicial imediata
-    getConfiguracaoLojaFirestore().then((cfg) => {
-      if (cfg?.logoUrl) {
-        setCustomLogo(cfg.logoUrl);
-      }
-    });
-
     const unsub = subscribeConfiguracoesLoja((config) => {
       if (config && config.logoUrl !== undefined) {
         setCustomLogo(config.logoUrl || '');
@@ -248,10 +241,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             id: 'revisoes',
             label: 'Revisões & Oficinas',
             icon: Wrench,
-            badge: counts.alertasRevisao > 0 ? `${counts.alertasRevisao} urgente` : null,
-            badgeColor: 'bg-red-600 text-white font-bold animate-pulse',
-            alertCount: counts.alertasRevisao || 0,
-            visible: perms.verRevisoes !== undefined ? perms.verRevisoes : perms.gerenciarRevisoes !== false,
+            badge: !isVendedor && counts.alertasRevisao > 0 ? `${counts.alertasRevisao} urgente` : null,
+            badgeColor: 'bg-rose-600 text-white font-bold',
+            alertCount: isVendedor ? 0 : (counts.alertasRevisao || 0),
+            visible: perms.verRevisoes !== undefined ? perms.verRevisoes : perms.gerenciarRevisoes !== false && !isVendedor,
           },
           {
             id: 'fornecedores',
@@ -286,9 +279,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             id: 'contas-pagar',
             label: 'Contas a Pagar',
             icon: Receipt,
-            badge: (counts.despesasPendentes ?? 0) > 0 ? `${counts.despesasPendentes} pendentes` : null,
-            badgeColor: 'bg-amber-500 text-white font-bold animate-pulse',
-            alertCount: counts.despesasPendentes || 0,
+            badge: !isVendedor && (counts.despesasPendentes ?? 0) > 0 ? `${counts.despesasPendentes} pend.` : null,
+            badgeColor: 'bg-amber-500 text-white font-bold',
+            alertCount: isVendedor ? 0 : (counts.despesasPendentes || 0),
             visible: perms.verContasPagar !== undefined 
               ? perms.verContasPagar 
               : !isVendedor && perms.verFinanceiroDRE !== false,
@@ -297,9 +290,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             id: 'contas-receber',
             label: 'Contas a Receber',
             icon: TrendingUp,
-            badge: (counts.recebiveisPendentes ?? 0) > 0 ? `${counts.recebiveisPendentes} pendentes` : null,
-            badgeColor: 'bg-emerald-500 text-white font-bold animate-pulse',
-            alertCount: counts.recebiveisPendentes || 0,
+            badge: !isVendedor && (counts.recebiveisPendentes ?? 0) > 0 ? `${counts.recebiveisPendentes} pend.` : null,
+            badgeColor: 'bg-emerald-500 text-white font-bold',
+            alertCount: isVendedor ? 0 : (counts.recebiveisPendentes || 0),
             visible: perms.verContasReceber !== undefined 
               ? perms.verContasReceber 
               : !isVendedor && perms.verFinanceiroDRE !== false,
@@ -536,10 +529,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  {/* Badge Consolidado exibido quando o menu pai está FECHADO e possui itens pendentes */}
-                  {!isExpanded && totalCategoryAlerts > 0 && (
+                  {/* Badge Consolidado exibido quando o menu pai está FECHADO e possui itens pendentes (Apenas Admin/Gestor) */}
+                  {!isExpanded && !isVendedor && totalCategoryAlerts > 0 && (
                     <span 
-                      className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 animate-pulse shadow-sm shadow-amber-500/20"
+                      className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/20"
                       title={`${totalCategoryAlerts} item(ns) pendente(s) nesta categoria`}
                     >
                       {totalCategoryAlerts}
@@ -588,7 +581,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               isActive ? 'text-blue-400' : 'text-slate-400 group-hover:text-slate-200'
                             }`}
                           />
-                          <span className="truncate">{item.label}</span>
+                          <span className="truncate whitespace-nowrap">{item.label}</span>
                         </div>
 
                         {item.badge !== null && item.badge !== undefined && (
@@ -633,9 +626,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              {counts.alertasPagamento > 0 ? (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-bold animate-pulse">
-                  {counts.alertasPagamento} pendentes
+              {!isVendedor && counts.alertasPagamento > 0 ? (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-bold">
+                  {counts.alertasPagamento} pend.
                 </span>
               ) : (
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${

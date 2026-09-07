@@ -41,6 +41,39 @@ const COLLECTIONS = {
   MOVIMENTACOES_CONTAS: 'movimentacoes_contas',
 };
 
+/**
+ * Converte de forma resiliente qualquer formato de data (Timestamp, Date, string ISO, objeto)
+ * para uma string segura 'YYYY-MM-DD', prevenindo quebras de renderização e erros de .startsWith()
+ */
+export function normalizeDateString(val: any): string {
+  if (!val) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') {
+      try {
+        return val.toDate().toISOString().split('T')[0];
+      } catch {
+        // fallback
+      }
+    }
+    if ('seconds' in val && typeof val.seconds === 'number') {
+      try {
+        return new Date(val.seconds * 1000).toISOString().split('T')[0];
+      } catch {
+        // fallback
+      }
+    }
+    if (val instanceof Date) {
+      try {
+        return isNaN(val.getTime()) ? '' : val.toISOString().split('T')[0];
+      } catch {
+        // fallback
+      }
+    }
+  }
+  return String(val || '');
+}
+
 // Lista base padrão de bancos parceiros / financeiras
 export const DEFAULT_BANCOS: BancoParceiro[] = [
   {
@@ -476,24 +509,61 @@ export function subscribeVeiculos(
     (snapshot) => {
       const items: Veiculo[] = [];
       snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as Veiculo;
+        const data = docSnap.data?.() as any;
         if (data && (data.id || data.placa)) {
+          const despesasNormalizadas = Array.isArray(data.despesas)
+            ? data.despesas
+                .filter((d: any) => d != null)
+                .map((d: any, idx: number) => ({
+                  ...d,
+                  id: d?.id ? String(d.id) : `desp-${data.id || docSnap.id}-${idx}`,
+                  data: normalizeDateString(d?.data),
+                  dataVencimento: normalizeDateString(d?.dataVencimento),
+                  dataPagamento: normalizeDateString(d?.dataPagamento),
+                  valor: Number(d?.valor) || 0,
+                }))
+            : [];
+
+          const historicoNormalizado = Array.isArray(data.historico)
+            ? data.historico
+                .filter((h: any) => h != null)
+                .map((h: any) => ({
+                  ...h,
+                  data: normalizeDateString(h?.data),
+                }))
+            : [];
+
           items.push({
             ...data,
             id: data.id || docSnap.id,
+            dataEntrada: normalizeDateString(data.dataEntrada),
+            dataVenda: normalizeDateString(data.dataVenda),
+            despesas: despesasNormalizadas,
+            historico: historicoNormalizado,
           });
         }
       });
       // Sort newest first by dataEntrada
       items.sort((a, b) => {
-        const timeA = a.dataEntrada ? new Date(a.dataEntrada).getTime() : 0;
-        const timeB = b.dataEntrada ? new Date(b.dataEntrada).getTime() : 0;
+        const timeA = a?.dataEntrada ? new Date(a.dataEntrada).getTime() : 0;
+        const timeB = b?.dataEntrada ? new Date(b.dataEntrada).getTime() : 0;
         return timeB - timeA;
       });
       onData(items);
     },
     (err) => {
-      console.error('Error fetching veiculos from Firestore:', err);
+      console.warn('Sincronização de veículos operando em modo offline/cache:', err);
+      try {
+        const cached = localStorage.getItem('autogestor_veiculos');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            onData(parsed);
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
       if (onError) onError(err);
     }
   );
@@ -509,23 +579,39 @@ export function subscribeVendas(
     (snapshot) => {
       const items: VendaVeiculo[] = [];
       snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as VendaVeiculo;
+        const data = docSnap.data?.() as any;
         if (data && (data.id || data.placa)) {
           items.push({
             ...data,
             id: data.id || docSnap.id,
+            dataVenda: normalizeDateString(data.dataVenda),
+            dataRecebimento: normalizeDateString(data.dataRecebimento),
+            comissaoDataPagamento: normalizeDateString(data.comissaoDataPagamento),
+            valorVenda: Number(data.valorVenda) || 0,
+            pagamentos: Array.isArray(data.pagamentos) ? data.pagamentos.filter((p: any) => p != null) : [],
           });
         }
       });
       items.sort((a, b) => {
-        const timeA = a.dataVenda ? new Date(a.dataVenda).getTime() : 0;
-        const timeB = b.dataVenda ? new Date(b.dataVenda).getTime() : 0;
+        const timeA = a?.dataVenda ? new Date(a.dataVenda).getTime() : 0;
+        const timeB = b?.dataVenda ? new Date(b.dataVenda).getTime() : 0;
         return timeB - timeA;
       });
       onData(items);
     },
     (err) => {
-      console.error('Error fetching vendas from Firestore:', err);
+      console.warn('Sincronização de vendas operando em modo offline/cache:', err);
+      try {
+        const cached = localStorage.getItem('autogestor_vendas');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            onData(parsed);
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
       if (onError) onError(err);
     }
   );
@@ -541,18 +627,33 @@ export function subscribeDespesasFixas(
     (snapshot) => {
       const items: DespesaFixa[] = [];
       snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as DespesaFixa;
+        const data = docSnap.data?.() as any;
         if (data && (data.id || data.descricao)) {
           items.push({
             ...data,
             id: data.id || docSnap.id,
+            dataVencimento: normalizeDateString(data.dataVencimento),
+            dataPagamento: normalizeDateString(data.dataPagamento),
+            mesReferencia: normalizeDateString(data.mesReferencia),
+            valor: Number(data.valor) || 0,
           });
         }
       });
       onData(items);
     },
     (err) => {
-      console.error('Error fetching despesasFixas from Firestore:', err);
+      console.warn('Sincronização de despesas fixas operando em modo offline/cache:', err);
+      try {
+        const cached = localStorage.getItem('autogestor_despesas_fixas');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            onData(parsed);
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
       if (onError) onError(err);
     }
   );
@@ -1127,10 +1228,16 @@ export function subscribeContasBancarias(
     colRef,
     (snapshot) => {
       if (!snapshot.empty) {
-        const contas = snapshot.docs.map((docSnap) => ({
-          ...docSnap.data(),
-          id: docSnap.id,
-        })) as ContaBancariaCaixa[];
+        const contas = snapshot.docs
+          .filter((docSnap) => docSnap != null && docSnap.exists())
+          .map((docSnap) => {
+            const data = (docSnap.data() || {}) as any;
+            return {
+              ...data,
+              id: docSnap.id,
+              saldo: Number(data.saldo) || 0,
+            } as ContaBancariaCaixa;
+          });
         onData(contas);
       } else {
         // Se ainda não houver contas no Firestore, carrega do localStorage ou inicial padrão
@@ -1205,13 +1312,25 @@ export function subscribeMovimentacoesContas(
   return onSnapshot(
     colRef,
     (snapshot) => {
-      const movs = snapshot.docs.map((d) => ({
-        ...d.data(),
-        id: d.id,
-      })) as MovimentacaoConta[];
+      const movs = snapshot.docs
+        .filter((d) => d != null && d.exists())
+        .map((d) => {
+          const raw = (d.data() || {}) as any;
+          return {
+            ...raw,
+            id: d.id,
+            data: normalizeDateString(raw?.data),
+            createdAt: normalizeDateString(raw?.createdAt) || new Date().toISOString(),
+            valor: Number(raw?.valor) || 0,
+          } as MovimentacaoConta;
+        });
 
       // Ordenar por data mais recente primeiro
-      movs.sort((a, b) => new Date(b.createdAt || b.data).getTime() - new Date(a.createdAt || a.data).getTime());
+      movs.sort((a, b) => {
+        const timeA = a?.createdAt || a?.data ? new Date(a.createdAt || a.data).getTime() : 0;
+        const timeB = b?.createdAt || b?.data ? new Date(b.createdAt || b.data).getTime() : 0;
+        return timeB - timeA;
+      });
       onData(movs);
     },
     (error) => {
@@ -1314,27 +1433,50 @@ export async function executarTransferenciaEntreContasFirestore(
     throw new Error('Informe o nome ou instituição do terceiro favorecido.');
   }
 
-  // 1. Obter todas as contas bancárias atuais
-  const contasSnap = await getDocs(collection(db, COLLECTIONS.CONTAS_BANCARIAS));
+  // 1. Obter todas as contas bancárias atuais (Base Padrão + Cache Local + Firestore)
   const contasMap = new Map<string, ContaBancariaCaixa>();
+  DEFAULT_CONTAS_BANCARIAS.forEach((c) => contasMap.set(c.id, { ...c }));
 
-  if (!contasSnap.empty) {
-    contasSnap.docs.forEach((d) => {
-      contasMap.set(d.id, { ...d.data(), id: d.id } as ContaBancariaCaixa);
-    });
-  } else {
-    DEFAULT_CONTAS_BANCARIAS.forEach((c) => contasMap.set(c.id, { ...c }));
+  try {
+    const localSaved = localStorage.getItem('autogestor_contas_bancarias');
+    if (localSaved) {
+      const parsed = JSON.parse(localSaved);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((c) => {
+          if (c && c.id) contasMap.set(c.id, { ...c });
+        });
+      }
+    }
+  } catch (e) {
+    // ignore
   }
 
-  // Localizar Conta de Origem
-  let contaOrigem = contasMap.get(contaOrigemId);
-  if (!contaOrigem) {
-    const fallbackOrigem = DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaOrigemId);
-    if (fallbackOrigem) {
-      contaOrigem = { ...fallbackOrigem };
-    } else {
-      throw new Error(`Conta de Origem com ID "${contaOrigemId}" não foi encontrada.`);
+  try {
+    const contasSnap = await getDocs(collection(db, COLLECTIONS.CONTAS_BANCARIAS));
+    if (!contasSnap.empty) {
+      contasSnap.docs.forEach((d) => {
+        const raw = d.data() as any;
+        contasMap.set(d.id, { ...raw, id: d.id, saldo: Number(raw.saldo) || 0 } as ContaBancariaCaixa);
+      });
     }
+  } catch (e) {
+    console.warn('Erro ao consultar contas bancárias do Firestore na transferência, usando cache:', e);
+  }
+
+  // Localizar Conta de Origem de forma resiliente
+  let contaOrigem =
+    contasMap.get(contaOrigemId) ||
+    Array.from(contasMap.values()).find(
+      (c) => c.id === contaOrigemId || c.nome?.trim().toLowerCase() === contaOrigemId?.trim().toLowerCase()
+    );
+
+  if (!contaOrigem) {
+    const fallbackOrigem = DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaOrigemId) || DEFAULT_CONTAS_BANCARIAS[0];
+    contaOrigem = {
+      ...fallbackOrigem,
+      id: contaOrigemId || fallbackOrigem.id,
+      nome: fallbackOrigem.nome || 'Conta Origem',
+    };
   }
 
   // 2. Processar débito na Conta de Origem
@@ -1346,21 +1488,34 @@ export async function executarTransferenciaEntreContasFirestore(
     saldo: novoSaldoOrigem,
     updatedAt: new Date().toISOString(),
   };
-  await saveContaBancariaFirestore(contaOrigemAtualizada);
+  try {
+    await saveContaBancariaFirestore(contaOrigemAtualizada);
+  } catch (err) {
+    console.warn('Não foi possível persistir conta de origem no Firestore imediatamente:', err);
+  }
 
   // 3. Processar crédito na Conta de Destino (se interna)
   let contaDestinoAtualizada: ContaBancariaCaixa | undefined;
   let contaDestino: ContaBancariaCaixa | undefined;
 
   if (!isTerceiro && contaDestinoId) {
-    contaDestino = contasMap.get(contaDestinoId);
+    contaDestino =
+      contasMap.get(contaDestinoId) ||
+      Array.from(contasMap.values()).find(
+        (c) => c.id === contaDestinoId || c.nome?.trim().toLowerCase() === contaDestinoId?.trim().toLowerCase()
+      );
+
     if (!contaDestino) {
-      const fallbackDestino = DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaDestinoId);
-      if (fallbackDestino) {
-        contaDestino = { ...fallbackDestino };
-      } else {
-        throw new Error(`Conta de Destino com ID "${contaDestinoId}" não foi encontrada.`);
-      }
+      const fallbackDestino =
+        DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaDestinoId) ||
+        DEFAULT_CONTAS_BANCARIAS.find((c) => c.id !== contaOrigem?.id) ||
+        DEFAULT_CONTAS_BANCARIAS[1];
+
+      contaDestino = {
+        ...fallbackDestino,
+        id: contaDestinoId || fallbackDestino.id,
+        nome: fallbackDestino.nome || 'Conta Destino',
+      };
     }
 
     const saldoAnteriorDestino = Number(contaDestino.saldo || 0);
@@ -1371,14 +1526,18 @@ export async function executarTransferenciaEntreContasFirestore(
       saldo: novoSaldoDestino,
       updatedAt: new Date().toISOString(),
     };
-    await saveContaBancariaFirestore(contaDestinoAtualizada);
+    try {
+      await saveContaBancariaFirestore(contaDestinoAtualizada);
+    } catch (err) {
+      console.warn('Não foi possível persistir conta de destino no Firestore imediatamente:', err);
+    }
   }
 
   // 4. Gerar registros no Extrato (Movimentações de Contas)
   const idTransferencia = `transf_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
   const dataMov = data || new Date().toISOString().split('T')[0];
 
-  // A) Extrato Conta Origem (Débito)
+  // A) Extrato Conta Origem (Débito / Saída)
   const descricaoOrigem = isTerceiro
     ? `Transferência para Terceiro: ${terceiroDestinoNome?.trim()} - Motivo: ${motivo.trim()}`
     : `Transferência enviada para ${contaDestino?.nome || 'Conta Destino'} - Motivo: ${motivo.trim()}`;
@@ -1387,11 +1546,12 @@ export async function executarTransferenciaEntreContasFirestore(
     id: `mov_deb_${idTransferencia}`,
     contaId: contaOrigem.id,
     contaNome: contaOrigem.nome,
-    tipo: 'Transferência',
-    categoria: isTerceiro ? 'Transferência para Terceiros' : 'Transferência entre Contas',
+    tipo: isTerceiro ? 'Despesa' : 'Transferência',
+    categoria: isTerceiro ? 'Transferência para Terceiros' : 'Transferência Enviada',
     valor: valor,
     data: dataMov,
     descricao: descricaoOrigem,
+    pagadorRecebedor: isTerceiro ? terceiroDestinoNome?.trim() : contaDestino?.nome,
     formaPagamento: 'Transferência Bancária / PIX',
     criadoPor: usuarioNome,
     createdAt: new Date().toISOString(),
@@ -1403,10 +1563,12 @@ export async function executarTransferenciaEntreContasFirestore(
     isTerceiro,
     terceiroNome: isTerceiro ? terceiroDestinoNome?.trim() : undefined,
     motivo: motivo.trim(),
+    tipoCusto: 'Neutro',
+    categoriaCusto: 'Neutro',
   };
   await saveMovimentacaoContaFirestore(movimentacaoOrigem);
 
-  // B) Extrato Conta Destino (Crédito, se interna)
+  // B) Extrato Conta Destino (Crédito / Entrada, se interna)
   let movimentacaoDestino: MovimentacaoConta | undefined;
   if (!isTerceiro && contaDestino) {
     const descricaoDestino = `Transferência recebida de ${contaOrigem.nome} - Motivo: ${motivo.trim()}`;
@@ -1416,10 +1578,11 @@ export async function executarTransferenciaEntreContasFirestore(
       contaId: contaDestino.id,
       contaNome: contaDestino.nome,
       tipo: 'Transferência',
-      categoria: 'Transferência entre Contas',
+      categoria: 'Transferência Recebida',
       valor: valor,
       data: dataMov,
       descricao: descricaoDestino,
+      pagadorRecebedor: contaOrigem.nome,
       formaPagamento: 'Transferência Bancária / PIX',
       criadoPor: usuarioNome,
       createdAt: new Date().toISOString(),
@@ -1430,6 +1593,8 @@ export async function executarTransferenciaEntreContasFirestore(
       contaDestinoNome: contaDestino.nome,
       isTerceiro: false,
       motivo: motivo.trim(),
+      tipoCusto: 'Neutro',
+      categoriaCusto: 'Neutro',
     };
     await saveMovimentacaoContaFirestore(movimentacaoDestino);
   }
@@ -1868,13 +2033,19 @@ export interface ParametrosLancamentoExpresso {
   pagadorRecebedor: string;
   salvarNovoFornecedor?: boolean;
   categoriaFornecedor?: CategoriaFornecedor;
-  destinoRoteamento: 'despesa_fixa' | 'veiculo_estoque' | 'veiculo_locacao' | 'retirada_socio' | 'avulso';
+  destinoRoteamento: 'despesa_fixa' | 'veiculo_estoque' | 'veiculo_locacao' | 'retirada_socio' | 'avulso' | 'venda_realizada' | 'receita_loja';
+  categoria?: string;
   categoriaDespesaFixa?: string;
+  despesaFixaExistenteId?: string;
   veiculoEstoqueId?: string;
   categoriaDespesaVeiculo?: CategoriaDespesa;
   veiculoLocacaoPlaca?: string;
   veiculoLocacaoModelo?: string;
   salvarNovoVeiculoLocacao?: boolean;
+  vinculoVendaId?: string;
+  vinculoVendaTipo?: string;
+  clienteNome?: string;
+  tipoCusto?: 'Fixo' | 'Variável' | 'Neutro';
   descricao: string;
   formaPagamento?: string;
   comprovanteNumero?: string;
@@ -1901,12 +2072,18 @@ export async function salvarLancamentoExpressoFirestore(
     salvarNovoFornecedor,
     categoriaFornecedor,
     destinoRoteamento,
+    categoria,
     categoriaDespesaFixa,
+    despesaFixaExistenteId,
     veiculoEstoqueId,
     categoriaDespesaVeiculo,
     veiculoLocacaoPlaca,
     veiculoLocacaoModelo,
     salvarNovoVeiculoLocacao,
+    vinculoVendaId,
+    vinculoVendaTipo,
+    clienteNome,
+    tipoCusto,
     descricao,
     formaPagamento = 'PIX / Transf.',
     comprovanteNumero,
@@ -1956,89 +2133,114 @@ export async function salvarLancamentoExpressoFirestore(
 
   // A) Rota 1: Despesa/Receita da Loja -> DespesaFixa
   if (destinoRoteamento === 'despesa_fixa') {
-    const idDf = `df_exp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
-    despesaFixaCriada = {
-      id: idDf,
-      nome: descricaoFinal,
-      descricao: descricaoFinal,
-      categoria: categoriaDespesaFixa || 'Outros',
-      valor: valor,
-      mesReferencia: dataLancamento.substring(0, 7),
-      dataVencimento: dataLancamento,
-      dataPagamento: isSaida ? dataLancamento : undefined,
-      status: isSaida ? 'Pago' : 'Pago',
-      contaBancariaId: contaId,
-      contaBancariaNome: contaNome,
-      fornecedorNome: pagadorRecebedor?.trim() || undefined,
-      formaPagamento: formaPagamento,
-      observacoes: observacoes?.trim() || `Lançamento Expresso (${usuarioNome})`,
-    };
-    await saveDespesaFixaFirestore(despesaFixaCriada);
-    despesaFixaIdGerado = idDf;
+    if (despesaFixaExistenteId) {
+      despesaFixaIdGerado = despesaFixaExistenteId;
+      try {
+        const dfSnap = await getDoc(doc(db, COLLECTIONS.DESPESAS_FIXAS, despesaFixaExistenteId));
+        if (dfSnap.exists()) {
+          const dfData = dfSnap.data() as DespesaFixa;
+          await saveDespesaFixaFirestore({
+            ...dfData,
+            status: 'Pago',
+            dataPagamento: dataLancamento,
+            contaBancariaId: contaId,
+            contaBancariaNome: contaNome,
+            formaPagamento: formaPagamento,
+          });
+        }
+      } catch (err) {
+        console.warn('Erro ao atualizar despesa fixa existente:', err);
+      }
+    } else {
+      const idDf = `df_exp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+      despesaFixaCriada = {
+        id: idDf,
+        nome: descricaoFinal,
+        descricao: descricaoFinal,
+        categoria: (categoriaDespesaFixa as any) || 'Outros',
+        valor: valor,
+        mesReferencia: dataLancamento.substring(0, 7),
+        dataVencimento: dataLancamento,
+        dataPagamento: isSaida ? dataLancamento : undefined,
+        status: isSaida ? 'Pago' : 'Pago',
+        contaBancariaId: contaId,
+        contaBancariaNome: contaNome,
+        fornecedorNome: pagadorRecebedor?.trim() || undefined,
+        formaPagamento: formaPagamento,
+        observacoes: observacoes?.trim() || `Lançamento Expresso (${usuarioNome})`,
+      };
+      await saveDespesaFixaFirestore(despesaFixaCriada);
+      despesaFixaIdGerado = idDf;
+    }
   }
 
-  // B) Rota 2: Retirada de Sócio / Pró-labore / Repasse
+  // B) Rota 2: Retirada de Sócio (Saída) ou Aporte de Sócio (Entrada)
   else if (destinoRoteamento === 'retirada_socio') {
-    const idDf = `df_socio_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
-    despesaFixaCriada = {
-      id: idDf,
-      nome: `Retirada / Pró-labore: ${pagadorRecebedor?.trim() || 'Sócio'}`,
-      descricao: descricaoFinal,
-      categoria: 'Pró-labore',
-      valor: valor,
-      mesReferencia: dataLancamento.substring(0, 7),
-      dataVencimento: dataLancamento,
-      dataPagamento: dataLancamento,
-      status: 'Pago',
-      contaBancariaId: contaId,
-      contaBancariaNome: contaNome,
-      beneficiarioNome: pagadorRecebedor?.trim() || 'Sócio / Titular',
-      fornecedorNome: pagadorRecebedor?.trim() || 'Sócio / Titular',
-      formaPagamento: formaPagamento,
-      observacoes: observacoes?.trim() || `Retirada de pró-labore registrada via Lançamento Expresso (${usuarioNome})`,
-    };
-    await saveDespesaFixaFirestore(despesaFixaCriada);
-    despesaFixaIdGerado = idDf;
+    if (isSaida) {
+      const idDf = `df_socio_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+      despesaFixaCriada = {
+        id: idDf,
+        nome: `Retirada / Pró-labore: ${pagadorRecebedor?.trim() || 'Sócio'}`,
+        descricao: descricaoFinal,
+        categoria: 'Pró-labore',
+        valor: valor,
+        mesReferencia: dataLancamento.substring(0, 7),
+        dataVencimento: dataLancamento,
+        dataPagamento: dataLancamento,
+        status: 'Pago',
+        contaBancariaId: contaId,
+        contaBancariaNome: contaNome,
+        beneficiarioNome: pagadorRecebedor?.trim() || 'Sócio / Titular',
+        fornecedorNome: pagadorRecebedor?.trim() || 'Sócio / Titular',
+        formaPagamento: formaPagamento,
+        observacoes: observacoes?.trim() || `Retirada de pró-labore registrada via Lançamento Expresso (${usuarioNome})`,
+      };
+      await saveDespesaFixaFirestore(despesaFixaCriada);
+      despesaFixaIdGerado = idDf;
+    }
   }
 
-  // C) Rota 3: Veículo de Venda (Estoque) -> Array de Despesas do Veículo
+  // C) Rota 3: Veículo de Venda (Estoque) -> Se Saída: Despesa do Veículo; Se Entrada: Crédito/Sinal vinculado
   else if (destinoRoteamento === 'veiculo_estoque' && veiculoEstoqueId) {
     try {
       const veicSnap = await getDoc(doc(db, COLLECTIONS.VEICULOS, veiculoEstoqueId));
       if (veicSnap.exists()) {
         const veicData = veicSnap.data() as Veiculo;
-        const despId = `desp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
-        const novaDespesaVeiculo: DespesaVeiculo = {
-          id: despId,
-          veiculoId: veicData.id,
-          chassi: veicData.chassi || '',
-          placa: veicData.placa || '',
-          categoria: categoriaDespesaVeiculo || 'Peças',
-          descricao: descricaoFinal,
-          valor: valor,
-          data: dataLancamento,
-          dataPagamento: dataLancamento,
-          fornecedor: pagadorRecebedor?.trim() || 'Fornecedor Avulso',
-          statusPagamento: 'Pago',
-          contaBancariaId: contaId,
-          contaBancariaNome: contaNome,
-          formaPagamento: formaPagamento,
-          observacoes: observacoes?.trim() || `Lançamento Expresso (${usuarioNome})`,
-        };
-
-        const despesasAtualizadas = [novaDespesaVeiculo, ...(veicData.despesas || [])];
-        const veicAtualizado: Veiculo = {
-          ...veicData,
-          despesas: despesasAtualizadas,
-        };
-
-        await saveVeiculoFirestore(veicAtualizado);
-        despesaVeiculoIdGerado = despId;
         veiculoIdVinculado = veicData.id;
         placaVinculada = veicData.placa;
+
+        if (isSaida) {
+          const despId = `desp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+          const novaDespesaVeiculo: DespesaVeiculo = {
+            id: despId,
+            veiculoId: veicData.id,
+            chassi: veicData.chassi || '',
+            placa: veicData.placa || '',
+            categoria: categoriaDespesaVeiculo || 'Peças',
+            descricao: descricaoFinal,
+            valor: valor,
+            data: dataLancamento,
+            dataPagamento: dataLancamento,
+            fornecedor: pagadorRecebedor?.trim() || 'Fornecedor Avulso',
+            statusPagamento: 'Pago',
+            contaBancariaId: contaId,
+            contaBancariaNome: contaNome,
+            formaPagamento: formaPagamento,
+            observacoes: observacoes?.trim() || `Lançamento Expresso (${usuarioNome})`,
+          };
+
+          const despesasAtualizadas = [novaDespesaVeiculo, ...(veicData.despesas || [])];
+          const veicAtualizado: Veiculo = {
+            ...veicData,
+            despesas: despesasAtualizadas,
+          };
+
+          await saveVeiculoFirestore(veicAtualizado);
+          despesaVeiculoIdGerado = despId;
+        }
       }
     } catch (err) {
-      console.error('Erro ao vincular despesa ao veículo de estoque:', err);
+      console.error('Erro ao vincular lançamento ao veículo de estoque:', err);
     }
   }
 
@@ -2058,39 +2260,40 @@ export async function salvarLancamentoExpressoFirestore(
         }
       });
 
-      const despId = `desp_loc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
-
       if (veiculoEncontrado) {
-        // Veículo já existe: apenas adiciona despesa
-        const novaDespesaVeiculo: DespesaVeiculo = {
-          id: despId,
-          veiculoId: veiculoEncontrado.id,
-          chassi: veiculoEncontrado.chassi || '',
-          placa: veiculoEncontrado.placa,
-          categoria: categoriaDespesaVeiculo || 'Mecânica / Mão de Obra',
-          descricao: descricaoFinal,
-          valor: valor,
-          data: dataLancamento,
-          dataPagamento: dataLancamento,
-          fornecedor: pagadorRecebedor?.trim() || 'Oficina / Parceiro',
-          statusPagamento: 'Pago',
-          contaBancariaId: contaId,
-          contaBancariaNome: contaNome,
-          formaPagamento: formaPagamento,
-          observacoes: observacoes?.trim() || `Lançamento Expresso Locação (${usuarioNome})`,
-        };
-
-        const veicAtualizado: Veiculo = {
-          ...veiculoEncontrado,
-          despesas: [novaDespesaVeiculo, ...(veiculoEncontrado.despesas || [])],
-        };
-        await saveVeiculoFirestore(veicAtualizado);
-        despesaVeiculoIdGerado = despId;
         veiculoIdVinculado = veiculoEncontrado.id;
+        if (isSaida) {
+          const despId = `desp_loc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+          const novaDespesaVeiculo: DespesaVeiculo = {
+            id: despId,
+            veiculoId: veiculoEncontrado.id,
+            chassi: veiculoEncontrado.chassi || '',
+            placa: veiculoEncontrado.placa,
+            categoria: categoriaDespesaVeiculo || 'Mecânica / Mão de Obra',
+            descricao: descricaoFinal,
+            valor: valor,
+            data: dataLancamento,
+            dataPagamento: dataLancamento,
+            fornecedor: pagadorRecebedor?.trim() || 'Oficina / Parceiro',
+            statusPagamento: 'Pago',
+            contaBancariaId: contaId,
+            contaBancariaNome: contaNome,
+            formaPagamento: formaPagamento,
+            observacoes: observacoes?.trim() || `Lançamento Expresso Locação (${usuarioNome})`,
+          };
+
+          const veicAtualizado: Veiculo = {
+            ...veiculoEncontrado,
+            despesas: [novaDespesaVeiculo, ...(veiculoEncontrado.despesas || [])],
+          };
+          await saveVeiculoFirestore(veicAtualizado);
+          despesaVeiculoIdGerado = despId;
+        }
       } else if (salvarNovoVeiculoLocacao) {
-        // Não existe e usuário marcou pré-cadastro: cria novo veículo de locação
         const novoId = `veic_loc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
-        const novaDespesaVeiculo: DespesaVeiculo = {
+        veiculoIdVinculado = novoId;
+        const despId = `desp_loc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+        const novaDespesaVeiculo: DespesaVeiculo | undefined = isSaida ? {
           id: despId,
           veiculoId: novoId,
           chassi: `LOC-${placaLimpa.replace(/[^A-Z0-9]/g, '')}`,
@@ -2106,7 +2309,7 @@ export async function salvarLancamentoExpressoFirestore(
           contaBancariaNome: contaNome,
           formaPagamento: formaPagamento,
           observacoes: `Criado junto ao veículo de locação via Lançamento Expresso`,
-        };
+        } : undefined;
 
         novoVeiculoLocacaoCriado = {
           id: novoId,
@@ -2170,12 +2373,39 @@ export async function salvarLancamentoExpressoFirestore(
 
   // 4. Salvar Movimentação no Extrato Global
   const movId = `mov_exp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  
+  // Determinar categoria contábil e de custos
+  let catCustoFinal: 'Custo Fixo' | 'Custo Variável' | 'Retirada Sócio' | 'Receita Venda' | 'Receita Locação' | 'Neutro' | undefined;
+  let tipoCustoFinal: 'Fixo' | 'Variável' | 'Neutro' | undefined = tipoCusto;
+
+  if (destinoRoteamento === 'venda_realizada') {
+    catCustoFinal = 'Receita Venda';
+    tipoCustoFinal = 'Neutro';
+  } else if (destinoRoteamento === 'despesa_fixa') {
+    catCustoFinal = tipoCusto === 'Variável' ? 'Custo Variável' : 'Custo Fixo';
+    tipoCustoFinal = tipoCusto || 'Fixo';
+  } else if (destinoRoteamento === 'veiculo_estoque' || destinoRoteamento === 'veiculo_locacao') {
+    catCustoFinal = 'Custo Variável';
+    tipoCustoFinal = 'Variável';
+  } else if (destinoRoteamento === 'retirada_socio') {
+    catCustoFinal = 'Retirada Sócio';
+    tipoCustoFinal = 'Neutro';
+  }
+
+  const categoriaFinal = (categoria && categoria.trim()) ||
+    categoriaDespesaFixa ||
+    categoriaDespesaVeiculo ||
+    (destinoRoteamento === 'retirada_socio' ? (isSaida ? 'Pró-labore' : 'Aporte de Sócio') :
+     destinoRoteamento === 'venda_realizada' ? (vinculoVendaTipo || 'Receita de Venda') :
+     destinoRoteamento === 'receita_loja' ? 'Receita da Loja' :
+     isSaida ? 'Despesa Operacional' : 'Receita da Loja');
+
   const novaMovimentacao: MovimentacaoConta = {
     id: movId,
     contaId: contaAtualizada.id,
     contaNome: contaAtualizada.nome,
     tipo: isSaida ? 'Despesa' : 'Receita',
-    categoria: categoriaDespesaFixa || categoriaDespesaVeiculo || (destinoRoteamento === 'retirada_socio' ? 'Pró-labore' : isSaida ? 'Despesa Operacional' : 'Receita da Loja'),
+    categoria: categoriaFinal,
     valor: valor,
     data: dataLancamento,
     descricao: descricaoFinal,
@@ -2183,8 +2413,12 @@ export async function salvarLancamentoExpressoFirestore(
     destinoRoteamento: destinoRoteamento,
     despesaFixaId: despesaFixaIdGerado,
     despesaVeiculoId: despesaVeiculoIdGerado,
-    veiculoId: veiculoIdVinculado,
-    placa: placaVinculada,
+    veiculoId: veiculoIdVinculado || veiculoEstoqueId,
+    placa: placaVinculada || veiculoLocacaoPlaca,
+    vinculoVendaId: vinculoVendaId,
+    clienteNome: clienteNome || (destinoRoteamento === 'venda_realizada' ? pagadorRecebedor : undefined),
+    tipoCusto: tipoCustoFinal,
+    categoriaCusto: catCustoFinal,
     formaPagamento: formaPagamento,
     comprovanteNumero: comprovanteNumero?.trim() || undefined,
     observacoes: observacoes?.trim() || undefined,
@@ -2201,6 +2435,23 @@ export async function salvarLancamentoExpressoFirestore(
     novoVeiculoLocacaoCriado,
     despesaFixaCriada,
   };
+}
+
+/**
+ * Atualização direta de campos de uma MovimentacaoConta com { merge: true }
+ */
+export async function atualizarCamposMovimentacaoFirestore(
+  movId: string,
+  updates: Partial<MovimentacaoConta>
+): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movId);
+    const clean = JSON.parse(JSON.stringify(updates));
+    await setDoc(docRef, clean, { merge: true });
+  } catch (error) {
+    console.error('Erro ao atualizar campos da movimentação no Firestore:', error);
+    throw error;
+  }
 }
 
 /**
@@ -2224,6 +2475,8 @@ export interface ParametrosEdicaoMovimentacao {
   formaPagamento?: string;
   observacoes?: string;
   comprovanteNumero?: string;
+  tipoCusto?: 'Fixo' | 'Variável' | 'Neutro';
+  vinculoVendaId?: string;
 }
 
 export async function editarMovimentacaoContaFirestore(
@@ -2380,6 +2633,8 @@ export async function editarMovimentacaoContaFirestore(
     formaPagamento: novosDados.formaPagamento || movimentacaoAntiga.formaPagamento,
     observacoes: novosDados.observacoes,
     comprovanteNumero: novosDados.comprovanteNumero,
+    tipoCusto: novosDados.tipoCusto || movimentacaoAntiga.tipoCusto,
+    vinculoVendaId: novosDados.vinculoVendaId !== undefined ? novosDados.vinculoVendaId : movimentacaoAntiga.vinculoVendaId,
   };
 
   await saveMovimentacaoContaFirestore(movimentacaoAtualizada);

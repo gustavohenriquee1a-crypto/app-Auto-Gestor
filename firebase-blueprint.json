@@ -57,6 +57,8 @@
         "status": { "type": "string", "description": "Status" },
         "localizacaoPatio": { "type": "string", "description": "Localização no Pátio" },
         "fotoUrl": { "type": "string", "description": "URL da Foto" },
+        "anuncioAtivo": { "type": "boolean", "description": "Status se o veículo está anunciado ativamente em tráfego ou portais" },
+        "plataformasAnuncio": { "type": "array", "description": "Plataformas de anúncios ativas para o veículo" },
         "observacoes": { "type": "string", "description": "Observações" }
       },
       "required": ["id", "placa", "chassi", "modelo", "custoAquisicao", "status"]
@@ -83,6 +85,8 @@
         "compradorNome": { "type": "string", "description": "Nome do comprador" },
         "compradorCpf": { "type": "string", "description": "CPF do comprador" },
         "formaPagamento": { "type": "string", "description": "Forma de pagamento" },
+        "origemLead": { "type": "string", "description": "Canal de aquisição do lead ('Meta Ads', 'Google Ads', 'Webmotors/OLX', 'Passante', 'Indicação', 'WhatsApp')" },
+        "despesaMarketingAplicadaPosVenda": { "type": "number", "description": "Custo de tráfego pago lançado no pós-venda para o chassi (deduz do lucro no DRE sem alterar comissão)" },
         "vendedorId": { "type": "string", "description": "UID do vendedor" },
         "vendedorNome": { "type": "string", "description": "Nome do vendedor" },
         "vendedorEmail": { "type": "string", "description": "Email do vendedor" },

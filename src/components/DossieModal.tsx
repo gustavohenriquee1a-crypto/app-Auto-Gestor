@@ -40,7 +40,10 @@ import {
   FileCheck,
   User,
   Fuel,
-  Link2
+  Link2,
+  Megaphone,
+  Shield,
+  Info
 } from 'lucide-react';
 import { 
   Veiculo, 
@@ -51,7 +54,9 @@ import {
   StatusEstoque,
   Usuario,
   RegistroTestDrive,
-  LaudoVistoriaEntrada
+  LaudoVistoriaEntrada,
+  OrigemLeadType,
+  VendaVeiculo
 } from '../types';
 import { 
   formatCurrency, 
@@ -68,6 +73,7 @@ import {
   formatarDataHoraAuditoria 
 } from '../utils/auditLogger';
 import { ParametrosMovimentacaoVeiculo, prepararMovimentacaoVeiculo } from '../services/movimentacaoVeiculoService';
+import { saveVendaFirestore, saveVeiculoFirestore } from '../services/firestoreService';
 
 interface DossieModalProps {
   veiculo: Veiculo;
@@ -80,6 +86,8 @@ interface DossieModalProps {
   onEditDespesa?: (veiculo: Veiculo, despesa: DespesaVeiculo) => void;
   onAdicionarEventoStatus?: (veiculoId: string, novoEvento: EventoHistoricoVeiculo) => void;
   onUpdateVeiculo?: (veiculo: Veiculo) => void;
+  onUpdateVenda?: (venda: VendaVeiculo) => void;
+  vendas?: VendaVeiculo[];
   onMovimentarVeiculo?: (params: ParametrosMovimentacaoVeiculo) => Promise<Veiculo>;
   onEditVeiculo?: (veiculo: Veiculo) => void;
   onOpenTestDrive?: (veiculo: Veiculo) => void;
@@ -103,6 +111,8 @@ export const DossieModal: React.FC<DossieModalProps> = ({
   onEditDespesa,
   onAdicionarEventoStatus,
   onUpdateVeiculo,
+  onUpdateVenda,
+  vendas,
   onMovimentarVeiculo,
   onEditVeiculo,
   onOpenTestDrive,
@@ -230,6 +240,107 @@ export const DossieModal: React.FC<DossieModalProps> = ({
   const lucroEstimado = precoVendaAtual - custoFinal;
   const margemPercentual = custoFinal > 0 ? ((lucroEstimado / custoFinal) * 100) : 0;
 
+  // Venda associada (do objeto do veículo ou da listagem global de vendas)
+  const vendaCorrespondente = useMemo(() => {
+    return veiculo.venda || (vendas ? vendas.find(v => v.veiculoId === veiculo.id || (v.placa && veiculo.placa && v.placa === veiculo.placa)) : undefined);
+  }, [veiculo.venda, veiculo.id, veiculo.placa, vendas]);
+
+  // Marketing & Tráfego Pós-Venda Modal State
+  const [modalMarketingAberto, setModalMarketingAberto] = useState(false);
+  const [valorMarketingInput, setValorMarketingInput] = useState<string>('');
+  const [origemLeadInput, setOrigemLeadInput] = useState<OrigemLeadType>('Meta Ads');
+  const [isSalvandoMarketing, setIsSalvandoMarketing] = useState(false);
+  const [feedbackMarketingMsg, setFeedbackMarketingMsg] = useState<string | null>(null);
+
+  // Marketing & Divulgação no Estoque (veículo ativo)
+  const [anuncioAtivoVeiculo, setAnuncioAtivoVeiculo] = useState(veiculo.anuncioAtivo ?? false);
+  const [plataformasAnuncioVeiculo, setPlataformasAnuncioVeiculo] = useState<string[]>(veiculo.plataformasAnuncio || []);
+
+  useEffect(() => {
+    setAnuncioAtivoVeiculo(veiculo.anuncioAtivo ?? false);
+    setPlataformasAnuncioVeiculo(veiculo.plataformasAnuncio || []);
+  }, [veiculo.anuncioAtivo, veiculo.plataformasAnuncio]);
+
+  const handleSalvarMarketingVeiculo = async (novoAtivo: boolean, novasPlataformas: string[]) => {
+    setAnuncioAtivoVeiculo(novoAtivo);
+    setPlataformasAnuncioVeiculo(novasPlataformas);
+    const veicAtualizado: Veiculo = {
+      ...veiculo,
+      anuncioAtivo: novoAtivo,
+      plataformasAnuncio: novasPlataformas,
+    };
+    if (onUpdateVeiculo) {
+      onUpdateVeiculo(veicAtualizado);
+    }
+    await saveVeiculoFirestore(veicAtualizado);
+  };
+
+  const handleAbrirModalMarketing = () => {
+    const valAtual = vendaCorrespondente?.despesaMarketingAplicadaPosVenda;
+    setValorMarketingInput(valAtual !== undefined && valAtual !== null ? String(valAtual) : '');
+    setOrigemLeadInput(vendaCorrespondente?.origemLead || 'Meta Ads');
+    setFeedbackMarketingMsg(null);
+    setModalMarketingAberto(true);
+  };
+
+  const handleSalvarCustoMarketing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!vendaCorrespondente) return;
+    setIsSalvandoMarketing(true);
+    try {
+      const novoCustoMkt = Math.max(0, Number(valorMarketingInput) || 0);
+      const custoMktAnterior = Number(vendaCorrespondente.despesaMarketingAplicadaPosVenda || 0);
+      const diferencaMkt = novoCustoMkt - custoMktAnterior;
+
+      // REGRA CONTÁBIL CRÍTICA:
+      // Este valor deve ser deduzido do lucroLiquido final do carro no DRE,
+      // mas NÃO deve recalcular ou alterar o valor da comissão que já foi fixada
+      // e salva para os vendedores no momento do fechamento da venda.
+      const lucroAnterior = Number(vendaCorrespondente.lucroLiquido) || 0;
+      const novoLucroLiquido = lucroAnterior - diferencaMkt;
+      const custoTotalBase = Number(vendaCorrespondente.custoTotal) || (veiculo.custoAquisicao + totalDespesas);
+      const novaMargemLucro = custoTotalBase > 0 ? (novoLucroLiquido / custoTotalBase) * 100 : 0;
+
+      const vendaAtualizada: VendaVeiculo = {
+        ...vendaCorrespondente,
+        despesaMarketingAplicadaPosVenda: novoCustoMkt,
+        origemLead: origemLeadInput,
+        lucroLiquido: novoLucroLiquido,
+        margemLucroPercent: novaMargemLucro,
+        // Comissões permanecem inalteradas:
+        comissaoValor: vendaCorrespondente.comissaoValor,
+        comissaoPercentual: vendaCorrespondente.comissaoPercentual,
+        comissoesMultiplas: vendaCorrespondente.comissoesMultiplas,
+      };
+
+      const veiculoAtualizado: Veiculo = {
+        ...veiculo,
+        venda: vendaAtualizada,
+      };
+
+      if (onUpdateVenda) {
+        onUpdateVenda(vendaAtualizada);
+      }
+      if (onUpdateVeiculo) {
+        onUpdateVeiculo(veiculoAtualizado);
+      }
+
+      await saveVendaFirestore(vendaAtualizada);
+      await saveVeiculoFirestore(veiculoAtualizado);
+
+      setFeedbackMarketingMsg('Custo de marketing lançado com sucesso! Lucro Líquido atualizado no DRE com comissões preservadas.');
+      setTimeout(() => {
+        setFeedbackMarketingMsg(null);
+        setModalMarketingAberto(false);
+      }, 1200);
+    } catch (error) {
+      console.error('Erro ao salvar custo de marketing pós-venda:', error);
+      setFeedbackMarketingMsg('Erro ao salvar no banco de dados. Tente novamente.');
+    } finally {
+      setIsSalvandoMarketing(false);
+    }
+  };
+
   const handleQuitarDespesaDirect = (despesaId: string) => {
     if (!onUpdateVeiculo) return;
     const updatedDespesas = (veiculo.despesas || []).map((d) => {
@@ -251,7 +362,9 @@ export const DossieModal: React.FC<DossieModalProps> = ({
 
   // Group expenses by category for quick insights
   const despesasPorCategoria = (veiculo.despesas || []).reduce((acc, d) => {
-    acc[d.categoria] = (acc[d.categoria] || 0) + d.valor;
+    if (!d) return acc;
+    const cat = d.categoria || 'Geral';
+    acc[cat] = (acc[cat] || 0) + (Number(d.valor) || 0);
     return acc;
   }, {} as Record<string, number>);
 
@@ -261,7 +374,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
 
     // 1. Explicit registered status events
     if (veiculo.historicoStatus && veiculo.historicoStatus.length > 0) {
-      rawEvents.push(...veiculo.historicoStatus);
+      rawEvents.push(...veiculo.historicoStatus.filter((ev) => ev != null));
     } else {
       // Base acquisition event if not explicitly registered
       rawEvents.push({
@@ -281,7 +394,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
     // 2. Add active rental contract event if not already present
     if (veiculo.contratoAtivo) {
       const hasContratoEvent = rawEvents.some(
-        (e) => e.tipo === 'Locação Iniciada' && e.data === veiculo.contratoAtivo?.dataInicio
+        (e) => e && e.tipo === 'Locação Iniciada' && e.data === veiculo.contratoAtivo?.dataInicio
       );
       if (!hasContratoEvent) {
         rawEvents.push({
@@ -301,7 +414,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
 
     // 3. Add Sale event if vehicle is sold
     if (veiculo.venda) {
-      const hasVendaEvent = rawEvents.some((e) => e.tipo === 'Venda Concluída');
+      const hasVendaEvent = rawEvents.some((e) => e && e.tipo === 'Venda Concluída');
       if (!hasVendaEvent) {
         rawEvents.push({
           id: `hs-venda-${veiculo.venda.id}`,
@@ -321,6 +434,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
     // Deduplicate by ID
     const uniqueMap = new Map<string, EventoHistoricoVeiculo>();
     rawEvents.forEach((ev) => {
+      if (!ev) return;
       if (!uniqueMap.has(ev.id)) {
         uniqueMap.set(ev.id, ev);
       }
@@ -330,8 +444,8 @@ export const DossieModal: React.FC<DossieModalProps> = ({
 
     // Sort by date
     list.sort((a, b) => {
-      const dateA = new Date(a.data).getTime();
-      const dateB = new Date(b.data).getTime();
+      const dateA = a?.data ? new Date(a.data).getTime() : 0;
+      const dateB = b?.data ? new Date(b.data).getTime() : 0;
       return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
     });
 
@@ -1160,6 +1274,109 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                 </div>
               </div>
 
+              {/* CARD DE MARKETING & ANÚNCIOS */}
+              <div className="bg-[#111116] p-5 rounded-2xl border border-pink-500/20 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-pink-600/20 border border-pink-500/30 flex items-center justify-center text-pink-400 font-bold shrink-0">
+                      <Megaphone size={20} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-extrabold text-sm text-white">
+                          Marketing & Tráfego Pago do Chassi
+                        </h3>
+                        {anuncioAtivoVeiculo ? (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                            📣 Em Campanha Ativa
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/5 text-slate-400 border border-white/10">
+                            ⚪ Sem Campanha Ativa
+                          </span>
+                        )}
+                        {vendaCorrespondente?.origemLead && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            🎯 Lead: {vendaCorrespondente.origemLead}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {veiculo.status === 'Vendido' || !!vendaCorrespondente
+                          ? `Veículo vendido com custo de marketing registrado de ${formatCurrency(vendaCorrespondente?.despesaMarketingAplicadaPosVenda || 0)}.`
+                          : 'Rastreamento de campanhas digitais e canais de atração de clientes para este veículo.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {veiculo.status !== 'Vendido' && (
+                      <button
+                        type="button"
+                        onClick={() => handleSalvarMarketingVeiculo(!anuncioAtivoVeiculo, plataformasAnuncioVeiculo)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
+                          anuncioAtivoVeiculo
+                            ? 'bg-pink-600/20 text-pink-300 border-pink-500/40 hover:bg-pink-600/30'
+                            : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        <Megaphone size={13} />
+                        <span>{anuncioAtivoVeiculo ? 'Desativar Anúncio' : 'Ativar Anúncio'}</span>
+                      </button>
+                    )}
+
+                    {(veiculo.status === 'Vendido' || !!vendaCorrespondente) && (
+                      <button
+                        type="button"
+                        onClick={handleAbrirModalMarketing}
+                        className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-pink-600 hover:bg-pink-500 text-white transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <Megaphone size={14} />
+                        <span>Lançar Custo de Marketing</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Plataformas e Métricas */}
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs pt-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-slate-400 font-semibold text-[11px]">Plataformas de Anúncio:</span>
+                    {plataformasAnuncioVeiculo.length > 0 ? (
+                      plataformasAnuncioVeiculo.map((plat) => (
+                        <span
+                          key={plat}
+                          className="px-2 py-0.5 rounded-lg bg-pink-950/40 text-pink-300 border border-pink-500/20 font-medium text-[11px]"
+                        >
+                          {plat}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-slate-500 text-[11px] italic">Nenhuma plataforma vinculada</span>
+                    )}
+                  </div>
+
+                  {(veiculo.status === 'Vendido' || !!vendaCorrespondente) && (
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <span className="text-[10px] text-slate-400 block">Custo de Mkt Pós-Venda</span>
+                        <strong className="text-xs font-mono font-bold text-pink-400">
+                          {formatCurrency(vendaCorrespondente?.despesaMarketingAplicadaPosVenda || 0)}
+                        </strong>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] text-slate-400 block">Lucro Líquido Real</span>
+                        <strong className={`text-xs font-mono font-bold ${
+                          (vendaCorrespondente?.lucroLiquido || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                        }`}>
+                          {formatCurrency(vendaCorrespondente?.lucroLiquido || 0)}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Ações Rápidas de Operação */}
               <div className="p-4 bg-[#16171f] rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs text-slate-400">
@@ -1219,6 +1436,17 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                       className="px-3.5 py-2 rounded-xl text-xs font-bold bg-orange-600 hover:bg-orange-500 text-white transition flex items-center gap-1.5 cursor-pointer shadow-sm"
                     >
                       <Plus size={14} /> Lançar Custo / Peça
+                    </button>
+                  )}
+
+                  {(veiculo.status === 'Vendido' || !!vendaCorrespondente) && (
+                    <button
+                      type="button"
+                      onClick={handleAbrirModalMarketing}
+                      className="px-3.5 py-2 rounded-xl text-xs font-bold bg-pink-600 hover:bg-pink-500 text-white transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      title="Atribuir custo de marketing ou tráfego pago pós-venda para este chassi"
+                    >
+                      <Megaphone size={14} /> <span>Lançar Custo de Marketing da Venda</span>
                     </button>
                   )}
 
@@ -1800,47 +2028,145 @@ export const DossieModal: React.FC<DossieModalProps> = ({
           )}
 
           {/* ================= ABA 4: DRE INDIVIDUAL POR CHASSI ================= */}
-          {activeTab === 'dre_chassi' && (
-            <div className="space-y-6 animate-fadeIn">
-              <div className="bg-[#111116] p-6 rounded-2xl border border-white/5 space-y-4">
-                <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                  <div>
-                    <h3 className="font-bold text-base text-white flex items-center gap-2">
-                      <TrendingUp className="text-emerald-400" size={18} />
-                      Demonstrativo de Resultado Unitário (DRE por Chassi)
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Extrato contábil fechado com apuração de receitas, custos diretos e margem de contribuição.
-                    </p>
-                  </div>
-                </div>
+          {activeTab === 'dre_chassi' && (() => {
+            const isVendidoOperacao = veiculo.status === 'Vendido' || !!vendaCorrespondente;
+            const receitaRealOuPrevista = vendaCorrespondente?.valorVenda || precoVendaAtual;
+            const custoCompraEfetivo = vendaCorrespondente?.valorCompra || veiculo.custoAquisicao;
+            const custosOficinaEfetivo = vendaCorrespondente?.totalDespesas ?? totalDespesas;
+            const mktPosVenda = vendaCorrespondente?.despesaMarketingAplicadaPosVenda || 0;
+            const comissaoEfetiva = vendaCorrespondente?.comissaoValor || 0;
 
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between py-2 border-b border-white/5 font-semibold">
-                    <span className="text-slate-300">Receita Bruta Prevista / Realizada (Preço Venda)</span>
-                    <span className="font-mono text-emerald-400 font-bold">{formatCurrency(precoVendaAtual)}</span>
+            const lucroBrutoRealizado = receitaRealOuPrevista - custoCompraEfetivo - custosOficinaEfetivo;
+            const lucroLiquidoRealizado = vendaCorrespondente?.lucroLiquido !== undefined
+              ? vendaCorrespondente.lucroLiquido
+              : (lucroBrutoRealizado - mktPosVenda - comissaoEfetiva);
+
+            const margemLiquidaRealizada = (custoCompraEfetivo + custosOficinaEfetivo) > 0
+              ? (lucroLiquidoRealizado / (custoCompraEfetivo + custosOficinaEfetivo)) * 100
+              : 0;
+
+            return (
+              <div className="space-y-6 animate-fadeIn">
+                <div className="bg-[#111116] p-6 rounded-2xl border border-white/5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                    <div>
+                      <h3 className="font-bold text-base text-white flex items-center gap-2">
+                        <TrendingUp className="text-emerald-400" size={18} />
+                        Demonstrativo de Resultado Unitário (DRE por Chassi)
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        {isVendidoOperacao 
+                          ? 'DRE definitivo com apuração pós-venda, custos diretos, tráfego pago e comissão protegida.'
+                          : 'Extrato contábil projetado com apuração de receitas, custos diretos e margem de contribuição.'}
+                      </p>
+                    </div>
+
+                    {isVendidoOperacao && (
+                      <button
+                        type="button"
+                        onClick={handleAbrirModalMarketing}
+                        className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-pink-600 hover:bg-pink-500 text-white transition flex items-center gap-1.5 cursor-pointer shadow-xs self-start sm:self-center"
+                      >
+                        <Megaphone size={14} />
+                        <span>Lançar Custo de Marketing</span>
+                      </button>
+                    )}
                   </div>
 
-                  <div className="flex justify-between py-2 border-b border-white/5 font-semibold text-slate-400">
-                    <span>(-) Custo de Aquisição (Compra da Loja)</span>
-                    <span className="font-mono text-rose-400">-{formatCurrency(veiculo.custoAquisicao)}</span>
+                  {/* DRE Rows */}
+                  <div className="space-y-2.5 text-xs">
+                    <div className="flex justify-between py-2 border-b border-white/5 font-semibold">
+                      <span className="text-slate-300 flex items-center gap-1.5">
+                        <span>Receita Bruta {isVendidoOperacao ? 'Realizada' : 'Projetada'}</span>
+                        {isVendidoOperacao && <span className="text-[10px] text-emerald-400 font-mono">(Venda)</span>}
+                      </span>
+                      <span className="font-mono text-emerald-400 font-bold">{formatCurrency(receitaRealOuPrevista)}</span>
+                    </div>
+
+                    <div className="flex justify-between py-2 border-b border-white/5 font-semibold text-slate-400">
+                      <span>(-) Custo de Aquisição (Compra da Loja)</span>
+                      <span className="font-mono text-rose-400">-{formatCurrency(custoCompraEfetivo)}</span>
+                    </div>
+
+                    <div className="flex justify-between py-2 border-b border-white/5 font-semibold text-slate-400">
+                      <span>(-) Custos de Preparação, Funilaria, Peças e Oficina</span>
+                      <span className="font-mono text-rose-400">-{formatCurrency(custosOficinaEfetivo)}</span>
+                    </div>
+
+                    <div className="flex justify-between py-2.5 border-t border-b border-white/10 font-bold text-xs bg-white/5 px-3 rounded-lg">
+                      <span className="text-slate-200">(=) Lucro Bruto do Veículo</span>
+                      <span className={`font-mono ${lucroBrutoRealizado >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {formatCurrency(lucroBrutoRealizado)}
+                      </span>
+                    </div>
+
+                    {isVendidoOperacao && (
+                      <>
+                        <div className="flex justify-between items-center py-2 border-b border-white/5 font-semibold text-slate-300">
+                          <div className="flex flex-col">
+                            <span className="flex items-center gap-1.5 text-pink-300">
+                              <Megaphone size={13} className="text-pink-400" />
+                              (-) Despesa de Marketing & Tráfego Pago Pós-Venda
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              Atribuído ao chassi ({vendaCorrespondente?.origemLead || 'Campanhas'}) • Não afeta comissão dos vendedores
+                            </span>
+                          </div>
+                          <span className={`font-mono font-bold ${mktPosVenda > 0 ? 'text-pink-400' : 'text-slate-400'}`}>
+                            {mktPosVenda > 0 ? `-${formatCurrency(mktPosVenda)}` : 'R$ 0,00'}
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between items-center py-2 border-b border-white/5 font-semibold text-slate-300">
+                          <div className="flex flex-col">
+                            <span className="flex items-center gap-1.5 text-amber-300">
+                              <Shield size={13} className="text-amber-400" />
+                              (-) Comissões da Equipe de Vendas
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              Comissão contratual fixada no fechamento da venda • 100% protegida
+                            </span>
+                          </div>
+                          <span className="font-mono font-bold text-amber-400">
+                            -{formatCurrency(comissaoEfetiva)}
+                          </span>
+                        </div>
+                      </>
+                    )}
+
+                    <div className="flex justify-between py-3 border-t-2 border-white/10 font-bold text-sm bg-black/40 p-3 rounded-xl mt-2">
+                      <div className="flex flex-col">
+                        <span className="text-white">
+                          (=) Lucro Líquido Real da Operação
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-normal">
+                          {isVendidoOperacao
+                            ? 'Resultado contábil após dedução de marketing atribuído e comissões'
+                            : 'Resultado preliminar projetado da venda'}
+                        </span>
+                      </div>
+                      <span className={`font-mono text-base font-black ${lucroLiquidoRealizado >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {formatCurrency(lucroLiquidoRealizado)} ({margemLiquidaRealizada.toFixed(1)}%)
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="flex justify-between py-2 border-b border-white/5 font-semibold text-slate-400">
-                    <span>(-) Custos de Preparação, Funilaria, Peças e Oficina</span>
-                    <span className="font-mono text-rose-400">-{formatCurrency(totalDespesas)}</span>
-                  </div>
-
-                  <div className="flex justify-between py-3 border-t-2 border-white/10 font-bold text-sm bg-black/40 p-3 rounded-xl">
-                    <span className="text-white">(=) Lucro Bruto Unitário da Operação</span>
-                    <span className={`font-mono text-base font-black ${lucroEstimado >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {formatCurrency(lucroEstimado)} ({margemPercentual.toFixed(1)}%)
-                    </span>
-                  </div>
+                  {/* Informational Accounting Rule Box */}
+                  {isVendidoOperacao && (
+                    <div className="p-3.5 bg-pink-950/20 border border-pink-500/20 rounded-xl text-xs text-pink-200/90 flex items-start gap-2.5">
+                      <Shield size={16} className="text-pink-400 shrink-0 mt-0.5" />
+                      <div>
+                        <strong className="text-pink-300 font-bold block mb-0.5">
+                          Regra de Contabilidade & Atribuição de Tráfego:
+                        </strong>
+                        O valor de tráfego pago lançado neste chassi (<strong>{formatCurrency(mktPosVenda)}</strong>) é descontado unicamente do <strong>Lucro Líquido Real da Operação</strong> e entra no DRE geral da empresa. A comissão dos vendedores ({formatCurrency(comissaoEfetiva)}) foi mantida e fixada pelo fechamento da venda.
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ================= ABA 5: AUDITORIA DE STATUS DO ESTOQUE ================= */}
           {activeTab === 'auditoria' && (
@@ -2469,6 +2795,169 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                   className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold cursor-pointer"
                 >
                   Salvar Evento
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Submodal: Lançar Custo de Marketing da Venda (Pós-Venda) */}
+      {modalMarketingAberto && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-lg flex flex-col bg-gray-900 rounded-2xl border border-pink-500/30 shadow-2xl overflow-hidden animate-scaleUp">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-pink-500/20 p-5 bg-gradient-to-r from-pink-950/40 via-[#16171f] to-[#16171f] shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-pink-600/20 border border-pink-500/30 flex items-center justify-center text-pink-400 font-bold shrink-0">
+                  <Megaphone size={20} />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm text-white">
+                    Lançar Custo de Marketing da Venda
+                  </h4>
+                  <p className="text-[11px] text-pink-300/80">
+                    {veiculo.modelo} • {veiculo.placa} • Chassi: {veiculo.chassi.slice(-6)}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalMarketingAberto(false)}
+                className="text-slate-400 hover:text-white cursor-pointer p-1 rounded-lg hover:bg-white/5 transition"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleSalvarCustoMarketing} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="p-5 space-y-4 text-xs overflow-y-auto max-h-[75vh]">
+                {/* Regra Contábil Crítica Box */}
+                <div className="p-4 rounded-xl bg-pink-950/30 border border-pink-500/30 space-y-1 text-xs">
+                  <div className="flex items-center gap-2 font-bold text-pink-300">
+                    <Shield size={16} className="text-pink-400 shrink-0" />
+                    <span>REGRA CONTÁBIL CRÍTICA:</span>
+                  </div>
+                  <p className="text-pink-200/90 leading-relaxed text-[11px]">
+                    Este valor deve ser deduzido do <strong>Lucro Líquido final do carro no DRE</strong>, mas <strong>NÃO</strong> recalcula nem altera o valor da comissão que já foi fixada e salva para os vendedores no momento do fechamento da venda.
+                  </p>
+                </div>
+
+                {/* Feedback Toast */}
+                {feedbackMarketingMsg && (
+                  <div className="p-3 bg-emerald-950/60 border border-emerald-500/60 rounded-xl text-emerald-200 text-xs font-bold flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                    <span>{feedbackMarketingMsg}</span>
+                  </div>
+                )}
+
+                {/* Campo 1: Origem do Lead */}
+                <div>
+                  <label className="block text-slate-200 font-bold mb-1.5 flex items-center justify-between">
+                    <span>Origem do Lead (Canal de Atribuição)</span>
+                    <span className="text-[10px] text-pink-400 font-semibold uppercase">Rastreabilidade</span>
+                  </label>
+                  <select
+                    value={origemLeadInput}
+                    onChange={(e) => setOrigemLeadInput(e.target.value as OrigemLeadType)}
+                    className="w-full p-3 rounded-xl border border-white/10 bg-[#16171f] text-white font-medium text-xs outline-none focus:border-pink-500"
+                  >
+                    <option value="Meta Ads">Meta Ads (Instagram / Facebook)</option>
+                    <option value="Google Ads">Google Ads (Pesquisa / Display)</option>
+                    <option value="Webmotors/OLX">Webmotors / OLX / Portais</option>
+                    <option value="Passante">Passante (Showroom / Pátio)</option>
+                    <option value="Indicação">Indicação de Cliente / Parceiro</option>
+                    <option value="WhatsApp">WhatsApp / Contato Direto</option>
+                  </select>
+                </div>
+
+                {/* Campo 2: Gasto de Anúncios para este Veículo */}
+                <div>
+                  <label className="block text-slate-200 font-bold mb-1.5 flex items-center justify-between">
+                    <span>Valor Gasto em Anúncios para este Chassi (R$)</span>
+                    <span className="text-[10px] text-pink-400 font-bold">Dedução no DRE</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-3 text-slate-400 font-bold">R$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      required
+                      value={valorMarketingInput}
+                      onChange={(e) => setValorMarketingInput(e.target.value)}
+                      placeholder="Ex: 350.00"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-pink-500/30 bg-[#16171f] text-white font-mono font-bold text-sm outline-none focus:border-pink-400"
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 block mt-1">
+                    Custo total de tráfego pago investido na campanha deste veículo até sua conversão.
+                  </span>
+                </div>
+
+                {/* Simulação em Tempo Real */}
+                {(() => {
+                  const valVenda = Number(vendaCorrespondente?.valorVenda) || precoVendaAtual;
+                  const valCompra = Number(vendaCorrespondente?.valorCompra) || veiculo.custoAquisicao;
+                  const valOficina = Number(vendaCorrespondente?.totalDespesas ?? totalDespesas);
+                  const valComissao = Number(vendaCorrespondente?.comissaoValor || 0);
+                  const valMkt = Math.max(0, Number(valorMarketingInput) || 0);
+                  const lucroSimulado = valVenda - valCompra - valOficina - valComissao - valMkt;
+
+                  return (
+                    <div className="p-4 rounded-xl bg-black/40 border border-white/10 space-y-2">
+                      <span className="text-[11px] font-bold text-slate-300 block uppercase tracking-wide">
+                        Simulação do DRE deste Chassi:
+                      </span>
+                      <div className="space-y-1.5 text-xs">
+                        <div className="flex justify-between text-slate-400">
+                          <span>Receita da Venda:</span>
+                          <span className="font-mono text-emerald-400 font-semibold">{formatCurrency(valVenda)}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-400">
+                          <span>(-) Custos Totais (Compra + Oficina):</span>
+                          <span className="font-mono text-rose-400 font-semibold">-{formatCurrency(valCompra + valOficina)}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-400">
+                          <span className="flex items-center gap-1">
+                            (-) Comissão dos Vendedores:
+                            <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">🔒 FIXADA</span>
+                          </span>
+                          <span className="font-mono text-amber-400 font-semibold">-{formatCurrency(valComissao)}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-400">
+                          <span>(-) Custo de Marketing / Anúncios:</span>
+                          <span className="font-mono text-pink-400 font-bold">-{formatCurrency(valMkt)}</span>
+                        </div>
+                        <div className="flex justify-between pt-2 border-t border-white/10 font-bold text-xs">
+                          <span className="text-white">(=) Novo Lucro Líquido Real:</span>
+                          <span className={`font-mono text-sm font-black ${lucroSimulado >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {formatCurrency(lucroSimulado)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex justify-end gap-2 p-4 border-t border-white/10 bg-[#16171f] shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setModalMarketingAberto(false)}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white cursor-pointer transition text-xs font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSalvandoMarketing}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white font-bold cursor-pointer transition shadow-lg text-xs flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Megaphone size={14} />
+                  <span>{isSalvandoMarketing ? 'Salvando...' : 'Salvar Custo de Marketing'}</span>
                 </button>
               </div>
             </form>

@@ -59,6 +59,7 @@ import {
   executarTransferenciaEntreContasFirestore,
   ParametrosTransferencia
 } from '../services/firestoreService';
+import { formatDate, normalizeDateString, formatCurrency } from '../utils/formatters';
 import { ModalTransferenciaEntreContas } from './ModalTransferenciaEntreContas';
 
 interface ContasPagarViewProps {
@@ -68,7 +69,7 @@ interface ContasPagarViewProps {
   fornecedores?: FornecedorPrestador[];
   contasBancarias?: ContaBancariaCaixa[];
   currentUser?: Usuario | null;
-  onOpenNovaDespesa: (veiculo?: Veiculo) => void;
+  onOpenNovaDespesa: (veiculo?: Veiculo, despesaVinculada?: DespesaVeiculo) => void;
   onOpenNovaDespesaFixa?: () => void;
   onOpenDossie: (veiculo: Veiculo) => void;
   onEditDespesa?: (despesa: DespesaVeiculo, veiculo: Veiculo) => void;
@@ -188,11 +189,14 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
 
   const handleConfirmarTransferencia = async (params: ParametrosTransferencia) => {
     const res = await executarTransferenciaEntreContasFirestore(params);
-    const valorFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(params.valor);
+    const valorFmt = formatCurrency(params.valor);
+    const nomeOrigem = res?.contaOrigemAtualizada?.nome || 'Conta Origem';
+    const nomeDestino = res?.contaDestinoAtualizada?.nome || 'Conta Destino';
+
     if (params.isTerceiro) {
-      setNotifTransferencia(`Transferência de ${valorFmt} realizada para o terceiro ${params.terceiroDestinoNome}!`);
+      setNotifTransferencia(`Transferência de ${valorFmt} realizada para o terceiro "${params.terceiroDestinoNome}"!`);
     } else {
-      setNotifTransferencia(`Transferência de ${valorFmt} realizada de ${res.contaOrigemAtualizada.nome} para ${res.contaDestinoAtualizada?.nome}!`);
+      setNotifTransferencia(`Transferência de ${valorFmt} realizada de "${nomeOrigem}" para "${nomeDestino}"!`);
     }
     setTimeout(() => setNotifTransferencia(null), 6000);
   };
@@ -261,10 +265,11 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
         Boolean(vendaCorrespondente) ||
         Boolean(v.dataVenda);
 
-      const dataVenda = vendaCorrespondente?.dataVenda || v.dataVenda;
+      const dataVenda = normalizeDateString(vendaCorrespondente?.dataVenda || v.dataVenda);
 
       if (v.despesas && Array.isArray(v.despesas)) {
-        v.despesas.forEach((d) => {
+        v.despesas.forEach((d, dIdx) => {
+          if (!d) return;
           const descLower = (d.descricao || '').toLowerCase();
           const obsLower = (d.observacoes || '').toLowerCase();
           const catLower = (d.categoria || '').toLowerCase();
@@ -286,20 +291,24 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                 catLower.includes(c)
               ));
 
-          const dataLiberacao = isCarroVendido ? (dataVenda || d.data) : undefined;
-          const dataVencimentoEfetiva = d.dataVencimento || (isNoAtoVenda && isCarroVendido ? (dataVenda || d.data) : d.data);
+          const dataCompetencia = normalizeDateString(d.data);
+          const dataVenc = normalizeDateString(d.dataVencimento);
+          const dataPag = normalizeDateString(d.dataPagamento);
+          const dataLiberacao = isCarroVendido ? (dataVenda || dataCompetencia) : undefined;
+          const dataVencimentoEfetiva = dataVenc || (isNoAtoVenda && isCarroVendido ? (dataVenda || dataCompetencia) : dataCompetencia);
+          const despesaId = d.id || `desp-${v.id || v.placa || 'v'}-${dIdx}`;
 
           lista.push({
-            id: d.id,
+            id: despesaId,
             tipoOrigem: 'chassi',
-            descricao: d.descricao,
-            categoria: d.categoria,
+            descricao: d.descricao || 'Despesa de Veículo',
+            categoria: d.categoria || 'Geral',
             valor: Number(d.valor || 0),
-            dataCompetencia: d.data,
+            dataCompetencia,
             dataVencimento: dataVencimentoEfetiva,
             dataLiberacao,
             statusPagamento: d.statusPagamento || 'Pago',
-            dataPagamento: d.dataPagamento,
+            dataPagamento: dataPag,
             formaPagamento: d.formaPagamento,
             contaBancariaId: d.contaBancariaId,
             contaBancariaNome: d.contaBancariaNome,
@@ -326,17 +335,22 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
     });
 
     // B) Despesas Operacionais / Fixas da Loja
-    despesasFixas.forEach((df) => {
+    despesasFixas.forEach((df, dfIdx) => {
+      const dfVenc = normalizeDateString(df.dataVencimento);
+      const dfPag = normalizeDateString(df.dataPagamento);
+      const dfRef = normalizeDateString(df.mesReferencia);
+      const fixId = df.id || `df-${dfIdx}`;
+
       lista.push({
-        id: df.id,
+        id: fixId,
         tipoOrigem: 'loja',
         descricao: df.descricao || df.nome || 'Despesa Operacional Loja',
         categoria: df.categoria || 'Estruturais & Fiscais',
         valor: Number(df.valor || 0),
-        dataCompetencia: df.mesReferencia ? `${df.mesReferencia}-01` : df.dataVencimento || '',
-        dataVencimento: df.dataVencimento,
+        dataCompetencia: dfRef ? `${dfRef}-01` : dfVenc || '',
+        dataVencimento: dfVenc,
         statusPagamento: df.status || 'Pago',
-        dataPagamento: df.dataPagamento,
+        dataPagamento: dfPag,
         formaPagamento: df.formaPagamento,
         contaBancariaId: df.contaBancariaId,
         contaBancariaNome: df.contaBancariaNome,
@@ -471,7 +485,7 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
           }
         }
       } else {
-        const dataPag = item.dataPagamento || item.dataCompetencia;
+        const dataPag = normalizeDateString(item.dataPagamento || item.dataCompetencia);
         if (dataPag && dataPag.startsWith(mesAtualPrefix)) {
           totalPagoMes += valor;
           qtdPagoMes++;
@@ -562,7 +576,7 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
         }
 
         // 6. Filtro Data / Período
-        const dataRef = item.dataPagamento || item.dataLiberacao || item.dataVencimento || item.dataCompetencia || '';
+        const dataRef = normalizeDateString(item.dataPagamento || item.dataLiberacao || item.dataVencimento || item.dataCompetencia || '');
         if (filtroPeriodo === 'mes_atual') {
           const isLiberadaPendente = item.isNoAtoVenda && item.isCarroVendido && item.statusPagamento === 'Pendente';
           if (!dataRef.startsWith(mesAtualPrefix) && !isLiberadaPendente) return false;
@@ -1257,7 +1271,7 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
         <div className="space-y-4 animate-fadeIn">
           {/* BANNER 1: Despesas Condicionais LIBERADAS PÓS-VENDA (Veículo Vendido) */}
           {despesasCondicionaisLiberadas.length > 0 && (
-            <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div key="banner-condicionais-liberadas" className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-3 text-emerald-200">
                 <div className="w-9 h-9 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-300 shrink-0 shadow-sm shadow-emerald-500/20">
                   <Sparkles size={18} className="text-emerald-400 animate-pulse" />
@@ -1280,19 +1294,21 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
               <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
                 {filtroExigibilidade !== 'condicionais_liberadas' ? (
                   <button
+                    key="btn-banner-liberadas"
                     type="button"
                     onClick={() => setFiltroExigibilidade('condicionais_liberadas')}
                     className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-emerald-600/20"
                   >
-                    <Sparkles size={14} /> Ver Liberadas ({despesasCondicionaisLiberadas.length})
+                    <Sparkles size={14} /> <span>Ver Liberadas ({despesasCondicionaisLiberadas.length})</span>
                   </button>
                 ) : (
                   <button
+                    key="btn-banner-grade"
                     type="button"
                     onClick={() => setFiltroExigibilidade('todas_ativas')}
                     className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                   >
-                    Ver Grade Diária Completa
+                    <span>Ver Grade Diária Completa</span>
                   </button>
                 )}
               </div>
@@ -1301,7 +1317,7 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
 
           {/* BANNER 2: Informativo sobre Despesas Condicionais Retidas (Aguardando Venda) */}
           {previsoesNoAtoVendaPendentes.length > 0 && filtroExigibilidade === 'todas_ativas' && (
-            <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div key="banner-condicionais-retidas" className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-3 text-purple-200">
                 <div className="w-8 h-8 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-300 shrink-0">
                   <Clock size={16} />
@@ -1315,17 +1331,18 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
               </div>
 
               <button
+                key="btn-banner-retidas"
                 type="button"
                 onClick={() => setFiltroExigibilidade('condicionais_aguardando')}
                 className="px-3.5 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 text-xs font-bold flex items-center gap-1.5 self-start sm:self-auto transition cursor-pointer shrink-0"
               >
-                <Eye size={14} /> Ver Despesas Retidas em Estoque
+                <Eye size={14} /> <span>Ver Despesas Retidas em Estoque</span>
               </button>
             </div>
           )}
 
           {/* Filtros e Barra de Busca */}
-          <div className="bg-[#16171f] p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3.5">
+          <div key="secao-filtros-contas" className="bg-[#16171f] p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3.5">
             {/* Linha 1: Filtro Rápido de Exigibilidade / Condicionais (Pills) */}
             <div className="flex items-center gap-1.5 flex-wrap pb-2 border-b border-white/5">
               <span className="text-[11px] font-bold text-slate-400 mr-1 flex items-center gap-1">
@@ -1333,6 +1350,7 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
               </span>
 
               <button
+                key="pill-todas-ativas"
                 type="button"
                 onClick={() => setFiltroExigibilidade('todas_ativas')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
@@ -1343,10 +1361,11 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                 title="Listagem Diária Normal: Imediatas + Condicionais de veículos já vendidos. Oculta custos de carros ainda em estoque."
               >
                 <Clock size={13} />
-                ⚡ Grade Diária Ativa
+                <span>⚡ Grade Diária Ativa</span>
               </button>
 
               <button
+                key="pill-condicionais-liberadas"
                 type="button"
                 onClick={() => setFiltroExigibilidade('condicionais_liberadas')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
@@ -1357,10 +1376,11 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                 title="Despesas condicionais liberadas automaticamente porque o carro foi alterado para Vendido"
               >
                 <Sparkles size={13} />
-                🔥 Liberadas Pós-Venda ({despesasCondicionaisLiberadas.length})
+                <span>🔥 Liberadas Pós-Venda ({despesasCondicionaisLiberadas.length})</span>
               </button>
 
               <button
+                key="pill-condicionais-aguardando"
                 type="button"
                 onClick={() => setFiltroExigibilidade('condicionais_aguardando')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
@@ -1371,10 +1391,11 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                 title="Despesas com vencimento no ato da venda que estão retidas aguardando o carro ser vendido"
               >
                 <Clock size={13} />
-                ⏳ Aguardando Venda (Estoque) ({previsoesNoAtoVendaPendentes.length})
+                <span>⏳ Aguardando Venda (Estoque) ({previsoesNoAtoVendaPendentes.length})</span>
               </button>
 
               <button
+                key="pill-apenas-condicionais"
                 type="button"
                 onClick={() => setFiltroExigibilidade('apenas_condicionais')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
@@ -1385,10 +1406,11 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                 title="Todas as despesas configuradas como No Ato da Venda (Cartórios, Despachantes, Comissões)"
               >
                 <Sparkles size={13} />
-                🔒 Todas Condicionais
+                <span>🔒 Todas Condicionais</span>
               </button>
 
               <button
+                key="pill-apenas-imediatas"
                 type="button"
                 onClick={() => setFiltroExigibilidade('apenas_imediatas')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
@@ -1399,10 +1421,11 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                 title="Apenas despesas diretas / imediatas (sem regra de no ato da venda)"
               >
                 <CheckCircle2 size={13} />
-                🏢 Apenas Imediatas
+                <span>🏢 Apenas Imediatas</span>
               </button>
 
               <button
+                key="pill-todas"
                 type="button"
                 onClick={() => setFiltroExigibilidade('todas')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
@@ -1412,7 +1435,7 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                 }`}
                 title="Todas as despesas sem qualquer filtro restritivo de exigibilidade"
               >
-                🌐 Ver Todas
+                <span>🌐 Ver Todas</span>
               </button>
             </div>
 
@@ -1570,9 +1593,9 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
           </div>
 
           {/* Tabela de Títulos */}
-          <div className="bg-[#111116] rounded-2xl border border-white/5 overflow-hidden">
+          <div key="secao-tabela-contas" className="bg-[#111116] rounded-2xl border border-white/5 overflow-hidden">
             {despesasFiltradas.length === 0 ? (
-              <div className="p-12 text-center space-y-3">
+              <div key="tabela-estado-vazio" className="p-12 text-center space-y-3">
                 <Receipt size={36} className="mx-auto text-slate-500" />
                 <h4 className="font-bold text-white text-base">Nenhum título ou despesa encontrado</h4>
                 <p className="text-xs text-slate-400 max-w-sm mx-auto">
@@ -1585,11 +1608,11 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                   onClick={handleLimparFiltros}
                   className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold cursor-pointer"
                 >
-                  Limpar Todos os Filtros
+                  <span>Limpar Todos os Filtros</span>
                 </button>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div key="tabela-estado-dados" className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-[#16171f] text-slate-400 uppercase font-semibold border-b border-white/5 text-[11px]">
@@ -1603,17 +1626,19 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {despesasFiltradas.map((item) => {
+                    {despesasFiltradas.map((item, idx) => {
                       const isPendente = item.statusPagamento === 'Pendente';
                       const isNoAtoVendaAguardando = item.isNoAtoVenda && !item.isCarroVendido;
                       const isNoAtoVendaLiberado = item.isNoAtoVenda && item.isCarroVendido;
+                      const rowKey = `row-${item.tipoOrigem}-${item.id || 'sem-id'}-${idx}`;
 
                       return (
-                        <tr key={item.id} className="hover:bg-white/5 transition group">
+                        <tr key={rowKey} className="hover:bg-white/5 transition group">
                           {/* Origem / Chassi */}
                           <td className="py-3 px-4">
                             {item.tipoOrigem === 'chassi' && item.veiculo ? (
                               <button
+                                key={`origem-btn-${rowKey}`}
                                 type="button"
                                 onClick={() => onOpenDossie(item.veiculo!)}
                                 className="text-left group-hover:text-amber-400 transition cursor-pointer"
@@ -1633,7 +1658,7 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                                 </span>
                               </button>
                             ) : (
-                              <div className="flex items-center gap-1.5">
+                              <div key={`origem-loja-${rowKey}`} className="flex items-center gap-1.5">
                                 <span className="px-2 py-0.5 rounded-md bg-blue-500/20 border border-blue-500/30 text-blue-300 font-bold text-[10px]">
                                   🏢 LOJA (FIXA)
                                 </span>
@@ -1643,7 +1668,30 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
 
                           {/* Descrição & Categoria */}
                           <td className="py-3 px-4">
+                            <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                              {item.rawDespesaChassi?.tipoVinculo === 'entrada' && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-extrabold border border-emerald-500/30">
+                                  🟢 Entrada / Sinal
+                                </span>
+                              )}
+                              {item.rawDespesaChassi?.tipoVinculo === 'restante' && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[9px] font-extrabold border border-amber-500/30">
+                                  🟡 Restante do Pagamento
+                                </span>
+                              )}
+                              {item.rawDespesaChassi?.parcelaNumero && (
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[9px] font-extrabold border border-indigo-500/30">
+                                  💳 Parcela {item.rawDespesaChassi.parcelaNumero}/{item.rawDespesaChassi.totalParcelas || 2}
+                                </span>
+                              )}
+                            </div>
                             <p className="font-bold text-white text-xs">{item.descricao}</p>
+                            {item.rawDespesaChassi?.despesaOrigemDescricao && (
+                              <p className="text-[10px] text-blue-300 flex items-center gap-1 mt-0.5">
+                                <span className="text-slate-400">🔗 Vinculada a:</span>
+                                <span className="italic line-clamp-1">{item.rawDespesaChassi.despesaOrigemDescricao}</span>
+                              </p>
+                            )}
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className="text-[10px] text-slate-400 font-medium bg-white/5 px-2 py-0.5 rounded border border-white/5">
                                 {item.categoria}
@@ -1663,70 +1711,84 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
 
                           {/* Vencimento */}
                           <td className="py-3 px-4 font-mono text-slate-300">
-                            {item.dataVencimento || item.dataCompetencia || '—'}
+                            {formatDate(item.dataVencimento || item.dataCompetencia)}
                           </td>
 
                           {/* Valor */}
                           <td className="py-3 px-4 text-right font-mono font-bold text-white text-sm">
-                            R$ {item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            {formatCurrency(item.valor)}
                           </td>
 
                           {/* Status / Exigibilidade */}
                           <td className="py-3 px-4 text-center">
                             {item.statusPagamento === 'Pago' ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                <CheckCircle2 size={11} /> Pago
+                              <span key={`st-pago-${rowKey}`} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                <CheckCircle2 size={11} /> <span>Pago</span>
                               </span>
                             ) : isNoAtoVendaLiberado ? (
-                              <div className="inline-flex flex-col items-center">
+                              <div key={`st-liberado-${rowKey}`} className="inline-flex flex-col items-center">
                                 <span
                                   className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg font-extrabold text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse shadow-sm shadow-emerald-500/10"
                                   title="Veículo Vendido! Despesa condicional liberada para pagamento na grade diária."
                                 >
-                                  <Sparkles size={12} className="text-emerald-400" /> 🔥 Liberada (Carro Vendido)
+                                  <Sparkles size={12} className="text-emerald-400" /> <span>🔥 Liberada (Carro Vendido)</span>
                                 </span>
                                 <span className="text-[9px] text-emerald-400/80 mt-0.5 font-medium">
                                   Liberada pós-venda
                                 </span>
                               </div>
                             ) : isNoAtoVendaAguardando ? (
-                              <div className="inline-flex flex-col items-center">
+                              <div key={`st-aguardando-${rowKey}`} className="inline-flex flex-col items-center">
                                 <span
                                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-bold text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30"
                                   title="Despesa no ato da venda aguardando o veículo ser vendido. Fica invisível no diário."
                                 >
-                                  <Clock size={12} className="text-purple-400" /> ⏳ Condicional (Em Estoque)
+                                  <Clock size={12} className="text-purple-400" /> <span>⏳ Condicional (Em Estoque)</span>
                                 </span>
                                 <span className="text-[9px] text-purple-300/70 mt-0.5 font-medium">
                                   Invisível no diário até vender
                                 </span>
                               </div>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                <Clock size={11} /> Pendente Imediato
+                              <span key={`st-pendente-${rowKey}`} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                <Clock size={11} /> <span>Pendente Imediato</span>
                               </span>
                             )}
                           </td>
 
                           {/* Ações */}
                           <td className="py-3 px-4 text-right">
-                            {isPendente ? (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenBaixa(item)}
-                                className={`px-3 py-1.5 rounded-xl font-bold text-xs transition shadow-sm flex items-center gap-1 ml-auto cursor-pointer ${
-                                  isNoAtoVendaLiberado
-                                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30 ring-1 ring-emerald-400/50'
-                                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                                }`}
-                              >
-                                <Check size={13} /> Efetivar Baixa
-                              </button>
-                            ) : (
-                              <span className="text-[10px] text-slate-500 font-mono">
-                                Quitado em {item.dataPagamento || item.dataCompetencia}
-                              </span>
-                            )}
+                            <div className="flex items-center justify-end gap-1.5">
+                              {item.tipoOrigem === 'chassi' && item.veiculo && item.rawDespesaChassi && item.rawDespesaChassi.tipoVinculo !== 'restante' && item.rawDespesaChassi.tipoCondicao !== 'parcelado' && (
+                                <button
+                                  key={`btn-restante-${rowKey}`}
+                                  type="button"
+                                  onClick={() => onOpenNovaDespesa(item.veiculo, item.rawDespesaChassi)}
+                                  className="px-2.5 py-1.5 rounded-xl font-bold text-[11px] bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 transition cursor-pointer flex items-center gap-1 shrink-0"
+                                  title="Lançar despesa complementar/restante vinculada"
+                                >
+                                  <span>+ Restante</span>
+                                </button>
+                              )}
+                              {isPendente ? (
+                                <button
+                                  key={`btn-baixa-${rowKey}`}
+                                  type="button"
+                                  onClick={() => handleOpenBaixa(item)}
+                                  className={`px-3 py-1.5 rounded-xl font-bold text-xs transition shadow-sm flex items-center gap-1 cursor-pointer ${
+                                    isNoAtoVendaLiberado
+                                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30 ring-1 ring-emerald-400/50'
+                                      : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                  }`}
+                                >
+                                  <Check size={13} /> <span>Efetivar Baixa</span>
+                                </button>
+                              ) : (
+                                <span key={`txt-quitado-${rowKey}`} className="text-[10px] text-slate-500 font-mono">
+                                  Quitado em {formatDate(item.dataPagamento || item.dataCompetencia)}
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2219,13 +2281,13 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                         </div>
 
                         <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                          {parceiro.itens.map((item) => {
+                          {parceiro.itens.map((item, itemIdx) => {
                             const isPendente = item.statusPagamento === 'Pendente';
                             const isRetido = item.isNoAtoVenda && !item.isCarroVendido;
 
                             return (
                               <div
-                                key={item.id}
+                                key={`parceiro-item-${item.id || 'sem-id'}-${itemIdx}`}
                                 className={`p-3 rounded-xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs ${
                                   isPendente
                                     ? isRetido
@@ -2534,12 +2596,12 @@ export const ContasPagarView: React.FC<ContasPagarViewProps> = ({
                 </div>
 
                 <div className="max-h-48 overflow-y-auto space-y-1.5 p-2 rounded-xl bg-black/40 border border-white/10 pr-2">
-                  {itensPendentesParaLote.map((subItem) => {
+                  {itensPendentesParaLote.map((subItem, sIdx) => {
                     const isChecked = itensSelecionadosLote.includes(subItem.id);
 
                     return (
                       <label
-                        key={subItem.id}
+                        key={`lote-item-${subItem.id || 'sem-id'}-${sIdx}`}
                         className={`p-2.5 rounded-xl border flex items-center justify-between gap-3 cursor-pointer transition ${
                           isChecked
                             ? 'bg-amber-500/10 border-amber-500/40 text-white'

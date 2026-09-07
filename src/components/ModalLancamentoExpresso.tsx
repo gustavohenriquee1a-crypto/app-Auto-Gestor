@@ -18,6 +18,10 @@ import {
   Check,
   Edit3,
   HelpCircle,
+  Link2,
+  Tag,
+  Receipt,
+  Sparkles,
 } from 'lucide-react';
 import {
   ContaBancariaCaixa,
@@ -27,6 +31,8 @@ import {
   MovimentacaoConta,
   CategoriaFornecedor,
   CategoriaDespesa,
+  DespesaFixa,
+  VendaVeiculo,
 } from '../types';
 import {
   salvarLancamentoExpressoFirestore,
@@ -42,37 +48,95 @@ interface ModalLancamentoExpressoProps {
   veiculos: Veiculo[];
   fornecedores: FornecedorPrestador[];
   usuarios: Usuario[];
+  despesasFixas?: DespesaFixa[];
+  vendas?: VendaVeiculo[];
   currentUser?: Usuario | null;
   movimentacaoToEdit?: MovimentacaoConta | null;
   onSuccess?: (mensagem: string) => void;
 }
 
-const CATEGORIAS_LOJA = [
-  'Aluguel do Pátio / Salão',
-  'Energia Elétrica / Água / Internet',
-  'Marketing, Anúncios & WebMotors',
-  'Contabilidade & Assessoria Jurídica',
-  'Limpeza, Café & Insumos',
-  'Impostos / Simples Nacional',
-  'Tarifas Bancárias & Sistemas',
-  'Manutenção Predial / Reformas',
-  'Outras Despesas Operacionais',
-];
+export const CATEGORIAS_SAIDA: Record<string, string[]> = {
+  despesa_fixa: [
+    'Aluguel do Pátio / Salão',
+    'Energia Elétrica / Água / Internet',
+    'Marketing, Anúncios & WebMotors',
+    'Contabilidade & Assessoria Jurídica',
+    'Limpeza, Café & Insumos',
+    'Impostos / Simples Nacional',
+    'Tarifas Bancárias & Sistemas',
+    'Manutenção Predial / Reformas',
+    'Folha de Pagamento / Salários',
+    'Outras Despesas Operacionais',
+  ],
+  veiculo_estoque: [
+    'Mecânica / Mão de Obra',
+    'Peças',
+    'Funilaria / Pintura',
+    'Estética / Lavagem',
+    'Pneus',
+    'Combustível',
+    'Frete / Guincho',
+    'Documentação / Despachante',
+    'Cartório / Serviços Notariais',
+    'IPVA / Licenciamento',
+    'Anúncio Patrocinado (Meta/Google Ads)',
+    'Outros Custos de Veículo',
+  ],
+  veiculo_locacao: [
+    'Manutenção Preventiva / Revisão',
+    'Peças & Troca de Óleo',
+    'Pneus / Alinhamento',
+    'Funilaria / Reparos',
+    'Lavagem / Higienização',
+    'Seguro Frota / Rastreador',
+    'Documentação / IPVA',
+    'Franquia / Sinistro',
+    'Outros Custos de Frota',
+  ],
+  retirada_socio: [
+    'Pró-labore',
+    'Distribuição de Lucros',
+    'Reembolso de Despesas',
+    'Adiantamento a Sócio',
+  ],
+};
 
-const CATEGORIAS_VEICULO: CategoriaDespesa[] = [
-  'Mecânica / Mão de Obra',
-  'Peças',
-  'Funilaria / Pintura',
-  'Estética / Lavagem',
-  'Pneus',
-  'Combustível',
-  'Frete / Guincho',
-  'Documentação / Despachante',
-  'Cartório / Serviços Notariais',
-  'IPVA / Licenciamento',
-  'Anúncio Patrocinado (Meta/Google Ads)',
-  'Outros',
-];
+export const CATEGORIAS_ENTRADA: Record<string, string[]> = {
+  receita_loja: [
+    'Receita Genérica da Loja',
+    'Venda de Acessórios / Peças',
+    'Comissão / Intermediação',
+    'Bonificação / Retorno Financeiro',
+    'Receita de Serviços',
+    'Rendimento de Aplicação',
+    'Estorno / Reembolso Recebido',
+    'Outras Receitas Operacionais',
+  ],
+  veiculo_estoque: [
+    'Entrada / Sinal de Venda',
+    'TED / Financiamento Liberado',
+    'Retorno Bancário (TAC)',
+    'Reembolso de Despachante / IPVA',
+    'Venda de Peça / Acessório',
+    'Receita Extra de Veículo',
+  ],
+  veiculo_locacao: [
+    'Diária / Mensalidade de Locação',
+    'Caução / Depósito de Garantia',
+    'Cobrança de Multa / Sinistro',
+    'Taxa de Limpeza / Combustível',
+    'Outras Receitas de Locação',
+  ],
+  retirada_socio: [
+    'Aporte de Sócio / Capital',
+    'Empréstimo de Sócio para Empresa',
+    'Devolução de Adiantamento',
+    'Integralização de Capital',
+  ],
+};
+
+const CATEGORIAS_LOJA = CATEGORIAS_SAIDA.despesa_fixa;
+const CATEGORIAS_VEICULO: CategoriaDespesa[] = CATEGORIAS_SAIDA.veiculo_estoque as CategoriaDespesa[];
 
 const CATEGORIAS_FORNECEDOR: CategoriaFornecedor[] = [
   'Oficina Mecânica',
@@ -99,6 +163,8 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   veiculos,
   fornecedores,
   usuarios,
+  despesasFixas = [],
+  vendas = [],
   currentUser,
   movimentacaoToEdit,
   onSuccess,
@@ -119,11 +185,19 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
 
   // Roteamento Contábil
   const [destinoRoteamento, setDestinoRoteamento] = useState<
-    'despesa_fixa' | 'veiculo_estoque' | 'veiculo_locacao' | 'retirada_socio'
+    'despesa_fixa' | 'veiculo_estoque' | 'veiculo_locacao' | 'retirada_socio' | 'receita_loja' | 'venda_realizada'
   >('despesa_fixa');
+  const [categoria, setCategoria] = useState<string>(CATEGORIAS_SAIDA.despesa_fixa[0]);
+
+  // Classificação de Custo (Fixo / Variável / Neutro)
+  const [tipoCusto, setTipoCusto] = useState<'Fixo' | 'Variável' | 'Neutro'>('Fixo');
 
   // Detalhes por Roteamento
+  const [modoDespesaFixa, setModoDespesaFixa] = useState<'nova' | 'existente'>('nova');
+  const [despesaFixaExistenteId, setDespesaFixaExistenteId] = useState<string>('');
   const [categoriaDespesaFixa, setCategoriaDespesaFixa] = useState<string>(CATEGORIAS_LOJA[0]);
+  
+  // Veículo Estoque
   const [veiculoEstoqueId, setVeiculoEstoqueId] = useState<string>('');
   const [categoriaDespesaVeiculo, setCategoriaDespesaVeiculo] = useState<CategoriaDespesa>('Mecânica / Mão de Obra');
   
@@ -132,6 +206,11 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   const [veiculoLocacaoModelo, setVeiculoLocacaoModelo] = useState<string>('');
   const [salvarNovoVeiculoLocacao, setSalvarNovoVeiculoLocacao] = useState<boolean>(false);
 
+  // Vínculo Direto a Venda
+  const [vinculoVendaId, setVinculoVendaId] = useState<string>('');
+  const [vinculoVendaTipo, setVinculoVendaTipo] = useState<string>('Entrada no Caixa');
+  const [clienteNome, setClienteNome] = useState<string>('');
+
   // Descrição & Observações
   const [descricao, setDescricao] = useState<string>('');
   const [observacoes, setObservacoes] = useState<string>('');
@@ -139,6 +218,57 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   // Status de Envio
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Lista dinâmica de categorias com base no Tipo e Destino
+  const categoriasDisponiveis = useMemo(() => {
+    const mapa = tipo === 'Saída' ? CATEGORIAS_SAIDA : CATEGORIAS_ENTRADA;
+    const lista = mapa[destinoRoteamento] || (tipo === 'Saída' ? CATEGORIAS_SAIDA.despesa_fixa : CATEGORIAS_ENTRADA.receita_loja);
+    if (categoria && !lista.includes(categoria)) {
+      return [categoria, ...lista];
+    }
+    return lista;
+  }, [tipo, destinoRoteamento, categoria]);
+
+  // Troca dinâmica de Tipo sincronizando Rótulos, Destinos e Categorias
+  const handleMudarTipo = (novoTipo: 'Saída' | 'Entrada') => {
+    setTipo(novoTipo);
+    if (novoTipo === 'Saída') {
+      const dest =
+        destinoRoteamento === 'receita_loja' || destinoRoteamento === 'venda_realizada'
+          ? 'despesa_fixa'
+          : destinoRoteamento;
+      setDestinoRoteamento(dest);
+      const lista = CATEGORIAS_SAIDA[dest] || CATEGORIAS_SAIDA.despesa_fixa;
+      setCategoria(lista[0]);
+      setTipoCusto(dest === 'despesa_fixa' ? 'Fixo' : dest === 'retirada_socio' ? 'Neutro' : 'Variável');
+    } else {
+      const dest =
+        destinoRoteamento === 'despesa_fixa'
+          ? 'receita_loja'
+          : destinoRoteamento;
+      setDestinoRoteamento(dest);
+      const lista = CATEGORIAS_ENTRADA[dest] || CATEGORIAS_ENTRADA.receita_loja;
+      setCategoria(lista[0]);
+      setTipoCusto('Neutro');
+    }
+  };
+
+  // Troca de Destino de Roteamento atualizando categoria sugerida
+  const handleMudarDestino = (novoDest: any) => {
+    setDestinoRoteamento(novoDest);
+    const mapa = tipo === 'Saída' ? CATEGORIAS_SAIDA : CATEGORIAS_ENTRADA;
+    const lista = mapa[novoDest] || (tipo === 'Saída' ? CATEGORIAS_SAIDA.despesa_fixa : CATEGORIAS_ENTRADA.receita_loja);
+    if (lista && lista.length > 0) {
+      setCategoria(lista[0]);
+    }
+    if (tipo === 'Saída') {
+      if (novoDest === 'despesa_fixa') setTipoCusto('Fixo');
+      else if (novoDest === 'retirada_socio') setTipoCusto('Neutro');
+      else setTipoCusto('Variável');
+    } else {
+      setTipoCusto('Neutro');
+    }
+  };
 
   // Inicializar dados quando abre ou muda movimentacaoToEdit
   useEffect(() => {
@@ -159,26 +289,41 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
       setObservacoes(movimentacaoToEdit.observacoes || '');
       setSalvarNovoFornecedor(false);
       setSalvarNovoVeiculoLocacao(false);
-
-      if (movimentacaoToEdit.destinoRoteamento) {
-        if (movimentacaoToEdit.destinoRoteamento === 'retirada_socio') {
-          setDestinoRoteamento('retirada_socio');
-        } else if (movimentacaoToEdit.destinoRoteamento === 'veiculo_estoque') {
-          setDestinoRoteamento('veiculo_estoque');
-          if (movimentacaoToEdit.veiculoId) setVeiculoEstoqueId(movimentacaoToEdit.veiculoId);
-        } else if (movimentacaoToEdit.destinoRoteamento === 'veiculo_locacao') {
-          setDestinoRoteamento('veiculo_locacao');
-          if (movimentacaoToEdit.placa) setVeiculoLocacaoPlaca(movimentacaoToEdit.placa);
-        } else {
-          setDestinoRoteamento('despesa_fixa');
-        }
-      } else if (movimentacaoToEdit.veiculoId) {
-        setDestinoRoteamento('veiculo_estoque');
-        setVeiculoEstoqueId(movimentacaoToEdit.veiculoId);
-      } else if (movimentacaoToEdit.categoria === 'Pró-labore' || movimentacaoToEdit.descricao?.toLowerCase().includes('pró-labore')) {
-        setDestinoRoteamento('retirada_socio');
+      setTipoCusto(movimentacaoToEdit.tipoCusto || (isSaida ? 'Fixo' : 'Neutro'));
+      setVinculoVendaId(movimentacaoToEdit.vinculoVendaId || '');
+      setDespesaFixaExistenteId(movimentacaoToEdit.despesaFixaId || '');
+      if (movimentacaoToEdit.despesaFixaId) {
+        setModoDespesaFixa('existente');
       } else {
-        setDestinoRoteamento('despesa_fixa');
+        setModoDespesaFixa('nova');
+      }
+
+      let destFinal: any = isSaida ? 'despesa_fixa' : 'receita_loja';
+      if (movimentacaoToEdit.destinoRoteamento) {
+        destFinal = movimentacaoToEdit.destinoRoteamento;
+      } else if (movimentacaoToEdit.vinculoVendaId) {
+        destFinal = isSaida ? 'veiculo_estoque' : 'venda_realizada';
+      } else if (movimentacaoToEdit.veiculoId) {
+        destFinal = 'veiculo_estoque';
+        setVeiculoEstoqueId(movimentacaoToEdit.veiculoId);
+      } else if (movimentacaoToEdit.placa) {
+        destFinal = 'veiculo_locacao';
+        setVeiculoLocacaoPlaca(movimentacaoToEdit.placa);
+      } else if (
+        movimentacaoToEdit.categoria === 'Pró-labore' ||
+        movimentacaoToEdit.categoria?.includes('Sócio') ||
+        movimentacaoToEdit.descricao?.toLowerCase().includes('pró-labore')
+      ) {
+        destFinal = 'retirada_socio';
+      }
+      setDestinoRoteamento(destFinal);
+
+      if (movimentacaoToEdit.categoria) {
+        setCategoria(movimentacaoToEdit.categoria);
+      } else {
+        const mapa = isSaida ? CATEGORIAS_SAIDA : CATEGORIAS_ENTRADA;
+        const lista = mapa[destFinal] || [];
+        setCategoria(lista[0] || (isSaida ? 'Despesa Operacional' : 'Receita da Loja'));
       }
     } else {
       // Criação limpa
@@ -191,12 +336,19 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
       setSalvarNovoFornecedor(false);
       setCategoriaNovoFornecedor('Outro Parceiro');
       setDestinoRoteamento('despesa_fixa');
-      setCategoriaDespesaFixa(CATEGORIAS_LOJA[0]);
+      setCategoria(CATEGORIAS_SAIDA.despesa_fixa[0]);
+      setTipoCusto('Fixo');
+      setModoDespesaFixa('nova');
+      setDespesaFixaExistenteId('');
+      setCategoriaDespesaFixa(CATEGORIAS_SAIDA.despesa_fixa[0]);
       setVeiculoEstoqueId(veiculos.filter((v) => v.status !== 'Vendido')[0]?.id || '');
       setCategoriaDespesaVeiculo('Mecânica / Mão de Obra');
       setVeiculoLocacaoPlaca('');
       setVeiculoLocacaoModelo('');
       setSalvarNovoVeiculoLocacao(false);
+      setVinculoVendaId('');
+      setVinculoVendaTipo('Entrada no Caixa');
+      setClienteNome('');
       setDescricao('');
       setObservacoes('');
       setErrorMsg(null);
@@ -282,9 +434,16 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
       return;
     }
 
+    if (destinoRoteamento === 'venda_realizada' && !vinculoVendaId) {
+      setErrorMsg('Selecione uma venda realizada para vincular o lançamento.');
+      return;
+    }
+
     setLoading(true);
 
     try {
+      const despesaFixaSelecionada = despesasFixas.find((d) => d.id === despesaFixaExistenteId);
+
       if (isEditing && movimentacaoToEdit) {
         // MODO EDIÇÃO: REGRA DE CAIXA DIFERENCIAL
         const paramEdicao: ParametrosEdicaoMovimentacao = {
@@ -293,12 +452,7 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
           contaId: contaId,
           contaNome: contaSelecionada?.nome || movimentacaoToEdit.contaNome,
           tipo: tipo === 'Saída' ? 'Despesa' : 'Receita',
-          categoria:
-            destinoRoteamento === 'despesa_fixa'
-              ? categoriaDespesaFixa
-              : destinoRoteamento === 'retirada_socio'
-              ? 'Pró-labore'
-              : categoriaDespesaVeiculo,
+          categoria: categoria.trim() || (tipo === 'Saída' ? 'Despesa Operacional' : 'Receita da Loja'),
           descricao:
             descricao.trim() ||
             (tipo === 'Saída'
@@ -307,6 +461,8 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
           pagadorRecebedor: pagadorRecebedor.trim() || undefined,
           formaPagamento: formaPagamento,
           observacoes: observacoes.trim() || undefined,
+          tipoCusto: tipoCusto,
+          vinculoVendaId: vinculoVendaId || undefined,
         };
 
         const res = await editarMovimentacaoContaFirestore(
@@ -334,12 +490,18 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
           salvarNovoFornecedor: !nomeExisteNoCadastro && salvarNovoFornecedor,
           categoriaFornecedor: categoriaNovoFornecedor,
           destinoRoteamento: destinoRoteamento,
-          categoriaDespesaFixa: categoriaDespesaFixa,
+          categoria: categoria.trim() || (tipo === 'Saída' ? 'Despesa Operacional' : 'Receita da Loja'),
+          categoriaDespesaFixa: modoDespesaFixa === 'existente' && despesaFixaSelecionada ? despesaFixaSelecionada.categoria : (categoria || categoriaDespesaFixa),
+          despesaFixaExistenteId: modoDespesaFixa === 'existente' && despesaFixaExistenteId ? despesaFixaExistenteId : undefined,
           veiculoEstoqueId: veiculoEstoqueId,
-          categoriaDespesaVeiculo: categoriaDespesaVeiculo,
+          categoriaDespesaVeiculo: (categoria as CategoriaDespesa) || categoriaDespesaVeiculo,
           veiculoLocacaoPlaca: veiculoLocacaoPlaca.trim().toUpperCase(),
           veiculoLocacaoModelo: veiculoLocacaoModelo.trim(),
           salvarNovoVeiculoLocacao: !placaLocacaoExiste && salvarNovoVeiculoLocacao,
+          vinculoVendaId: vinculoVendaId || undefined,
+          vinculoVendaTipo: vinculoVendaTipo,
+          clienteNome: clienteNome || undefined,
+          tipoCusto: tipoCusto,
           descricao:
             descricao.trim() ||
             (tipo === 'Saída'
@@ -451,7 +613,7 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
               <div className="grid grid-cols-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
                 <button
                   type="button"
-                  onClick={() => setTipo('Saída')}
+                  onClick={() => handleMudarTipo('Saída')}
                   className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all ${
                     tipo === 'Saída'
                       ? 'bg-rose-500 text-white shadow-sm'
@@ -463,7 +625,7 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTipo('Entrada')}
+                  onClick={() => handleMudarTipo('Entrada')}
                   className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all ${
                     tipo === 'Entrada'
                       ? 'bg-emerald-500 text-white shadow-sm'
@@ -553,23 +715,23 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
             </div>
           </div>
 
-          {/* 3. Pagador / Recebedor com Auto-complete & Pré-cadastro */}
+          {/* 3. Pessoa / Fornecedor ou Pagador dinâmico */}
           <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700/80 space-y-3">
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                   <UserCheck size={14} className="text-indigo-500" />
-                  {tipo === 'Saída' ? 'Beneficiário / Fornecedor / Favorecido' : 'Pagador / Cliente / Depositante'}
+                  {tipo === 'Saída' ? 'Beneficiário / Fornecedor' : 'Pagador / Origem do Crédito'} *
                 </label>
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {nomeExisteNoCadastro ? 'Parceiro existente' : 'Nome não localizado'}
+                  {nomeExisteNoCadastro ? 'Parceiro existente' : 'Nome avulso'}
                 </span>
               </div>
               <div className="relative">
                 <input
                   type="text"
                   list="lista-parceiros-express"
-                  placeholder="Digite o nome do parceiro ou fornecedor..."
+                  placeholder={tipo === 'Saída' ? 'Beneficiário / Fornecedor (ex: Auto Peças Silva, Posto Shell...)' : 'Pagador / Origem do Crédito (ex: Banco BV, Comprador João, Sócio...)'}
                   value={pagadorRecebedor}
                   onChange={(e) => setPagadorRecebedor(e.target.value)}
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
@@ -582,8 +744,8 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
               </div>
             </div>
 
-            {/* Checkbox de Pré-cadastro de novo parceiro caso não exista */}
-            {!nomeExisteNoCadastro && pagadorRecebedor.trim().length > 1 && (
+            {/* Checkbox de Pré-cadastro de novo parceiro caso não exista (quando Saída) */}
+            {tipo === 'Saída' && !nomeExisteNoCadastro && pagadorRecebedor.trim().length > 1 && (
               <div className="pt-2 border-t border-slate-200 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-indigo-700 dark:text-indigo-300">
                   <input
@@ -615,97 +777,291 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
             )}
           </div>
 
-          {/* 4. Destino da Transação (Roteamento Contábil) */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-              Destino da Transação (Roteamento Contábil) *
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <button
-                type="button"
-                onClick={() => setDestinoRoteamento('despesa_fixa')}
-                className={`p-3 rounded-xl border text-left flex flex-col justify-between gap-2 transition-all ${
-                  destinoRoteamento === 'despesa_fixa'
-                    ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                }`}
-              >
-                <Building2 size={18} className={destinoRoteamento === 'despesa_fixa' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
-                <div>
-                  <div className="text-xs font-bold leading-tight">Despesa da Loja</div>
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400">Contas fixas & pátio</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setDestinoRoteamento('veiculo_estoque')}
-                className={`p-3 rounded-xl border text-left flex flex-col justify-between gap-2 transition-all ${
-                  destinoRoteamento === 'veiculo_estoque'
-                    ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                }`}
-              >
-                <Car size={18} className={destinoRoteamento === 'veiculo_estoque' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
-                <div>
-                  <div className="text-xs font-bold leading-tight">Veículo Estoque</div>
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400">Afeta DRE da venda</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setDestinoRoteamento('veiculo_locacao')}
-                className={`p-3 rounded-xl border text-left flex flex-col justify-between gap-2 transition-all ${
-                  destinoRoteamento === 'veiculo_locacao'
-                    ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                }`}
-              >
-                <KeyRound size={18} className={destinoRoteamento === 'veiculo_locacao' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
-                <div>
-                  <div className="text-xs font-bold leading-tight">Veículo Locação</div>
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400">Placa ou pré-cadastro</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setDestinoRoteamento('retirada_socio')}
-                className={`p-3 rounded-xl border text-left flex flex-col justify-between gap-2 transition-all ${
-                  destinoRoteamento === 'retirada_socio'
-                    ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                }`}
-              >
-                <UserCheck size={18} className={destinoRoteamento === 'retirada_socio' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
-                <div>
-                  <div className="text-xs font-bold leading-tight">Retirada / Pró-labore</div>
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400">Repasse de sócio</div>
-                </div>
-              </button>
+          {/* 4. Destino da Transação (Select Obrigatório dinâmico) */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Building2 size={14} className="text-indigo-600 dark:text-indigo-400" />
+                Destino da Transação *
+              </label>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                {tipo === 'Saída' ? 'Classificação de Saída / Débito' : 'Classificação de Entrada / Crédito'}
+              </span>
             </div>
+
+            {/* Select Dinâmico Solicitado */}
+            <select
+              id="select-destino-transacao"
+              value={destinoRoteamento}
+              onChange={(e) => handleMudarDestino(e.target.value as any)}
+              className="w-full px-3.5 py-2.5 bg-white dark:bg-slate-800 border-2 border-indigo-400 dark:border-indigo-600 rounded-xl text-slate-900 dark:text-white font-bold text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-sm"
+            >
+              {tipo === 'Saída' ? (
+                <>
+                  <option value="despesa_fixa">1. Despesa da Loja/Fixa</option>
+                  <option value="veiculo_estoque">2. Custo de Veículo (Estoque)</option>
+                  <option value="veiculo_locacao">3. Manutenção de Frota (Locação)</option>
+                  <option value="retirada_socio">4. Retirada de Sócio/Pró-labore</option>
+                </>
+              ) : (
+                <>
+                  <option value="receita_loja">1. Receita Genérica da Loja</option>
+                  <option value="veiculo_estoque">2. Receita Extra de Veículo (Estoque)</option>
+                  <option value="veiculo_locacao">3. Receita de Frota (Locação)</option>
+                  <option value="retirada_socio">4. Aporte de Sócio / Capital</option>
+                </>
+              )}
+            </select>
+
+            {/* Botões Rápidos Visuais */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {tipo === 'Saída' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleMudarDestino('despesa_fixa')}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between gap-1 transition-all ${
+                      destinoRoteamento === 'despesa_fixa'
+                        ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-950 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <Building2 size={16} className={destinoRoteamento === 'despesa_fixa' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
+                    <div>
+                      <div className="text-xs font-bold leading-tight">1. Despesa Loja/Fixa</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Contas fixas & pátio</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMudarDestino('veiculo_estoque')}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between gap-1 transition-all ${
+                      destinoRoteamento === 'veiculo_estoque'
+                        ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-950 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <Car size={16} className={destinoRoteamento === 'veiculo_estoque' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
+                    <div>
+                      <div className="text-xs font-bold leading-tight">2. Custo de Veículo</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Estoque / DRE carro</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMudarDestino('veiculo_locacao')}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between gap-1 transition-all ${
+                      destinoRoteamento === 'veiculo_locacao'
+                        ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-950 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <KeyRound size={16} className={destinoRoteamento === 'veiculo_locacao' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
+                    <div>
+                      <div className="text-xs font-bold leading-tight">3. Manut. Frota</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Veículo de locação</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMudarDestino('retirada_socio')}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between gap-1 transition-all ${
+                      destinoRoteamento === 'retirada_socio'
+                        ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-950 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <UserCheck size={16} className={destinoRoteamento === 'retirada_socio' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
+                    <div>
+                      <div className="text-xs font-bold leading-tight">4. Retirada Sócio</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Pró-labore / repasse</div>
+                    </div>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleMudarDestino('receita_loja')}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between gap-1 transition-all ${
+                      destinoRoteamento === 'receita_loja'
+                        ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-950 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <Building2 size={16} className={destinoRoteamento === 'receita_loja' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
+                    <div>
+                      <div className="text-xs font-bold leading-tight">1. Receita Genérica</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Loja & serviços</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMudarDestino('veiculo_estoque')}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between gap-1 transition-all ${
+                      destinoRoteamento === 'veiculo_estoque'
+                        ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-950 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <Car size={16} className={destinoRoteamento === 'veiculo_estoque' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
+                    <div>
+                      <div className="text-xs font-bold leading-tight">2. Receita Veículo</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Sinal, TED ou TAC</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMudarDestino('veiculo_locacao')}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between gap-1 transition-all ${
+                      destinoRoteamento === 'veiculo_locacao'
+                        ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-950 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <KeyRound size={16} className={destinoRoteamento === 'veiculo_locacao' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
+                    <div>
+                      <div className="text-xs font-bold leading-tight">3. Receita Frota</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Aluguel & cauções</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMudarDestino('retirada_socio')}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between gap-1 transition-all ${
+                      destinoRoteamento === 'retirada_socio'
+                        ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-950 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-sm'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <UserCheck size={16} className={destinoRoteamento === 'retirada_socio' ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'} />
+                    <div>
+                      <div className="text-xs font-bold leading-tight">4. Aporte Sócio</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Capital / sócios</div>
+                    </div>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* 5. Campo 'Categoria' exibido como <select> adequado ao Tipo e Destino escolhidos */}
+          <div className="p-3.5 bg-indigo-50/60 dark:bg-indigo-950/40 rounded-xl border border-indigo-200 dark:border-indigo-800/80 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                <Tag size={14} className="text-indigo-600 dark:text-indigo-400" />
+                Categoria da Movimentação *
+              </label>
+              <span className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300">
+                Salvo diretamente no extrato bancário
+              </span>
+            </div>
+            <select
+              id="select-categoria-transacao"
+              required
+              value={categoria}
+              onChange={(e) => setCategoria(e.target.value)}
+              className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 rounded-xl text-slate-900 dark:text-white text-sm font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-sm"
+            >
+              {categoriasDisponiveis.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Sub-configuração de acordo com o Destino Contábil */}
           <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
             {/* Rota 1: Despesa da Loja */}
             {destinoRoteamento === 'despesa_fixa' && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Categoria da Despesa Fixa / Loja
-                </label>
-                <select
-                  value={categoriaDespesaFixa}
-                  onChange={(e) => setCategoriaDespesaFixa(e.target.value)}
-                  className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                >
-                  {CATEGORIAS_LOJA.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
+              <div className="space-y-3">
+                {despesasFixas.length > 0 && (
+                  <div className="flex items-center gap-2 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-lg w-fit text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setModoDespesaFixa('categoria');
+                        setDespesaFixaExistenteId('');
+                      }}
+                      className={`px-3 py-1 rounded-md font-medium transition-all ${
+                        modoDespesaFixa === 'categoria'
+                          ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                      }`}
+                    >
+                      Nova Categoria de Despesa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModoDespesaFixa('existente')}
+                      className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 ${
+                        modoDespesaFixa === 'existente'
+                          ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                      }`}
+                    >
+                      <Receipt size={13} />
+                      Baixar Conta/Despesa Fixa Cadastrada ({despesasFixas.length})
+                    </button>
+                  </div>
+                )}
+
+                {modoDespesaFixa === 'existente' && despesasFixas.length > 0 ? (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                      Selecione a Despesa Fixa para Liquidar / Vincular *
+                    </label>
+                    <select
+                      value={despesaFixaExistenteId}
+                      onChange={(e) => {
+                        const sId = e.target.value;
+                        setDespesaFixaExistenteId(sId);
+                        const desp = despesasFixas.find((d) => d.id === sId);
+                        if (desp) {
+                          if (!valor || valor === '0') setValor(desp.valor.toString());
+                          if (!descricao) setDescricao(`Baixa Despesa Fixa: ${desp.descricao}`);
+                          if (desp.fornecedorNome && !pagadorRecebedor) setPagadorRecebedor(desp.fornecedorNome);
+                          if (desp.categoria) setCategoriaDespesaFixa(desp.categoria);
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 rounded-xl text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    >
+                      <option value="">Selecione a conta cadastrada...</option>
+                      {despesasFixas.map((df) => (
+                        <option key={df.id} value={df.id}>
+                          {df.status === 'Pago' ? '✓ [PAGO]' : '⏳ [PENDENTE]'} {df.descricao} — R$ {df.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({df.mesReferencia || df.dataVencimento})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                      Ao selecionar, o valor e a categoria são pré-preenchidos e a conta será conciliada no fluxo de caixa.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                      Categoria da Despesa Fixa / Loja
+                    </label>
+                    <select
+                      value={categoriaDespesaFixa}
+                      onChange={(e) => setCategoriaDespesaFixa(e.target.value)}
+                      className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    >
+                      {CATEGORIAS_LOJA.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             )}
 
@@ -820,7 +1176,65 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
               </div>
             )}
 
-            {/* Rota 4: Retirada de Sócio / Pró-labore */}
+            {/* Rota 4: Receita de Venda Realizada */}
+            {destinoRoteamento === 'venda_realizada' && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                      Vincular à Venda Realizada *
+                    </label>
+                    <select
+                      value={vinculoVendaId}
+                      onChange={(e) => {
+                        const vId = e.target.value;
+                        setVinculoVendaId(vId);
+                        const v = vendas.find((item) => item.id === vId);
+                        if (v) {
+                          setClienteNome(v.compradorNome || '');
+                          if (!pagadorRecebedor) setPagadorRecebedor(v.compradorNome || '');
+                          if (!descricao) setDescricao(`Venda: ${v.veiculoModelo || ''} (${v.veiculoPlaca || ''}) - ${vinculoVendaTipo}`);
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    >
+                      <option value="">Selecione uma venda...</option>
+                      {vendas.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.veiculoModelo} ({v.veiculoPlaca}) — R$ {v.valorVenda.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} — {v.compradorNome || 'Sem comprador'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                      Tipo de Transação da Venda
+                    </label>
+                    <select
+                      value={vinculoVendaTipo}
+                      onChange={(e) => setVinculoVendaTipo(e.target.value as any)}
+                      className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    >
+                      <option value="Entrada no Caixa">Entrada no Caixa (Sinal / TED Cliente)</option>
+                      <option value="Financiamento BV">Financiamento Bancário (TED Banco/BV)</option>
+                      <option value="Retorno TAC">Retorno de TAC Bancário</option>
+                      <option value="Comissão Paga">Comissão Paga ao Vendedor/Operador</option>
+                      <option value="Estorno / Ajuste">Estorno / Ajuste da Venda</option>
+                      <option value="Outro Recebimento">Outro Recebimento Vinculado</option>
+                    </select>
+                  </div>
+                </div>
+                {clienteNome && (
+                  <div className="text-[11px] text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5">
+                    <Sparkles size={13} />
+                    <span>Comprador vinculado: <strong>{clienteNome}</strong></span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Rota 5: Retirada de Sócio / Pró-labore */}
             {destinoRoteamento === 'retirada_socio' && (
               <div className="p-2.5 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-lg text-xs text-indigo-900 dark:text-indigo-200">
                 <p className="font-semibold flex items-center gap-1.5">
@@ -832,6 +1246,57 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
                 </p>
               </div>
             )}
+          </div>
+
+          {/* Classificação do Custo (DRE & Extrato 360º) */}
+          <div className="p-3 bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-700/80">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Tag size={14} className="text-indigo-600 dark:text-indigo-400" />
+                Classificação Contábil (DRE & Extrato 360º) *
+              </label>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                Determina o filtro em relatórios analíticos
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setTipoCusto('Fixo')}
+                className={`p-2.5 rounded-xl border text-center text-xs transition-all flex flex-col items-center justify-center gap-1 ${
+                  tipoCusto === 'Fixo'
+                    ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/60 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20 font-bold shadow-sm'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                }`}
+              >
+                <span className="font-bold">🏢 Custo Fixo</span>
+                <span className="text-[10px] opacity-75">Estrutura & Loja</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTipoCusto('Variável')}
+                className={`p-2.5 rounded-xl border text-center text-xs transition-all flex flex-col items-center justify-center gap-1 ${
+                  tipoCusto === 'Variável'
+                    ? 'border-amber-600 bg-amber-50/80 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 ring-2 ring-amber-500/20 font-bold shadow-sm'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                }`}
+              >
+                <span className="font-bold">🚗 Custo Variável</span>
+                <span className="text-[10px] opacity-75">Veículo / Venda</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTipoCusto('Neutro')}
+                className={`p-2.5 rounded-xl border text-center text-xs transition-all flex flex-col items-center justify-center gap-1 ${
+                  tipoCusto === 'Neutro'
+                    ? 'border-emerald-600 bg-emerald-50/80 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-200 ring-2 ring-emerald-500/20 font-bold shadow-sm'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                }`}
+              >
+                <span className="font-bold">⚡ Neutro / Capital</span>
+                <span className="text-[10px] opacity-75">Entradas & Pró-labore</span>
+              </button>
+            </div>
           </div>
 
           {/* 5. Descrição Detalhada & Observações */}

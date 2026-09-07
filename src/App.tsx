@@ -115,6 +115,7 @@ import {
   prepararMovimentacaoVeiculo 
 } from './services/movimentacaoVeiculoService';
 import { calculateAging, checkRevisaoNecessaria, calculateTotalDespesas, checkIsVeiculoVendido } from './utils/formatters';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const STORAGE_KEYS = {
   VEICULOS: 'autogestor_veiculos_v1',
@@ -2482,57 +2483,79 @@ export default function App() {
         {/* Top Header */}
         <Header
           title={
-            activeTab === 'catalogo'
-              ? 'Catálogo de Carros em Estoque'
+            activeTab === 'dash'
+              ? currentUserProfile?.role === 'vendedor' ? 'Painel do Vendedor' : 'Dashboard Central'
+              : activeTab === 'vendedor-dash'
+              ? 'Painel do Vendedor'
+              : activeTab === 'catalogo'
+              ? 'Catálogo de Veículos'
               : activeTab === 'comissoes'
-              ? currentUserProfile?.role === 'vendedor' ? 'Minhas Vendas & Comissões' : 'Gestão de Vendas & Comissões'
-              : activeTab === 'dash'
-              ? 'Painel Executivo'
-              : activeTab === 'dashboard-executivo'
-              ? 'Dashboard Executivo Avançado'
-              : activeTab === 'logistica'
-              ? 'Logística & Rastreamento em Trânsito'
+              ? currentUserProfile?.role === 'vendedor' ? 'Minhas Vendas & Comissões' : 'Vendas & Comissões'
+              : activeTab === 'crm-analytics'
+              ? 'CRM & Análise de Vendas'
               : activeTab === 'estoque'
-              ? 'Gestão de Estoque por Chassi'
-              : activeTab === 'locacao'
-              ? 'Locação para Drivers de App'
-              : activeTab === 'aging'
-              ? 'Gestão de Aging & Giro'
+              ? 'Estoque por Chassi'
+              : activeTab === 'funil-preparacao'
+              ? 'Funil de Preparação'
               : activeTab === 'revisoes'
               ? 'Revisões & Manutenção'
-              : activeTab === 'bancos'
-              ? 'Bancos & Parceiros Financeiros'
+              : activeTab === 'fornecedores'
+              ? 'Gestão de Fornecedores'
               : activeTab === 'contas-pagar'
-              ? 'Contas a Pagar (Despesas & Fornecedores)'
+              ? 'Contas a Pagar'
               : activeTab === 'contas-receber'
-              ? 'Contas a Receber (Financiamentos & Retornos TAC)'
-              : 'DRE & Controle Financeiro'
+              ? 'Contas a Receber'
+              : activeTab === 'bancos'
+              ? 'Bancos Parceiros & TAC'
+              : activeTab === 'financeiro'
+              ? 'DRE & Controle Financeiro'
+              : (activeTab === 'locacao' || activeTab.startsWith('locacao-'))
+              ? 'Locadora & Frota'
+              : activeTab === 'aging'
+              ? 'Gestão de Aging & Giro'
+              : activeTab === 'logistica'
+              ? 'Logística & Trânsito'
+              : activeTab === 'dashboard-executivo'
+              ? 'Dashboard Executivo'
+              : 'AutoGestor'
           }
           subtitle={
-            activeTab === 'catalogo'
+            activeTab === 'dash'
+              ? currentUserProfile?.role === 'vendedor'
+                ? 'Metas, comissões apuradas e catálogo para atendimento rápido'
+                : 'Visão geral do pátio, indicadores de vendas e saúde financeira da loja'
+              : activeTab === 'vendedor-dash'
+              ? 'Metas, comissões apuradas e catálogo para atendimento rápido'
+              : activeTab === 'catalogo'
               ? 'Consulte os veículos no pátio e efetue a baixa de venda imediata com cálculo de comissão'
               : activeTab === 'comissoes'
               ? 'Histórico de carros vendidos, comissão apurada por vendedor e controle de baixa de pagamentos'
-              : activeTab === 'dashboard-executivo'
-              ? 'DRE consolidado, margens líquidas por chassi e gráficos de evolução de custos de preparação'
-              : activeTab === 'logistica'
-              ? 'Rastreie veículos comprados fora da loja, controle fretes/prazos de cegonha e confirme o recebimento'
+              : activeTab === 'crm-analytics'
+              ? 'Origem dos leads, aniversariantes do mês, conversão de propostas e retorno TAC'
               : activeTab === 'estoque'
               ? 'Controle de custos incrementais de compra + preparação vinculados à placa e chassi'
-              : activeTab === 'bancos'
-              ? 'Cadastro de instituições financeiras parceiras, tabelas de retorno TAC e gerentes de conta'
+              : activeTab === 'funil-preparacao'
+              ? 'Acompanhamento do pipeline de oficinas, funilaria, estética e liberação para o pátio'
+              : activeTab === 'revisoes'
+              ? 'Ciclo preventivo de 10.000 KM para frotas de locação e histórico de oficina'
+              : activeTab === 'fornecedores'
+              ? 'Cadastro e extrato financeiro de parceiros, oficinas e prestadores de serviços automotivos'
               : activeTab === 'contas-pagar'
-              ? 'Gestão unificada de despesas de veículos e parceiros com filtros avançados e quitação bancária com extrato'
+              ? 'Gestão unificada de despesas de veículos e parceiros com quitação bancária e extrato'
               : activeTab === 'contas-receber'
               ? 'Painel de liquidação de financiamentos bancários e comissões TAC com crédito em conta e extrato'
-              : activeTab === 'locacao'
+              : activeTab === 'bancos'
+              ? 'Cadastro de instituições financeiras parceiras, tabelas de retorno TAC e gerentes de conta'
+              : activeTab === 'financeiro'
+              ? 'Demonstrativo de Resultado do Exercício com separação de Caixa, DRE e Extrato 360º'
+              : (activeTab === 'locacao' || activeTab.startsWith('locacao-'))
               ? 'Acompanhamento de cobranças semanais, controle de caução e odômetro de motoristas de app'
               : activeTab === 'aging'
               ? 'Matriz de giro de pátio: 0-30d (Verde), 31-60d (Amarelo) e +60d (Crítico)'
-              : activeTab === 'revisoes'
-              ? 'Ciclo preventivo de 10.000 KM para frotas de locação'
-              : activeTab === 'financeiro'
-              ? 'Demonstrativo de Resultado do Exercício com separação de Caixa e Ativos'
+              : activeTab === 'logistica'
+              ? 'Rastreie veículos comprados fora da loja, controle fretes/prazos de cegonha e confirme o recebimento'
+              : activeTab === 'dashboard-executivo'
+              ? 'DRE consolidado, margens líquidas por chassi e gráficos de evolução de custos'
               : undefined
           }
           searchTerm={searchTerm}
@@ -2555,6 +2578,7 @@ export default function App() {
 
         {/* View Router with container responsive auto-scaling */}
         <main className="p-4 sm:p-6 lg:p-8 flex-1 space-y-6 max-w-[1920px] w-full mx-auto">
+          <ErrorBoundary fallbackTitle="Ocorreu um imprevisto na renderização deste módulo">
           {(activeTab === 'vendedor-dash' || (activeTab === 'dash' && currentUserProfile?.role === 'vendedor')) && (
             <DashboardVendedorView
               veiculos={veiculos}
@@ -2825,6 +2849,7 @@ export default function App() {
               onOpenDossie={openDossie}
             />
           )}
+          </ErrorBoundary>
         </main>
       </div>
 
@@ -2869,6 +2894,8 @@ export default function App() {
           onEditDespesa={openEditDespesa}
           onEditVeiculo={handleEditVeiculo}
           onUpdateVeiculo={handleUpdateVeiculoDirect}
+          onUpdateVenda={handleUpdateVenda}
+          vendas={vendas}
           onMovimentarVeiculo={handleMovimentarVeiculo}
           onAdicionarEventoStatus={handleAdicionarEventoStatus}
           onOpenTestDrive={openTestDrive}
@@ -2927,6 +2954,7 @@ export default function App() {
           onClose={() => setIsVendaModalOpen(false)}
           veiculo={vendaTargetVeiculo}
           currentUser={currentUserProfile}
+          usuarios={allUsersList}
           profissoesCadastradas={profissoes}
           bancosParceiros={bancos}
           onCadastrarProfissao={handleCadastrarProfissao}

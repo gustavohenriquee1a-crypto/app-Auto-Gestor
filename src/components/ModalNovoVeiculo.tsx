@@ -26,7 +26,8 @@ import {
   Wrench,
   Truck,
   Navigation,
-  MapPin
+  MapPin,
+  Megaphone
 } from 'lucide-react';
 import { 
   Veiculo, 
@@ -220,6 +221,10 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
   const [comissaoVenda, setComissaoVenda] = useState<number | string>(500);
   const [observacoesHistorico, setObservacoesHistorico] = useState('');
 
+  // Divulgação & Marketing
+  const [anuncioAtivo, setAnuncioAtivo] = useState(false);
+  const [plataformasAnuncio, setPlataformasAnuncio] = useState<string[]>([]);
+
   useEffect(() => {
     if (veiculoToEdit) {
       setModoCadastro(veiculoToEdit.status === 'Vendido' ? 'historico_vendido' : 'estoque');
@@ -280,6 +285,8 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
       setTelefoneTransportadora(veiculoToEdit.telefone_transportadora || '');
       setCustoFreteTransporte(veiculoToEdit.custo_frete_transporte ?? '');
       setTaxasOrigem(veiculoToEdit.taxas_origem ?? '');
+      setAnuncioAtivo(veiculoToEdit.anuncioAtivo ?? false);
+      setPlataformasAnuncio(veiculoToEdit.plataformasAnuncio || []);
 
       if (veiculoToEdit.venda) {
         setDataVendaRetroativa(veiculoToEdit.venda.dataVenda || new Date().toISOString().split('T')[0]);
@@ -351,6 +358,8 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
       setTelefoneTransportadora('');
       setCustoFreteTransporte('');
       setTaxasOrigem('');
+      setAnuncioAtivo(false);
+      setPlataformasAnuncio([]);
 
       // Venda Retroativa Defaults
       setDataVendaRetroativa(new Date().toISOString().split('T')[0]);
@@ -464,6 +473,8 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
       previsaoRetornoOficina: previsaoRetornoOficina || undefined,
       statusPreparacaoOficina: status === 'Em Preparação' ? statusPreparacaoOficina : undefined,
       custoEstimadoServico: custoEstimadoServico !== '' ? Number(custoEstimadoServico) : undefined,
+      anuncioAtivo,
+      plataformasAnuncio: anuncioAtivo ? plataformasAnuncio : [],
       isHistoricoVendido: isVendido,
     };
 
@@ -1521,6 +1532,76 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
               <div className="text-[11px] text-slate-400">
                 Despesas de oficina lançadas no chassi serão somadas automaticamente ao custo.
               </div>
+            </div>
+
+            {/* SEÇÃO MARKETING & PERFORMANCE DE ANÚNCIOS */}
+            <div className="p-4 bg-gradient-to-r from-pink-950/20 via-purple-950/20 to-black/40 rounded-2xl border border-pink-500/20 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-pink-500/10 text-pink-400 border border-pink-500/20">
+                    <Megaphone size={16} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-white text-xs uppercase tracking-wide">
+                      Divulgação & Tráfego Pago
+                    </h4>
+                    <p className="text-[10px] text-slate-400">
+                      Rastreie se o veículo está anunciado ativamente e em quais plataformas
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAnuncioAtivo(!anuncioAtivo)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer border ${
+                    anuncioAtivo
+                      ? 'bg-pink-600 text-white border-pink-400 shadow-sm'
+                      : 'bg-white/5 text-slate-400 border-white/10 hover:text-white'
+                  }`}
+                >
+                  <span>{anuncioAtivo ? '📣 Anúncio Ativo' : '⚪ Sem Campanha Ativa'}</span>
+                </button>
+              </div>
+
+              {anuncioAtivo && (
+                <div className="pt-2 border-t border-white/5 space-y-2">
+                  <label className="block text-[11px] font-bold text-pink-300">
+                    Plataformas com Anúncio em Veiculação
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      'Meta Ads (Instagram/Facebook)',
+                      'Google Ads',
+                      'Webmotors',
+                      'OLX',
+                      'Mercado Livre',
+                      'WhatsApp / Catálogo'
+                    ].map((plat) => {
+                      const isSelected = plataformasAnuncio.includes(plat);
+                      return (
+                        <button
+                          key={plat}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setPlataformasAnuncio(plataformasAnuncio.filter((p) => p !== plat));
+                            } else {
+                              setPlataformasAnuncio([...plataformasAnuncio, plat]);
+                            }
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
+                            isSelected
+                              ? 'bg-pink-500/20 text-pink-200 border-pink-400/50'
+                              : 'bg-white/5 text-slate-400 border-white/10 hover:bg-white/10'
+                          }`}
+                        >
+                          {isSelected ? '✓ ' : '+ '}{plat}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

@@ -34,7 +34,8 @@ import {
   Star,
   FileSpreadsheet,
   Check,
-  ChevronDown
+  ChevronDown,
+  Megaphone
 } from 'lucide-react';
 import {
   BarChart,
@@ -62,7 +63,8 @@ import {
   Veiculo,
   Usuario,
   CanalOrigemLead,
-  BancoFinanciamentoParceiro
+  BancoFinanciamentoParceiro,
+  OrigemLeadType
 } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import {
@@ -71,7 +73,8 @@ import {
   exportCanaisConversaoCsv,
   exportBancosFinanceirasCsv,
   exportAniversariantesCsv,
-  exportProfissoesSegmentosCsv
+  exportProfissoesSegmentosCsv,
+  exportPerformanceMarketingCsv
 } from '../utils/exportCsv';
 
 interface CrmAnalyticsViewProps {
@@ -81,7 +84,16 @@ interface CrmAnalyticsViewProps {
   onOpenDossie?: (veiculo: Veiculo) => void;
 }
 
-type TabMode = 'dashboard' | 'aniversariantes' | 'profissoes' | 'bancos' | 'testdrive';
+type TabMode = 'dashboard' | 'marketing' | 'aniversariantes' | 'profissoes' | 'bancos' | 'testdrive';
+
+const CANAIS_MKT_CORES: Record<OrigemLeadType, string> = {
+  'Meta Ads': '#ec4899',      // Pink
+  'Google Ads': '#3b82f6',    // Blue
+  'Webmotors/OLX': '#8b5cf6', // Violet
+  'Passante': '#f59e0b',      // Amber
+  'Indicação': '#10b981',     // Emerald
+  'WhatsApp': '#22c55e',      // Green
+};
 
 const CANAL_COLORS: Record<string, string> = {
   'Redes Sociais (Instagram/Facebook)': '#ec4899', // Pink
@@ -268,6 +280,107 @@ export const CrmAnalyticsView: React.FC<CrmAnalyticsViewProps> = ({
       color: CANAL_COLORS[c.canal] || '#64748b',
     }));
   }, [metricasCanais]);
+
+  // --- 2.1 Métricas de Performance de Marketing, Ranking & CAC por Canal ---
+  const metricasMarketing = useMemo(() => {
+    const totalVendasGerais = vendasProcessadas.length;
+
+    // Função para normalizar a origem da venda
+    const obterOrigemLead = (v: typeof vendasProcessadas[0]): OrigemLeadType => {
+      if (v.origemLead) return v.origemLead as OrigemLeadType;
+      const c = v.canalNormalizado || '';
+      if (c.includes('Instagram') || c.includes('Facebook') || c.includes('Redes Sociais')) return 'Meta Ads';
+      if (c.includes('Google') || c.includes('Anúncio Pago')) return 'Google Ads';
+      if (c.includes('OLX') || c.includes('Webmotors')) return 'Webmotors/OLX';
+      if (c.includes('Passante') || c.includes('Pátio')) return 'Passante';
+      if (c.includes('Indicação')) return 'Indicação';
+      return 'WhatsApp';
+    };
+
+    const map: Record<OrigemLeadType, {
+      canal: OrigemLeadType;
+      vendasQtd: number;
+      receitaTotal: number;
+      custoVeiculos: number;
+      comissoesPagas: number;
+      custoMarketingTotal: number;
+      lucroLiquidoReal: number;
+    }> = {
+      'Meta Ads': { canal: 'Meta Ads', vendasQtd: 0, receitaTotal: 0, custoVeiculos: 0, comissoesPagas: 0, custoMarketingTotal: 0, lucroLiquidoReal: 0 },
+      'Google Ads': { canal: 'Google Ads', vendasQtd: 0, receitaTotal: 0, custoVeiculos: 0, comissoesPagas: 0, custoMarketingTotal: 0, lucroLiquidoReal: 0 },
+      'Webmotors/OLX': { canal: 'Webmotors/OLX', vendasQtd: 0, receitaTotal: 0, custoVeiculos: 0, comissoesPagas: 0, custoMarketingTotal: 0, lucroLiquidoReal: 0 },
+      'Passante': { canal: 'Passante', vendasQtd: 0, receitaTotal: 0, custoVeiculos: 0, comissoesPagas: 0, custoMarketingTotal: 0, lucroLiquidoReal: 0 },
+      'Indicação': { canal: 'Indicação', vendasQtd: 0, receitaTotal: 0, custoVeiculos: 0, comissoesPagas: 0, custoMarketingTotal: 0, lucroLiquidoReal: 0 },
+      'WhatsApp': { canal: 'WhatsApp', vendasQtd: 0, receitaTotal: 0, custoVeiculos: 0, comissoesPagas: 0, custoMarketingTotal: 0, lucroLiquidoReal: 0 },
+    };
+
+    vendasProcessadas.forEach((v) => {
+      const origem = obterOrigemLead(v);
+      if (!map[origem]) {
+        map[origem] = { canal: origem, vendasQtd: 0, receitaTotal: 0, custoVeiculos: 0, comissoesPagas: 0, custoMarketingTotal: 0, lucroLiquidoReal: 0 };
+      }
+
+      const rec = Number(v.valorVenda) || 0;
+      const compra = Number(v.valorCompra) || 0;
+      const oficina = Number(v.totalDespesas) || 0;
+      const comissao = Number(v.comissaoValor) || 0;
+      const mktPosVenda = Number(v.despesaMarketingAplicadaPosVenda) || 0;
+      const lucro = v.lucroLiquido !== undefined ? Number(v.lucroLiquido) : (rec - compra - oficina - comissao - mktPosVenda);
+
+      map[origem].vendasQtd += 1;
+      map[origem].receitaTotal += rec;
+      map[origem].custoVeiculos += (compra + oficina);
+      map[origem].comissoesPagas += comissao;
+      map[origem].custoMarketingTotal += mktPosVenda;
+      map[origem].lucroLiquidoReal += lucro;
+    });
+
+    const lista = Object.values(map).map((item) => {
+      const percentualVendas = totalVendasGerais > 0 ? (item.vendasQtd / totalVendasGerais) * 100 : 0;
+      const ticketMedio = item.vendasQtd > 0 ? item.receitaTotal / item.vendasQtd : 0;
+      const cac = item.vendasQtd > 0 ? item.custoMarketingTotal / item.vendasQtd : 0;
+      const margemLiquidaPercent = item.receitaTotal > 0 ? (item.lucroLiquidoReal / item.receitaTotal) * 100 : 0;
+      const roas = item.custoMarketingTotal > 0 ? item.receitaTotal / item.custoMarketingTotal : 0;
+      const roi = item.custoMarketingTotal > 0 ? ((item.lucroLiquidoReal / item.custoMarketingTotal) * 100) : 0;
+      
+      return {
+        ...item,
+        percentualVendas: Number(percentualVendas.toFixed(1)),
+        ticketMedio: Number(ticketMedio.toFixed(2)),
+        cac: Number(cac.toFixed(2)),
+        margemLiquidaPercent: Number(margemLiquidaPercent.toFixed(1)),
+        roas: Number(roas.toFixed(2)),
+        roi: Number(roi.toFixed(1)),
+        cor: CANAIS_MKT_CORES[item.canal] || '#64748b',
+      };
+    }).sort((a, b) => b.vendasQtd - a.vendasQtd); // Ranking de vendas por volume
+
+    // Totais e Indicadores Globais
+    const totalGastoMarketing = lista.reduce((acc, curr) => acc + curr.custoMarketingTotal, 0);
+    const totalVendasPagas = lista.filter(c => ['Meta Ads', 'Google Ads', 'Webmotors/OLX'].includes(c.canal)).reduce((acc, curr) => acc + curr.vendasQtd, 0);
+    const cacMedioCanaisPagos = totalVendasPagas > 0 ? totalGastoMarketing / totalVendasPagas : 0;
+    const totalLucroMarketing = lista.reduce((acc, curr) => acc + curr.lucroLiquidoReal, 0);
+    const canalMaisLucrativo = [...lista].sort((a, b) => b.lucroLiquidoReal - a.lucroLiquidoReal)[0];
+    const canalMaisEficienteCac = [...lista].filter(c => c.vendasQtd > 0 && c.custoMarketingTotal > 0).sort((a, b) => a.cac - b.cac)[0];
+
+    // Status do Estoque Ativo em Anúncio
+    const carrosEstoque = veiculos.filter(v => v.status !== 'Vendido');
+    const carrosComAnuncioAtivo = carrosEstoque.filter(v => v.anuncioAtivo === true);
+    const pctEstoqueAnunciado = carrosEstoque.length > 0 ? Math.round((carrosComAnuncioAtivo.length / carrosEstoque.length) * 100) : 0;
+
+    return {
+      lista,
+      totalGastoMarketing,
+      cacMedioCanaisPagos,
+      totalLucroMarketing,
+      canalMaisLucrativo,
+      canalMaisEficienteCac,
+      carrosEstoqueQtd: carrosEstoque.length,
+      carrosComAnuncioAtivoQtd: carrosComAnuncioAtivo.length,
+      pctEstoqueAnunciado,
+      obterOrigemLead,
+    };
+  }, [vendasProcessadas, veiculos]);
 
   // --- 3. Métricas de Impacto de Test-Drive ---
   const metricasTestDrive = useMemo(() => {
@@ -554,6 +667,12 @@ export const CrmAnalyticsView: React.FC<CrmAnalyticsViewProps> = ({
     setShowExportMenu(false);
   };
 
+  const handleExportMarketing = () => {
+    exportPerformanceMarketingCsv(metricasMarketing.lista);
+    triggerNotification('Performance de Marketing & CAC exportado em CSV!');
+    setShowExportMenu(false);
+  };
+
   const handleExportBancos = () => {
     exportBancosFinanceirasCsv(metricasBancos.lista);
     triggerNotification('Performance de financiamento e TAC bancário exportada!');
@@ -762,7 +881,22 @@ export const CrmAnalyticsView: React.FC<CrmAnalyticsViewProps> = ({
                       </div>
                     </button>
 
-                    {/* 7. Clientes Filtrados (se houver filtro) */}
+                    {/* 7. Performance de Marketing & CAC por Canal */}
+                    <button
+                      id="btn-export-marketing-csv"
+                      onClick={handleExportMarketing}
+                      className="w-full text-left p-2.5 rounded-xl hover:bg-white/5 text-xs text-white transition flex items-start gap-2.5 cursor-pointer group"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-pink-500/10 text-pink-400 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-pink-500 group-hover:text-white transition">
+                        <Megaphone size={15} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-slate-100 group-hover:text-pink-400 transition">Performance de Marketing & CAC</p>
+                        <p className="text-[10px] text-slate-400 leading-tight">Ranking de vendas por canal, custos de anúncios, CAC e comissões protegidas</p>
+                      </div>
+                    </button>
+
+                    {/* 8. Clientes Filtrados (se houver filtro) */}
                     {(searchQuery || filtroCanal !== 'todos' || filtroBanco !== 'todos' || filtroProfissao !== 'todos') && (
                       <button
                         id="btn-export-filtrados-csv"
@@ -821,11 +955,29 @@ export const CrmAnalyticsView: React.FC<CrmAnalyticsViewProps> = ({
           </button>
 
           <button
+            id="tab-btn-marketing"
+            onClick={() => setActiveTab('marketing')}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center gap-2 cursor-pointer ${
+              activeTab === 'marketing'
+                ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white shadow-lg shadow-pink-500/25'
+                : 'bg-[#181922] text-slate-400 hover:text-white hover:bg-white/5 border border-white/5'
+            }`}
+          >
+            <Megaphone size={16} className={activeTab === 'marketing' ? 'text-white' : 'text-pink-400'} />
+            <span>Performance de Marketing</span>
+            {metricasMarketing.totalGastoMarketing > 0 && (
+              <span className="bg-white/20 text-white text-[10px] px-2 py-0.5 rounded-full font-black">
+                {formatCurrency(metricasMarketing.totalGastoMarketing)}
+              </span>
+            )}
+          </button>
+
+          <button
             id="tab-btn-aniversariantes"
             onClick={() => setActiveTab('aniversariantes')}
             className={`px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center gap-2 cursor-pointer ${
               activeTab === 'aniversariantes'
-                ? 'bg-gradient-to-r from-pink-600 to-rose-600 text-white shadow-lg shadow-pink-500/25'
+                ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/25'
                 : 'bg-[#181922] text-slate-400 hover:text-white hover:bg-white/5 border border-white/5'
             }`}
           >
@@ -1117,6 +1269,441 @@ export const CrmAnalyticsView: React.FC<CrmAnalyticsViewProps> = ({
                       </td>
                     </tr>
                   )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* ABA: PERFORMANCE DE MARKETING, RANKING & CAC POR CANAL   */}
+      {/* ======================================================== */}
+      {activeTab === 'marketing' && (
+        <div className="space-y-6">
+          {/* Banner de Esclarecimento da Regra Contábil */}
+          <div className="bg-gradient-to-r from-pink-950/40 via-[#18131e] to-rose-950/30 p-5 rounded-3xl border border-pink-500/20 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-2xl bg-pink-500/20 text-pink-400 flex items-center justify-center shrink-0 mt-0.5">
+                <Megaphone size={20} />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-extrabold text-white">
+                    Atribuição de Mídia Paga & Performance de Vendas
+                  </h3>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider flex items-center gap-1">
+                    <ShieldCheck size={12} /> Comissões 100% Protegidas
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed max-w-3xl">
+                  Rastreabilidade direta de leads por canal (<strong className="text-pink-300">Meta Ads</strong>, <strong className="text-blue-300">Google Ads</strong>, <strong className="text-purple-300">Webmotors/OLX</strong>, <strong className="text-amber-300">Passante</strong>, <strong className="text-emerald-300">Indicação</strong> e <strong className="text-green-300">WhatsApp</strong>). Os custos de tráfego lançados no Dossiê pós-venda são deduzidos do <strong>Lucro Líquido Real</strong> do veículo no DRE gerencial, sem recalcular ou reduzir o valor da comissão já fixada e honrada com os vendedores.
+                </p>
+              </div>
+            </div>
+
+            <button
+              id="btn-export-mkt-tab"
+              onClick={handleExportMarketing}
+              className="px-4 py-2.5 rounded-xl bg-pink-600/20 hover:bg-pink-600/30 border border-pink-500/30 text-pink-300 hover:text-white text-xs font-bold transition flex items-center gap-2 shrink-0 cursor-pointer"
+            >
+              <Download size={15} />
+              <span>Exportar Métricas (Excel)</span>
+            </button>
+          </div>
+
+          {/* Grid de KPIs Executivos de Marketing */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-[#111116] p-5 rounded-3xl border border-white/5 space-y-2">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-semibold uppercase tracking-wider">
+                <span>Investimento em Anúncios</span>
+                <DollarSign size={16} className="text-pink-400" />
+              </div>
+              <p className="text-2xl font-extrabold text-white">
+                {formatCurrency(metricasMarketing.totalGastoMarketing)}
+              </p>
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span className="text-pink-400 font-bold">Lançado pós-venda</span>
+                <span>•</span>
+                <span>Atribuído a chassis vendidos</span>
+              </div>
+            </div>
+
+            <div className="bg-[#111116] p-5 rounded-3xl border border-white/5 space-y-2">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-semibold uppercase tracking-wider">
+                <span>CAC Médio (Canais Pagos)</span>
+                <Target size={16} className="text-rose-400" />
+              </div>
+              <p className="text-2xl font-extrabold text-white">
+                {metricasMarketing.cacMedioCanaisPagos > 0
+                  ? formatCurrency(metricasMarketing.cacMedioCanaisPagos)
+                  : 'R$ 0,00'}
+              </p>
+              <div className="flex items-center gap-2 text-xs text-emerald-400 font-bold">
+                <span>Custo por carro vendido via Ads</span>
+              </div>
+            </div>
+
+            <div className="bg-[#111116] p-5 rounded-3xl border border-white/5 space-y-2">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-semibold uppercase tracking-wider">
+                <span>Canal Mais Rentável (Lucro)</span>
+                <Sparkles size={16} className="text-emerald-400" />
+              </div>
+              <p className="text-xl font-extrabold text-white truncate">
+                {metricasMarketing.canalMaisLucrativo?.canal || 'Sem dados'}
+              </p>
+              <div className="flex items-center gap-2 text-xs text-emerald-400 font-bold">
+                <span>{formatCurrency(metricasMarketing.canalMaisLucrativo?.lucroLiquidoReal || 0)} de lucro</span>
+              </div>
+            </div>
+
+            <div className="bg-[#111116] p-5 rounded-3xl border border-white/5 space-y-2">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-semibold uppercase tracking-wider">
+                <span>Estoque Anunciado Ativo</span>
+                <Flame size={16} className="text-amber-400" />
+              </div>
+              <p className="text-2xl font-extrabold text-white">
+                {metricasMarketing.carrosComAnuncioAtivoQtd}{' '}
+                <span className="text-sm font-normal text-slate-400">/ {metricasMarketing.carrosEstoqueQtd} carros</span>
+              </p>
+              <div className="flex items-center gap-2 text-xs text-amber-400 font-bold">
+                <span>{metricasMarketing.pctEstoqueAnunciado}% do pátio em circulação</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Comparação de Taxa de Conversão & Ranking de Vendas por Canal (Tabela Principal) */}
+          <div className="bg-[#111116] rounded-3xl border border-white/5 overflow-hidden shadow-xl">
+            <div className="p-6 border-b border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <BarChart3 size={18} className="text-pink-400" />
+                  Ranking de Vendas & Taxa de Conversão por Origem do Lead
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Performance completa comparando volume, faturamento, CAC, comissões protegidas e lucro real por mídia
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400 font-medium">
+                  Total de vendas analisadas: <strong className="text-white">{vendasProcessadas.length}</strong>
+                </span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-[#15161e] text-slate-400 font-semibold border-b border-white/5">
+                    <th className="py-3.5 px-4 text-center w-12">#</th>
+                    <th className="py-3.5 px-4">Origem / Canal</th>
+                    <th className="py-3.5 px-4 text-center">Vendas Fechadas</th>
+                    <th className="py-3.5 px-4 text-center">Share (%)</th>
+                    <th className="py-3.5 px-4 text-right">Faturamento Bruto</th>
+                    <th className="py-3.5 px-4 text-right">Ticket Médio</th>
+                    <th className="py-3.5 px-4 text-right">Comissões (Fixadas)</th>
+                    <th className="py-3.5 px-4 text-right">Custo Mkt Atribuído</th>
+                    <th className="py-3.5 px-4 text-right">CAC Médio</th>
+                    <th className="py-3.5 px-4 text-right">Lucro Líquido Real</th>
+                    <th className="py-3.5 px-4 text-center">Margem (%)</th>
+                    <th className="py-3.5 px-4 text-center">ROAS</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5 font-mono text-slate-300">
+                  {metricasMarketing.lista.map((item, idx) => (
+                    <tr key={item.canal} className="hover:bg-white/[0.02] transition">
+                      <td className="py-3.5 px-4 text-center font-bold text-slate-500 font-sans">
+                        {idx + 1}º
+                      </td>
+                      <td className="py-3.5 px-4 font-sans font-bold text-white flex items-center gap-2.5">
+                        <span
+                          className="w-3 h-3 rounded-full shrink-0 shadow-sm"
+                          style={{ backgroundColor: item.cor }}
+                        />
+                        <span>{item.canal}</span>
+                        {idx === 0 && item.vendasQtd > 0 && (
+                          <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-bold">
+                            Top 1
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-center font-bold text-white">
+                        {item.vendasQtd}
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-white/5 text-slate-200">
+                          {item.percentualVendas}%
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-medium text-slate-200">
+                        {formatCurrency(item.receitaTotal)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right text-slate-400">
+                        {formatCurrency(item.ticketMedio)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right text-emerald-400 font-medium">
+                        {formatCurrency(item.comissoesPagas)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        {item.custoMarketingTotal > 0 ? (
+                          <span className="text-pink-400 font-bold">
+                            {formatCurrency(item.custoMarketingTotal)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-500 font-normal">R$ 0,00</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        {item.cac > 0 ? (
+                          <span className="px-2 py-0.5 rounded-lg bg-rose-500/10 text-rose-300 font-bold border border-rose-500/20 text-[11px]">
+                            {formatCurrency(item.cac)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-500 text-[11px]">—</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-bold text-emerald-400">
+                        {formatCurrency(item.lucroLiquidoReal)}
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <span className={`px-2 py-0.5 rounded font-bold text-[11px] ${
+                          item.margemLiquidaPercent >= 10
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : item.margemLiquidaPercent > 0
+                            ? 'bg-blue-500/20 text-blue-300'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {item.margemLiquidaPercent}%
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        {item.roas > 0 ? (
+                          <span className="font-bold text-indigo-300">
+                            {item.roas}x
+                          </span>
+                        ) : (
+                          <span className="text-slate-500 text-[11px]">Orgânico</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {metricasMarketing.lista.length === 0 && (
+                    <tr>
+                      <td colSpan={12} className="py-8 text-center text-slate-500 font-sans">
+                        Nenhuma venda cadastrada para calcular atribuição de marketing.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Gráficos Lado a Lado: Comparativo de Vendas & CAC por Canal */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Gráfico 1: Volume de Vendas por Canal (Ranking) */}
+            <div className="bg-[#111116] p-6 rounded-3xl border border-white/5 shadow-xl flex flex-col justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <TrendingUp size={16} className="text-pink-400" />
+                  Ranking de Vendas por Origem
+                </h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Número de carros vendidos gerados por cada canal
+                </p>
+              </div>
+              <div className="h-64 w-full pt-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={metricasMarketing.lista.map(c => ({
+                    canal: c.canal.split(' ')[0],
+                    vendas: c.vendasQtd,
+                    cor: c.cor
+                  }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff0d" />
+                    <XAxis dataKey="canal" stroke="#64748b" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#64748b" fontSize={11} tickLine={false} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#181924', borderColor: '#334155', borderRadius: '12px', fontSize: '12px' }}
+                      formatter={(value: any) => [`${value} carros`, 'Vendas']}
+                    />
+                    <Bar dataKey="vendas" radius={[6, 6, 0, 0]}>
+                      {metricasMarketing.lista.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.cor} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Gráfico 2: Custo de Aquisição de Clientes (CAC) por Canal */}
+            <div className="bg-[#111116] p-6 rounded-3xl border border-white/5 shadow-xl flex flex-col justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Target size={16} className="text-rose-400" />
+                  CAC por Carro Vendido (R$)
+                </h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Gasto médio de tráfego pago para fechar uma venda
+                </p>
+              </div>
+              <div className="h-64 w-full pt-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={metricasMarketing.lista.filter(c => c.custoMarketingTotal > 0 || ['Meta Ads', 'Google Ads', 'Webmotors/OLX'].includes(c.canal)).map(c => ({
+                    canal: c.canal.split(' ')[0],
+                    cac: c.cac,
+                    cor: c.cor
+                  }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff0d" />
+                    <XAxis dataKey="canal" stroke="#64748b" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#181924', borderColor: '#334155', borderRadius: '12px', fontSize: '12px' }}
+                      formatter={(value: any) => [formatCurrency(Number(value)), 'CAC']}
+                    />
+                    <Bar dataKey="cac" radius={[6, 6, 0, 0]}>
+                      {metricasMarketing.lista.map((entry, index) => (
+                        <Cell key={`cell-cac-${index}`} fill={entry.cor} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Gráfico 3: Participação das Vendas (% Share de Conversão) */}
+            <div className="bg-[#111116] p-6 rounded-3xl border border-white/5 shadow-xl flex flex-col justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <PieChartIcon size={16} className="text-purple-400" />
+                  Share de Vendas (%)
+                </h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Fatia de mercado interno conquistada por cada canal
+                </p>
+              </div>
+              <div className="h-64 w-full pt-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={metricasMarketing.lista.filter(c => c.vendasQtd > 0)}
+                      dataKey="vendasQtd"
+                      nameKey="canal"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={75}
+                      innerRadius={42}
+                      paddingAngle={3}
+                    >
+                      {metricasMarketing.lista.filter(c => c.vendasQtd > 0).map((entry, index) => (
+                        <Cell key={`cell-pie-${index}`} fill={entry.cor} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#181924', borderColor: '#334155', borderRadius: '12px', fontSize: '12px' }}
+                      formatter={(value: any, name: any) => [`${value} veículos`, name]}
+                    />
+                    <Legend wrapperStyle={{ fontSize: '10px' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* Painel de Auditoria Chassi a Chassi pós-venda */}
+          <div className="bg-[#111116] rounded-3xl border border-white/5 overflow-hidden shadow-xl">
+            <div className="p-6 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h4 className="text-base font-bold text-white flex items-center gap-2">
+                  <Car size={18} className="text-pink-400" />
+                  Auditoria de Vendas & Atribuição de Custos por Chassi
+                </h4>
+                <p className="text-xs text-slate-400">
+                  Consulte os veículos vendidos, a origem do lead atribuída e se houve custo de marketing aplicado pós-venda
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-[#15161e] text-slate-400 font-semibold border-b border-white/5">
+                    <th className="py-3 px-4">Veículo / Placa</th>
+                    <th className="py-3 px-4">Data Venda</th>
+                    <th className="py-3 px-4">Origem Lead</th>
+                    <th className="py-3 px-4">Vendedor</th>
+                    <th className="py-3 px-4 text-right">Comissão Vendedor</th>
+                    <th className="py-3 px-4 text-right">Mkt Pós-Venda</th>
+                    <th className="py-3 px-4 text-right">Lucro Líquido Real</th>
+                    <th className="py-3 px-4 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5 font-mono text-slate-300">
+                  {vendasProcessadas.slice(0, 15).map((v) => {
+                    const origem = metricasMarketing.obterOrigemLead(v);
+                    const corOrigem = CANAIS_MKT_CORES[origem] || '#64748b';
+                    const veiculoOriginal = veiculos.find(
+                      (ve) => ve.id === v.veiculoId || (ve.chassi && ve.chassi === v.chassi) || (ve.placa && ve.placa === v.placa)
+                    );
+
+                    return (
+                      <tr key={v.id} className="hover:bg-white/[0.02] transition">
+                        <td className="py-3.5 px-4 font-sans">
+                          <p className="font-bold text-white text-xs">{v.modelo}</p>
+                          <p className="text-[10px] text-slate-500 font-mono">Placa: {v.placa}</p>
+                        </td>
+                        <td className="py-3.5 px-4 font-sans text-slate-400 text-xs">
+                          {formatDate(v.dataVenda)}
+                        </td>
+                        <td className="py-3.5 px-4 font-sans">
+                          <span
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold"
+                            style={{
+                              backgroundColor: `${corOrigem}15`,
+                              color: corOrigem,
+                              border: `1px solid ${corOrigem}35`
+                            }}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: corOrigem }} />
+                            {origem}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 font-sans text-slate-300 text-xs">
+                          {v.vendedorNome || 'Loja'}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-bold text-emerald-400">
+                          {formatCurrency(v.comissaoValor || 0)}
+                          <span className="block text-[9px] text-emerald-500/80 font-normal">Protegida</span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          {(v.despesaMarketingAplicadaPosVenda || 0) > 0 ? (
+                            <span className="font-bold text-pink-400">
+                              {formatCurrency(v.despesaMarketingAplicadaPosVenda || 0)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-500 text-[11px]">R$ 0,00</span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-bold text-white">
+                          {formatCurrency(v.lucroLiquido || 0)}
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-sans">
+                          {veiculoOriginal && onOpenDossie ? (
+                            <button
+                              onClick={() => onOpenDossie(veiculoOriginal)}
+                              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-pink-600/20 text-slate-300 hover:text-pink-300 border border-white/10 hover:border-pink-500/30 text-[11px] font-bold transition flex items-center gap-1 mx-auto cursor-pointer"
+                              title="Abrir Dossiê do Chassi para gerenciar ou lançar custo de marketing"
+                            >
+                              <Megaphone size={12} />
+                              <span>Dossiê Mkt</span>
+                            </button>
+                          ) : (
+                            <span className="text-slate-600 text-[10px]">Concluído</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

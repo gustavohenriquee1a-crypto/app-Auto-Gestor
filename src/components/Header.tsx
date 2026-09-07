@@ -1,12 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Search, 
-  Bell, 
   Plus, 
   Download, 
   Calendar as CalendarIcon, 
-  AlertTriangle,
-  Wrench,
   CheckCircle2,
   Users,
   User,
@@ -64,13 +61,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   // Subscrição em tempo real ao documento global 'configuracoes_loja/geral'
   useEffect(() => {
-    // Carregamento inicial rápido
-    getConfiguracaoLojaFirestore().then((cfg) => {
-      if (cfg?.logoUrl) {
-        setStoreLogo(cfg.logoUrl);
-      }
-    });
-
     const unsubscribe = subscribeConfiguracoesLoja((config) => {
       if (config && config.logoUrl !== undefined) {
         setStoreLogo(config.logoUrl || '');
@@ -113,7 +103,6 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
-  const totalAlerts = alertCounts.aging + alertCounts.pagamento + alertCounts.revisao;
   const todayFormatted = new Intl.DateTimeFormat('pt-BR', {
     weekday: 'long',
     day: 'numeric',
@@ -170,17 +159,9 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         <div className="min-w-0">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight uppercase truncate">
-              {title}
-            </h1>
-            {totalAlerts > 0 && (
-              <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-semibold px-2 sm:px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/30 animate-pulse shrink-0">
-                <AlertTriangle size={12} />
-                {totalAlerts} {totalAlerts === 1 ? 'alerta ativo' : 'alertas ativos'}
-              </span>
-            )}
-          </div>
+          <h1 className="text-base sm:text-lg lg:text-xl font-bold text-white tracking-tight truncate">
+            {title}
+          </h1>
           {subtitle ? (
             <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{subtitle}</p>
           ) : (
@@ -216,35 +197,6 @@ export const Header: React.FC<HeaderProps> = ({
               className="absolute right-2.5 top-2.5 text-xs text-slate-400 hover:text-slate-200 bg-white/10 rounded-full w-4 h-4 flex items-center justify-center cursor-pointer"
             >
               ×
-            </button>
-          )}
-        </div>
-
-        {/* Quick Alert Badges */}
-        <div className="flex items-center gap-1.5">
-          {alertCounts.pagamento > 0 && (
-            <button
-              id="header-btn-alert-pagamento"
-              onClick={() => onSelectTab?.('locacao')}
-              title={`${alertCounts.pagamento} pagamentos pendentes ou atrasados`}
-              className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold hover:bg-amber-500/20 flex items-center gap-1.5 transition cursor-pointer"
-            >
-              <AlertTriangle size={14} className="text-amber-400" />
-              <span className="hidden sm:inline">Cobrança:</span>
-              <span className="font-bold text-amber-300">{alertCounts.pagamento}</span>
-            </button>
-          )}
-
-          {alertCounts.revisao > 0 && (
-            <button
-              id="header-btn-alert-revisao"
-              onClick={() => onSelectTab?.('revisoes')}
-              title={`${alertCounts.revisao} veículos com revisão de 10k km vencida`}
-              className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-semibold hover:bg-rose-500/20 flex items-center gap-1.5 transition cursor-pointer"
-            >
-              <Wrench size={14} className="text-rose-400" />
-              <span className="hidden sm:inline">Revisão:</span>
-              <span className="font-bold text-rose-300">{alertCounts.revisao}</span>
             </button>
           )}
         </div>

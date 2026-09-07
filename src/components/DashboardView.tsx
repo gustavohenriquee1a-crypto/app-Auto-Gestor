@@ -133,6 +133,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   let despesasManutencaoFrotaMes = 0;
   veiculos.forEach(v => {
     v.despesas?.forEach(d => {
+      if (!d) return;
       if (d.data && d.data.startsWith(mesAtualStr)) {
         despesasManutencaoFrotaMes += d.valor;
       }
@@ -324,6 +325,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     // Despesas de Veículos
     veiculos.forEach(v => {
       v.despesas?.forEach(d => {
+        if (!d) return;
         if (d.statusPagamento === 'Pendente') {
           const venc = d.dataVencimento || d.data || hojeStr;
           const atrasada = venc < hojeStr;
@@ -366,6 +368,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       atrasadasQtd,
     };
   }, [veiculos, despesasFixas]);
+
+  // Restrição de acesso aos alertas para Administradores / Gestores
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'gestor' || (!currentUser?.role || currentUser?.role !== 'vendedor');
+  const contasAtrasadasLista = contasPagarHojeOuAtrasadas.itens.filter(p => p.atrasada);
+  const totalAlertasCentral = 
+    veiculosRevisaoUrgente.length + 
+    veiculosAgingCritico.length + 
+    pagamentosPendentes.length + 
+    contasAtrasadasLista.length;
 
   // Vendas do Mês Vigente
   const vendasDoMes = useMemo(() => {
@@ -582,160 +593,275 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         )}
       </div>
 
-      {/* 3. Matriz de Alertas (Aging e Saúde Financeira) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Alerta 1: Aging de Pátio Crítico (+60 dias) */}
-        <div className="bg-[#111116] rounded-2xl p-6 text-white border border-white/10 shadow-xl flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-white/5">
-              <div className="flex items-center gap-2.5">
-                <span className={`p-2 rounded-lg ${veiculosAgingCritico.length > 0 ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'}`}>
-                  <Clock size={18} />
-                </span>
-                <div>
-                  <h4 className="font-bold text-sm text-white">
-                    {veiculosAgingCritico.length > 0
-                      ? `Atenção: ${veiculosAgingCritico.length} Veículo(s) com +60 dias de Pátio`
-                      : 'Giro de Estoque Saudável (Aging)'}
-                  </h4>
-                  <p className="text-xs text-slate-400">Tempo de pátio elevado e custo de oportunidade</p>
-                </div>
-              </div>
-              <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                veiculosAgingCritico.length > 0
-                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse'
-                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+      {/* 3. Central de Alertas & Pendências Operacionais (Centralizado e Exclusivo Admin) */}
+      {isAdmin && (
+        <div className="bg-[#111116] rounded-2xl p-6 text-white border border-white/10 shadow-xl space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/5">
+            <div className="flex items-center gap-3">
+              <span className={`p-2.5 rounded-xl border ${
+                totalAlertasCentral > 0 
+                  ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' 
+                  : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
               }`}>
-                {veiculosAgingCritico.length} Crítico{veiculosAgingCritico.length !== 1 ? 's' : ''}
+                <ShieldAlert size={20} />
               </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-base text-white">Central de Alertas & Pendências Operacionais</h3>
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                    totalAlertasCentral > 0 
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/30 animate-pulse' 
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  }`}>
+                    {totalAlertasCentral > 0 ? `${totalAlertasCentral} pendência(s) ativa(s)` : 'Tudo em dia'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Painel unificado da diretoria: revisões preventivas, giro de pátio (aging), cobranças de locação e contas a pagar
+                </p>
+              </div>
             </div>
 
-            {veiculosAgingCritico.length > 0 ? (
-              <div className="mt-4 space-y-3">
-                {veiculosAgingCritico.slice(0, 3).map((v) => {
-                  const dias = calculateAging(v.dataEntrada).dias;
-                  const custo = calculateCustoTotal(v);
-                  return (
-                    <div key={v.id} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-slate-200 bg-black/40 border border-white/10 px-1.5 py-0.5 rounded text-[11px]">
-                            {v.placa}
-                          </span>
-                          <span className="font-bold text-xs text-white truncate">{v.modelo}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] px-2.5 py-1 rounded-lg bg-white/5 text-slate-400 border border-white/5">
+                Exclusivo Administração
+              </span>
+            </div>
+          </div>
+
+          {/* Grid de 4 Cards de Alerta Centralizados */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Alerta 1: Revisões Preventivas (10.000 KM) */}
+            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                  <div className="flex items-center gap-2">
+                    <span className={`p-1.5 rounded-lg ${veiculosRevisaoUrgente.length > 0 ? 'bg-rose-500/15 text-rose-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
+                      <Wrench size={16} />
+                    </span>
+                    <span className="text-xs font-bold text-white">Revisões Preventivas</span>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    veiculosRevisaoUrgente.length > 0
+                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      : 'bg-emerald-500/20 text-emerald-300'
+                  }`}>
+                    {veiculosRevisaoUrgente.length} {veiculosRevisaoUrgente.length === 1 ? 'urgente' : 'urgentes'}
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {veiculosRevisaoUrgente.length > 0 ? (
+                    veiculosRevisaoUrgente.slice(0, 2).map(v => {
+                      const revisao = checkRevisaoNecessaria(v);
+                      return (
+                        <div key={v.id} className="p-2 rounded-lg bg-white/[0.02] border border-white/5 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-white font-mono">{v.placa}</span>
+                            <button
+                              onClick={() => onOpenDossie(v)}
+                              className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
+                            >
+                              Dossiê
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">{v.modelo}</p>
+                          <p className="text-[10px] text-rose-400 font-mono mt-0.5">
+                            +{revisao.kmRodadosDesdeRevisao.toLocaleString('pt-BR')} KM rodados
+                          </p>
                         </div>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          Custo: <strong className="text-slate-200">{formatCurrency(custo)}</strong> • Entrada: {formatDate(v.dataEntrada)}
+                      );
+                    })
+                  ) : (
+                    <div className="py-4 text-center">
+                      <CheckCircle2 size={24} className="text-emerald-400 mx-auto mb-1 opacity-80" />
+                      <p className="text-xs text-slate-300">Revisões em dia</p>
+                      <p className="text-[10px] text-slate-500">Nenhum carro com 10.000 KM vencidos</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-3 mt-3 border-t border-white/5">
+                <button
+                  onClick={() => onSelectTab('revisoes')}
+                  className="w-full py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-slate-300 hover:text-white font-medium flex items-center justify-center gap-1 transition cursor-pointer"
+                >
+                  <span>Módulo de Revisões</span>
+                  <ArrowRight size={12} />
+                </button>
+              </div>
+            </div>
+
+            {/* Alerta 2: Aging Crítico de Pátio (+60 dias) */}
+            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                  <div className="flex items-center gap-2">
+                    <span className={`p-1.5 rounded-lg ${veiculosAgingCritico.length > 0 ? 'bg-rose-500/15 text-rose-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
+                      <Clock size={16} />
+                    </span>
+                    <span className="text-xs font-bold text-white">Aging (+60 Dias)</span>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    veiculosAgingCritico.length > 0
+                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      : 'bg-emerald-500/20 text-emerald-300'
+                  }`}>
+                    {veiculosAgingCritico.length} {veiculosAgingCritico.length === 1 ? 'crítico' : 'críticos'}
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {veiculosAgingCritico.length > 0 ? (
+                    veiculosAgingCritico.slice(0, 2).map(v => {
+                      const aging = calculateAging(v.dataEntrada);
+                      return (
+                        <div key={v.id} className="p-2 rounded-lg bg-white/[0.02] border border-white/5 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-white font-mono">{v.placa}</span>
+                            <span className="text-[10px] text-rose-300 font-mono font-bold">{aging.dias} dias</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">{v.modelo}</p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            Custo: {formatCurrency(calculateCustoTotal(v))}
+                          </p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="py-4 text-center">
+                      <CheckCircle2 size={24} className="text-emerald-400 mx-auto mb-1 opacity-80" />
+                      <p className="text-xs text-slate-300">Giro saudável</p>
+                      <p className="text-[10px] text-slate-500">Nenhum veículo parado há mais de 60 dias</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-3 mt-3 border-t border-white/5">
+                <button
+                  onClick={() => onSelectTab('aging')}
+                  className="w-full py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-slate-300 hover:text-white font-medium flex items-center justify-center gap-1 transition cursor-pointer"
+                >
+                  <span>Matriz de Aging</span>
+                  <ArrowRight size={12} />
+                </button>
+              </div>
+            </div>
+
+            {/* Alerta 3: Cobranças de Locação Atrasadas */}
+            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                  <div className="flex items-center gap-2">
+                    <span className={`p-1.5 rounded-lg ${pagamentosPendentes.length > 0 ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
+                      <AlertTriangle size={16} />
+                    </span>
+                    <span className="text-xs font-bold text-white">Cobranças Locação</span>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    pagamentosPendentes.length > 0
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'bg-emerald-500/20 text-emerald-300'
+                  }`}>
+                    {pagamentosPendentes.length} pendência{pagamentosPendentes.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {pagamentosPendentes.length > 0 ? (
+                    pagamentosPendentes.slice(0, 2).map((item, idx) => (
+                      <div key={idx} className="p-2 rounded-lg bg-white/[0.02] border border-white/5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-white truncate max-w-[120px]">{item.contrato.motoristaNome}</span>
+                          <span className="text-[10px] text-amber-400 font-mono font-bold">
+                            {formatCurrency(item.pagamento.valor)}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          Placa: {item.veiculo.placa} • Ref: {item.pagamento.semanaReferencia || 'Semana'}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[11px] font-mono font-bold border border-rose-500/30">
-                          {dias} dias
-                        </span>
-                        <button
-                          onClick={() => onOpenDossie(v)}
-                          className="p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition cursor-pointer"
-                          title="Abrir Dossiê"
-                        >
-                          <ExternalLink size={14} />
-                        </button>
-                      </div>
+                    ))
+                  ) : (
+                    <div className="py-4 text-center">
+                      <CheckCircle2 size={24} className="text-emerald-400 mx-auto mb-1 opacity-80" />
+                      <p className="text-xs text-slate-300">Locações em dia</p>
+                      <p className="text-[10px] text-slate-500">Cobranças semanais 100% liquidadas</p>
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="p-6 text-center mt-2">
-                <CheckCircle2 size={32} className="text-emerald-400 mx-auto mb-2 opacity-80" />
-                <p className="text-xs text-slate-300 font-semibold">Nenhum carro acima de 60 dias em estoque</p>
-                <p className="text-[11px] text-slate-500 mt-0.5">Excelente liquidez e giro rápido de capital no pátio.</p>
-              </div>
-            )}
-          </div>
-
-          <div className="pt-4 mt-2 border-t border-white/5 flex items-center justify-between text-xs">
-            <span className="text-slate-400">Giro médio do estoque: 28 dias</span>
-            <button
-              onClick={() => onSelectTab('estoque')}
-              className="text-blue-400 hover:text-blue-300 font-bold transition flex items-center gap-1 cursor-pointer"
-            >
-              <span>Ver Estoque Completo</span>
-              <ArrowRight size={13} />
-            </button>
-          </div>
-        </div>
-
-        {/* Alerta 2: Saúde Financeira & Locações (Pagamento Atrasado) */}
-        <div className="bg-[#111116] rounded-2xl p-6 text-white border border-white/10 shadow-xl flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-white/5">
-              <div className="flex items-center gap-2.5">
-                <span className={`p-2 rounded-lg ${pagamentosPendentes.length > 0 ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'}`}>
-                  <AlertTriangle size={18} />
-                </span>
-                <div>
-                  <h4 className="font-bold text-sm text-white">
-                    {pagamentosPendentes.length > 0
-                      ? `Atenção: ${pagamentosPendentes.length} Locação(ões) com Pagamento Atrasado`
-                      : 'Cobranças de Locação 100% em Dia'}
-                  </h4>
-                  <p className="text-xs text-slate-400">Contratos de motoristas com parcelas semanais pendentes</p>
+                  )}
                 </div>
               </div>
-              <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                pagamentosPendentes.length > 0
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
-                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-              }`}>
-                {pagamentosPendentes.length} Cobrança{pagamentosPendentes.length !== 1 ? 's' : ''}
-              </span>
+
+              <div className="pt-3 mt-3 border-t border-white/5">
+                <button
+                  onClick={() => onSelectTab('locacao')}
+                  className="w-full py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-slate-300 hover:text-white font-medium flex items-center justify-center gap-1 transition cursor-pointer"
+                >
+                  <span>Módulo de Locação</span>
+                  <ArrowRight size={12} />
+                </button>
+              </div>
             </div>
 
-            {pagamentosPendentes.length > 0 ? (
-              <div className="mt-4 space-y-3">
-                {pagamentosPendentes.slice(0, 3).map((item, idx) => (
-                  <div key={idx} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs text-white truncate">{item.contrato.motoristaNome}</span>
-                        <span className="font-mono text-[10px] text-slate-400 bg-black/40 border border-white/10 px-1 rounded">
-                          {item.veiculo.placa}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-amber-300/90 mt-1 font-mono font-bold">
-                        {formatCurrency(item.pagamento.valor)} • Ref: {item.pagamento.semanaReferencia || 'Semana Atual'}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => onRegistrarPagamento(item.contrato.id, item.pagamento.id)}
-                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition shadow-sm shrink-0 cursor-pointer"
-                    >
-                      Dar Baixa PIX
-                    </button>
+            {/* Alerta 4: Contas a Pagar Vencidas */}
+            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                  <div className="flex items-center gap-2">
+                    <span className={`p-1.5 rounded-lg ${contasAtrasadasLista.length > 0 ? 'bg-rose-500/15 text-rose-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
+                      <DollarSign size={16} />
+                    </span>
+                    <span className="text-xs font-bold text-white">Contas a Pagar</span>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="p-6 text-center mt-2">
-                <CheckCircle2 size={32} className="text-emerald-400 mx-auto mb-2 opacity-80" />
-                <p className="text-xs text-slate-300 font-semibold">Todas as locações estão em dia</p>
-                <p className="text-[11px] text-slate-500 mt-0.5">Sem atrasos ou pendências registradas nos contratos ativos.</p>
-              </div>
-            )}
-          </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    contasAtrasadasLista.length > 0
+                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      : 'bg-emerald-500/20 text-emerald-300'
+                  }`}>
+                    {contasAtrasadasLista.length} vencida{contasAtrasadasLista.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
 
-          <div className="pt-4 mt-2 border-t border-white/5 flex items-center justify-between text-xs">
-            <span className="text-slate-400">Inadimplência atual: 0.0%</span>
-            <button
-              onClick={() => onSelectTab('locacao')}
-              className="text-amber-400 hover:text-amber-300 font-bold transition flex items-center gap-1 cursor-pointer"
-            >
-              <span>Abrir Módulo de Locação</span>
-              <ArrowRight size={13} />
-            </button>
+                <div className="mt-3 space-y-2">
+                  {contasAtrasadasLista.length > 0 ? (
+                    contasAtrasadasLista.slice(0, 2).map((item, idx) => (
+                      <div key={idx} className="p-2 rounded-lg bg-white/[0.02] border border-white/5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-white truncate max-w-[120px]">{item.titulo}</span>
+                          <span className="text-[10px] text-rose-400 font-mono font-bold">
+                            {formatCurrency(item.valor)}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Venc: {formatDate(item.vencimento)} • {item.tipo}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-4 text-center">
+                      <CheckCircle2 size={24} className="text-emerald-400 mx-auto mb-1 opacity-80" />
+                      <p className="text-xs text-slate-300">Contas em dia</p>
+                      <p className="text-[10px] text-slate-500">Nenhuma despesa ou título atrasado</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-3 mt-3 border-t border-white/5">
+                <button
+                  onClick={() => onSelectTab('contas-pagar')}
+                  className="w-full py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-slate-300 hover:text-white font-medium flex items-center justify-center gap-1 transition cursor-pointer"
+                >
+                  <span>Contas a Pagar</span>
+                  <ArrowRight size={12} />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* 2.5 Banner de Acesso Rápido ao CRM & Inteligência de Vendas */}
       <div className="bg-gradient-to-r from-blue-950/40 via-[#141520] to-pink-950/30 p-5 rounded-2xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">

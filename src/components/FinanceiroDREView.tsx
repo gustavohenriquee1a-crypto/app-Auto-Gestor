@@ -99,6 +99,7 @@ import {
 import { ModalTransferenciaEntreContas } from './ModalTransferenciaEntreContas';
 import { FechamentoFolhaView } from './FechamentoFolhaView';
 import { ModalLancamentoExpresso } from './ModalLancamentoExpresso';
+import { ExtratoAvancadoView } from './ExtratoAvancadoView';
 
 interface FinanceiroDREViewProps {
   veiculos: Veiculo[];
@@ -114,7 +115,7 @@ interface FinanceiroDREViewProps {
   onSaveDespesaFixa?: (despesa: DespesaFixa) => Promise<void> | void;
 }
 
-type TabFinanceiro = 'dre' | 'contas_mes' | 'bancos_caixa' | 'fechamento_cego' | 'fechamento_folha';
+type TabFinanceiro = 'dre' | 'extrato_360' | 'contas_mes' | 'bancos_caixa' | 'fechamento_cego' | 'fechamento_folha';
 
 export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
   veiculos,
@@ -280,24 +281,29 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
     const res = await executarTransferenciaEntreContasFirestore(params);
 
     // Atualiza imediatamente o estado local de contas para refletir em tela sem delay
-    setContasBancarias((prev) =>
-      prev.map((c) => {
-        if (c.id === res.contaOrigemAtualizada.id) return res.contaOrigemAtualizada;
-        if (res.contaDestinoAtualizada && c.id === res.contaDestinoAtualizada.id) {
-          return res.contaDestinoAtualizada;
-        }
-        return c;
-      })
-    );
+    if (res?.contaOrigemAtualizada) {
+      setContasBancarias((prev) =>
+        prev.map((c) => {
+          if (c.id === res.contaOrigemAtualizada?.id) return res.contaOrigemAtualizada;
+          if (res.contaDestinoAtualizada && c.id === res.contaDestinoAtualizada.id) {
+            return res.contaDestinoAtualizada;
+          }
+          return c;
+        })
+      );
+    }
 
     const valorFmt = formatCurrency(params.valor);
+    const nomeOrigem = res?.contaOrigemAtualizada?.nome || 'Conta Origem';
+    const nomeDestino = res?.contaDestinoAtualizada?.nome || 'Conta Destino';
+
     if (params.isTerceiro) {
       setNotificacaoTransferencia(
-        `Transferência de ${valorFmt} realizada com sucesso para o terceiro "${params.terceiroDestinoNome}" com débito em "${res.contaOrigemAtualizada.nome}"!`
+        `Transferência de ${valorFmt} realizada com sucesso para o terceiro "${params.terceiroDestinoNome}" com débito em "${nomeOrigem}"!`
       );
     } else {
       setNotificacaoTransferencia(
-        `Transferência de ${valorFmt} concluída com sucesso: debitado de "${res.contaOrigemAtualizada.nome}" e creditado em "${res.contaDestinoAtualizada?.nome}"!`
+        `Transferência de ${valorFmt} concluída com sucesso: debitado de "${nomeOrigem}" e creditado em "${nomeDestino}"!`
       );
     }
     setTimeout(() => setNotificacaoTransferencia(null), 6500);
@@ -408,6 +414,7 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
     let totalAnunciosChassis = 0;
     veiculos.forEach((v) => {
       (v.despesas || []).forEach((dp) => {
+        if (!dp) return;
         if (dp.categoria === 'Anúncio Patrocinado (Meta/Google Ads)') {
           if (filtroPeriodo === 'todos' || (dp.data && dp.data.startsWith(filtroPeriodo))) {
             totalAnunciosChassis += (Number(dp.valor) || 0);
@@ -532,6 +539,7 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
       veiculos.forEach((v) => {
         if (v.despesas && Array.isArray(v.despesas)) {
           v.despesas.forEach((dp) => {
+            if (!dp) return;
             if (dp.data && dp.data.startsWith(chaveMes)) {
               totalCustosVariaveisChassi += (dp.valor || 0);
               qtdServicosChassi++;
@@ -649,6 +657,14 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
               }`}
             >
               📊 DRE Consolidado
+            </button>
+            <button
+              onClick={() => setActiveTab('extrato_360')}
+              className={`px-3.5 py-2 rounded-xl font-bold transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'extrato_360' ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Layers size={14} /> Extrato 360º & Movimentações
             </button>
             <button
               onClick={() => setActiveTab('contas_mes')}
@@ -1801,6 +1817,30 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                     <td className="py-2.5 px-4"></td>
                   </tr>
 
+                  {/* 6. MARKETING & TRÁFEGO PÓS-VENDA ATRIBUÍDO AO CHASSI */}
+                  <tr className="bg-pink-950/20 font-bold text-pink-300 hover:bg-pink-950/30 transition">
+                    <td className="py-2.5 px-4 font-sans flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Megaphone size={14} className="text-pink-400" />
+                        <span>(-) MARKETING & TRÁFEGO PAGO PÓS-VENDA (ATRIBUÍDO AOS CHASSIS)</span>
+                      </div>
+                      <span className="text-[10px] text-pink-400 bg-pink-500/10 px-2 py-0.5 rounded border border-pink-500/20 font-sans">
+                        Dedução do Lucro • Comissões Preservadas
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-4 text-right text-pink-400 font-mono">
+                      -{formatCurrency(dre.totalMarketingPosVenda || 0)}
+                    </td>
+                    <td className="py-2.5 px-4 text-right text-pink-400 font-mono">
+                      {formatPercent(dre.pctMarketingPosVenda || 0)}
+                    </td>
+                    <td className="py-2.5 px-4 text-center">
+                      <span className="text-[10px] bg-pink-500/20 text-pink-300 px-1.5 py-0.5 rounded font-mono">
+                        MKT-ADS
+                      </span>
+                    </td>
+                  </tr>
+
                   {/* (=) LUCRO LÍQUIDO REAL DA OPERAÇÃO */}
                   <tr className="bg-gradient-to-r from-emerald-950/50 via-teal-950/40 to-indigo-950/50 font-black text-white text-sm border-t-2 border-emerald-500/50">
                     <td className="py-3.5 px-4 font-sans uppercase tracking-wider text-emerald-300 flex items-center gap-2">
@@ -2141,6 +2181,13 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
 
               {/* Botões de Ação Rápida no Extrato */}
               <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+                <button
+                  onClick={() => setActiveTab('extrato_360')}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition"
+                  title="Abrir Extrato 360º com Filtros Avançados e Análise Proporcional"
+                >
+                  <Layers size={14} /> Extrato 360º Analítico
+                </button>
                 <button
                   onClick={() => {
                     setMovimentacaoParaEditar(null);
@@ -2536,6 +2583,32 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
         </div>
       )}
 
+      {/* ================= ABA: EXTRATO 360º & MOVIMENTAÇÕES AVANÇADAS ================= */}
+      {activeTab === 'extrato_360' && (
+        <ExtratoAvancadoView
+          movimentacoesContas={movimentacoesContas}
+          despesasFixas={despesasFixas}
+          contasBancarias={contasBancarias}
+          veiculos={veiculos}
+          vendas={vendas}
+          fornecedores={fornecedores}
+          usuarios={usuarios}
+          currentUser={currentUser}
+          onOpenLancamentoExpresso={(mov) => {
+            setMovimentacaoParaEditar(mov || null);
+            setModalLancamentoExpressoOpen(true);
+          }}
+          onOpenNovaTransferencia={() => {
+            setContaOrigemPreSelecionadaId(undefined);
+            setModalTransferenciaOpen(true);
+          }}
+          onDeleteMovimentacao={async (movId) => {
+            setMovimentacoesContas((prev) => prev.filter((m) => m.id !== movId));
+            await deleteMovimentacaoContaFirestore(movId);
+          }}
+        />
+      )}
+
       {/* ================= ABA 5: FECHAMENTO DE FOLHA & RH ================= */}
       {activeTab === 'fechamento_folha' && (
         <FechamentoFolhaView
@@ -2578,6 +2651,8 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
           veiculos={veiculos}
           fornecedores={fornecedores}
           usuarios={usuarios}
+          despesasFixas={despesasFixas}
+          vendas={vendas}
           currentUser={currentUser}
           movimentacaoToEdit={movimentacaoParaEditar}
           onSuccess={(msg) => {

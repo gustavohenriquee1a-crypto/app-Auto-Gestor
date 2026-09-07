@@ -317,6 +317,8 @@ export interface FechamentoCaucaoResumo {
   observacoes?: string;
 }
 
+export type OrigemLeadType = 'Meta Ads' | 'Google Ads' | 'Webmotors/OLX' | 'Passante' | 'Indicação' | 'WhatsApp';
+
 export type CanalOrigemLead = 
   | 'Anúncio Pago (Tráfego / Ads)'
   | 'Orgânico / Pátio'
@@ -451,7 +453,9 @@ export interface VendaVeiculo {
   compradorEstadoCivil?: string;
   formaPagamento: 'À Vista PIX' | 'Financiamento' | 'Troca + Volta' | 'Cartão' | 'Dinheiro' | 'Composição Híbrida';
   
-  // 1. Origem e Qualificação do Lead (Atração & CRM)
+  // 1. Origem e Qualificação do Lead (Atração, Marketing & CRM)
+  origemLead?: 'Meta Ads' | 'Google Ads' | 'Webmotors/OLX' | 'Passante' | 'Indicação' | 'WhatsApp';
+  despesaMarketingAplicadaPosVenda?: number; // Custo de tráfego/ads alocado no pós-venda (deduz do lucro no DRE sem alterar comissão)
   canalOrigem?: CanalOrigemLead;
   tipoAtendimento?: TipoAtendimentoLead;
   investimentoAnuncioProprio?: number; // R$ alocado para anúncio do carro na venda caso não lançado previamente
@@ -528,7 +532,37 @@ export interface VendaVeiculo {
   comissaoGerencialStatus?: 'Pendente' | 'Paga';
   comissaoGerencialBeneficiarioId?: string;
   comissaoGerencialBeneficiarioNome?: string;
+  // Motor de Comissões Dinâmicas (Regras por Usuário & Exceções por Venda)
+  comissoesDetalhadas?: ComissaoDetalhadaVenda[];
   observacoesVenda?: string;
+}
+
+export interface ComissaoDetalhadaVenda {
+  id: string;
+  usuarioId: string;
+  usuarioNome: string;
+  usuarioEmail?: string;
+  usuarioCargo?: string;
+  usuarioRole?: string;
+  regraId: string;
+  tipoBase: 'Venda Bruta' | 'Lucro do Veículo' | 'Retorno TAC' | 'Fixo por Carro';
+  formato: 'Percentual' | 'Valor Fixo';
+  valorOrPercentual: number;
+  condicaoGatilho: 'Sempre' | 'Apenas se houver TAC' | 'Apenas se for Financiado';
+  valorCalculado: number;
+  isento?: boolean; // Se foi isentado/removido nesta venda específica
+  motivoIsencao?: string;
+  status?: 'Pendente' | 'Paga';
+  dataPagamento?: string;
+}
+
+export interface RegraRemuneracao {
+  id: string;
+  tipoBase: 'Venda Bruta' | 'Lucro do Veículo' | 'Retorno TAC' | 'Fixo por Carro';
+  formato: 'Percentual' | 'Valor Fixo';
+  valorOrPercentual: number;
+  condicaoGatilho: 'Sempre' | 'Apenas se houver TAC' | 'Apenas se for Financiado';
+  descricao?: string;
 }
 
 export type TipoPropriedadeVeiculo = 'proprio' | 'consignado';
@@ -605,6 +639,9 @@ export interface Veiculo {
   contratoAtivo?: ContratoLocacao;
   dataVenda?: string;
   venda?: VendaVeiculo;
+  // Rastreamento de Divulgação & Performance de Marketing
+  anuncioAtivo?: boolean;
+  plataformasAnuncio?: string[];
   historicoStatus?: EventoHistoricoVeiculo[];
   historicoAuditoriaStatus?: LogAuditoriaStatusEstoque[];
   // Novas Funcionalidades: Test Drive, Vistoria e Funil Kanban
@@ -813,10 +850,12 @@ export interface MovimentacaoConta {
   comprovanteNumero?: string;
   observacoes?: string;
   // Roteamento contábil e referências do Lançamento Expresso
-  destinoRoteamento?: 'despesa_fixa' | 'veiculo_estoque' | 'veiculo_locacao' | 'retirada_socio' | 'avulso';
+  destinoRoteamento?: 'despesa_fixa' | 'veiculo_estoque' | 'veiculo_locacao' | 'retirada_socio' | 'avulso' | 'venda_realizada' | 'receita_loja';
   pagadorRecebedor?: string;
   despesaFixaId?: string;
   despesaVeiculoId?: string;
+  tipoCusto?: 'Fixo' | 'Variável' | 'Neutro';
+  categoriaCusto?: 'Custo Fixo' | 'Custo Variável' | 'Retirada Sócio' | 'Receita Venda' | 'Receita Locação' | 'Neutro';
 }
 
 export interface FechamentoCaixaDiario {
@@ -898,6 +937,7 @@ export interface Usuario {
   role: RoleUsuario;
   statusAprovacao: StatusAprovacao;
   permissoes: PermissoesUsuario;
+  regrasRemuneracao?: RegraRemuneracao[];
   regraComissaoPadrao?: 'admin_gerente' | 'vendedor_padrao' | 'vendedor_bonus_tac' | 'percentual_venda' | 'percentual' | 'fixo';
   tipoComissaoPadrao?: 'percentual' | 'fixo' | 'admin_gerente' | 'vendedor_padrao' | 'vendedor_bonus_tac' | 'percentual_venda';
   comissaoPadraoPercent?: number; // Ex: 1.5 (%) ou % sobre Lucro Bruto

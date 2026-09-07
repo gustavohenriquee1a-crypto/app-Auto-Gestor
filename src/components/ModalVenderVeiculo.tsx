@@ -33,6 +33,10 @@ import {
   Users,
   UserCheck,
   ChevronDown,
+  ChevronUp,
+  Calculator,
+  ToggleLeft,
+  ToggleRight,
   FileText,
   Printer,
   Mail,
@@ -46,10 +50,13 @@ import {
   Usuario, 
   ParcelaPagamentoHibrido,
   CanalOrigemLead,
+  OrigemLeadType,
   TipoAtendimentoLead,
   BancoFinanciamentoParceiro,
   BancoParceiro,
-  ContaBancariaCaixa
+  ContaBancariaCaixa,
+  RegraRemuneracao,
+  ComissaoDetalhadaVenda
 } from '../types';
 import { subscribeContasBancarias } from '../services/firestoreService';
 import { 
@@ -64,6 +71,7 @@ interface ModalVenderVeiculoProps {
   onClose: () => void;
   veiculo: Veiculo | null;
   currentUser?: Usuario | null;
+  usuarios?: Usuario[];
   bancosParceiros?: BancoParceiro[];
   profissoesCadastradas?: string[];
   onCadastrarProfissao?: (novaProfissao: string) => Promise<string> | void;
@@ -76,6 +84,7 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
   onClose,
   veiculo,
   currentUser,
+  usuarios = [],
   bancosParceiros = [],
   profissoesCadastradas,
   onCadastrarProfissao,
@@ -94,6 +103,7 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
   const [observacoesVenda, setObservacoesVenda] = useState('');
 
   // 1. Origem e Qualificação do Lead (Atração & CRM)
+  const [origemLead, setOrigemLead] = useState<OrigemLeadType>('Meta Ads');
   const [canalOrigem, setCanalOrigem] = useState<CanalOrigemLead>('Anúncio Pago (Tráfego / Ads)');
   const [tipoAtendimento, setTipoAtendimento] = useState<TipoAtendimentoLead>('Presencial na Loja');
   const [investimentoAnuncioProprio, setInvestimentoAnuncioProprio] = useState<number>(0);
@@ -327,7 +337,11 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
     ? Number(((lucroBruto * aliquotaImpostoMargem) / 100).toFixed(2))
     : 0;
 
-  // Recalcular comissão automaticamente de acordo com a Regra Selecionada
+  // Motor de Comissões Dinâmicas (Múltiplos Usuários e Isenções por Venda)
+  const [isencaoUsuarios, setIsencaoUsuarios] = useState<Record<string, boolean>>({});
+  const [isBlocoComissoesExpandido, setIsBlocoComissoesExpandido] = useState<boolean>(true);
+
+  // Recalcular comissão do formulário principal de acordo com a Regra Selecionada
   useEffect(() => {
     if (!comissaoAjustadaManualmente) {
       let valorCalculado = 0;
@@ -360,8 +374,280 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
     comissaoAjustadaManualmente
   ]);
 
-  // Lucro Líquido Real no Bolso
-  const lucroLiquidoRealNoBolso = Number((lucroBruto - comissaoValorFinal - valorFundoGarantia - valorImpostoMargem - rateioIndireto).toFixed(2));
+  // Lista de usuários candidatos ao cálculo de comissão
+  const usuariosCandidatos = useMemo(() => {
+    const list: Usuario[] = [];
+    const seenUids = new Set<string>();
+
+    if (currentUser) {
+      list.push(currentUser);
+      seenUids.add(currentUser.uid);
+    }
+
+    if (usuarios && usuarios.length > 0) {
+      usuarios.forEach((u) => {
+        if (!seenUids.has(u.uid)) {
+          if (u.statusAprovacao !== 'pendente') {
+            list.push(u);
+            seenUids.add(u.uid);
+          }
+        }
+      });
+    }
+
+    return list;
+  }, [usuarios, currentUser]);
+
+  // Avaliação dinâmica das regras por usuário
+  const comissoesUsuariosCalculadas = useMemo(() => {
+    return usuariosCandidatos.map((u) => {
+      const isCurrentUser = u.uid === currentUser?.uid;
+      const isSeller = isCurrentUser || (vendedorNome && u.displayName?.toLowerCase() === vendedorNome.toLowerCase());
+
+      // Regras de remuneração do usuário
+      let regras: RegraRemuneracao[] = [];
+      if (u.regrasRemuneracao && Array.isArray(u.regrasRemuneracao) && u.regrasRemuneracao.length > 0) {
+        regras = u.regrasRemuneracao;
+      } else if (isSeller) {
+        // Regras configuradas para o vendedor no formulário
+        if (perfilComissao === 'admin_gerente') {
+          regras = [{
+            id: 'reg_form_lucro',
+            tipoBase: 'Lucro do Veículo',
+            formato: 'Percentual',
+            valorOrPercentual: comissaoPercentualLucro,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Percentual sobre o Lucro da Venda',
+          }];
+        } else if (perfilComissao === 'vendedor_padrao') {
+          regras = [{
+            id: 'reg_form_fixo',
+            tipoBase: 'Fixo por Carro',
+            formato: 'Valor Fixo',
+            valorOrPercentual: comissaoFixa,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Comissão Fixa por Veículo',
+          }];
+        } else if (perfilComissao === 'vendedor_bonus_tac') {
+          regras = [
+            {
+              id: 'reg_form_fixo_tac',
+              tipoBase: 'Fixo por Carro',
+              formato: 'Valor Fixo',
+              valorOrPercentual: comissaoFixa,
+              condicaoGatilho: 'Sempre',
+              descricao: 'Fixo Base por Carro',
+            },
+            {
+              id: 'reg_form_bonus_tac',
+              tipoBase: 'Retorno TAC',
+              formato: 'Percentual',
+              valorOrPercentual: comissaoBonusTacPercent,
+              condicaoGatilho: 'Apenas se houver TAC',
+              descricao: 'Bônus sobre Retorno Financiamento (TAC)',
+            },
+          ];
+        } else {
+          regras = [{
+            id: 'reg_form_venda',
+            tipoBase: 'Venda Bruta',
+            formato: 'Percentual',
+            valorOrPercentual: comissaoPercentualVenda,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Percentual sobre Valor Bruto de Venda',
+          }];
+        }
+      } else {
+        // Perfil legado do usuário
+        if (u.regraComissaoPadrao === 'admin_gerente') {
+          regras = [{
+            id: `reg_${u.uid}_lucro`,
+            tipoBase: 'Lucro do Veículo',
+            formato: 'Percentual',
+            valorOrPercentual: u.comissaoPadraoPercent ?? 10,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Participação sobre o Lucro Líquido Real',
+          }];
+        } else if (u.regraComissaoPadrao === 'vendedor_bonus_tac') {
+          regras = [
+            {
+              id: `reg_${u.uid}_fixo`,
+              tipoBase: 'Fixo por Carro',
+              formato: 'Valor Fixo',
+              valorOrPercentual: u.comissaoPadraoFixo ?? 400,
+              condicaoGatilho: 'Sempre',
+              descricao: 'Fixo Base por Carro',
+            },
+            {
+              id: `reg_${u.uid}_tac`,
+              tipoBase: 'Retorno TAC',
+              formato: 'Percentual',
+              valorOrPercentual: u.comissaoBonusTacPercent ?? 20,
+              condicaoGatilho: 'Apenas se houver TAC',
+              descricao: 'Bônus sobre Retorno Financiamento (TAC)',
+            },
+          ];
+        } else if (u.tipoComissaoPadrao === 'percentual' || u.regraComissaoPadrao === 'percentual_venda') {
+          regras = [{
+            id: `reg_${u.uid}_venda`,
+            tipoBase: 'Venda Bruta',
+            formato: 'Percentual',
+            valorOrPercentual: u.comissaoPadraoPercent ?? 1.5,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Percentual sobre Valor de Venda',
+          }];
+        } else if (u.comissaoPadraoFixo) {
+          regras = [{
+            id: `reg_${u.uid}_fixo`,
+            tipoBase: 'Fixo por Carro',
+            formato: 'Valor Fixo',
+            valorOrPercentual: u.comissaoPadraoFixo,
+            condicaoGatilho: 'Sempre',
+            descricao: 'Fixo por Carro',
+          }];
+        }
+      }
+
+      // Avaliar regras individuais
+      const regrasAvaliadas = regras.map((r) => {
+        let gatilhoAtendido = true;
+        let motivoNaoAtendido = '';
+
+        if (r.condicaoGatilho === 'Apenas se houver TAC') {
+          gatilhoAtendido = totalRetornoTacBancos > 0;
+          if (!gatilhoAtendido) motivoNaoAtendido = 'Venda sem retorno de TAC bancária';
+        } else if (r.condicaoGatilho === 'Apenas se for Financiado') {
+          gatilhoAtendido = isFinanciamentoAtivo;
+          if (!gatilhoAtendido) motivoNaoAtendido = 'Venda sem financiamento ativo';
+        }
+
+        let valorCalculado = 0;
+        let detalheCalculo = '';
+
+        if (!gatilhoAtendido) {
+          valorCalculado = 0;
+          detalheCalculo = `Inativo (${motivoNaoAtendido})`;
+        } else {
+          if (r.tipoBase === 'Fixo por Carro') {
+            valorCalculado = r.formato === 'Valor Fixo' ? Number(r.valorOrPercentual) : Number(((valorVenda * r.valorOrPercentual) / 100).toFixed(2));
+            detalheCalculo = r.formato === 'Valor Fixo' ? `${formatCurrency(r.valorOrPercentual)} fixo` : `${r.valorOrPercentual}% sobre venda (${formatCurrency(valorVenda)})`;
+          } else if (r.tipoBase === 'Retorno TAC') {
+            valorCalculado = r.formato === 'Percentual' ? Number(((totalRetornoTacBancos * r.valorOrPercentual) / 100).toFixed(2)) : Number(r.valorOrPercentual);
+            detalheCalculo = r.formato === 'Percentual' ? `${r.valorOrPercentual}% de ${formatCurrency(totalRetornoTacBancos)} TAC` : `${formatCurrency(r.valorOrPercentual)} fixo TAC`;
+          } else if (r.tipoBase === 'Lucro do Veículo') {
+            const baseLucro = Math.max(0, lucroBrutoSemTac);
+            valorCalculado = r.formato === 'Percentual' ? Number(((baseLucro * r.valorOrPercentual) / 100).toFixed(2)) : Number(r.valorOrPercentual);
+            detalheCalculo = r.formato === 'Percentual' ? `${r.valorOrPercentual}% s/ lucro (${formatCurrency(baseLucro)})` : `${formatCurrency(r.valorOrPercentual)} fixo`;
+          } else if (r.tipoBase === 'Venda Bruta') {
+            valorCalculado = r.formato === 'Percentual' ? Number(((valorVenda * r.valorOrPercentual) / 100).toFixed(2)) : Number(r.valorOrPercentual);
+            detalheCalculo = `${r.valorOrPercentual}% sobre venda (${formatCurrency(valorVenda)})`;
+          }
+        }
+
+        return {
+          regraId: r.id,
+          tipoBase: r.tipoBase,
+          formato: r.formato,
+          valorOrPercentual: r.valorOrPercentual,
+          condicaoGatilho: r.condicaoGatilho,
+          descricao: r.descricao,
+          gatilhoAtendido,
+          valorCalculado,
+          detalheCalculo,
+        };
+      });
+
+      // Total apurado das regras
+      let totalRegras = regrasAvaliadas.reduce((acc, rg) => acc + (rg.gatilhoAtendido ? rg.valorCalculado : 0), 0);
+
+      // Se o vendedor teve ajuste manual de valor na UI
+      if (isSeller && comissaoAjustadaManualmente) {
+        totalRegras = Number(comissaoValorFinal || 0);
+      }
+
+      const isIsento = isencaoUsuarios[u.uid] === true;
+
+      // Verificar elegibilidade de exibição
+      const temRegraAtiva = regrasAvaliadas.some((rg) => rg.gatilhoAtendido && rg.valorCalculado > 0);
+      const isFinanciamentoCargo = (u.cargo?.toLowerCase().includes('financiamento') || u.cargo?.toLowerCase().includes('f&i') || u.cargo?.toLowerCase().includes('operador')) && (isFinanciamentoAtivo || totalRetornoTacBancos > 0);
+      const elegivelExibicao = isSeller || temRegraAtiva || isFinanciamentoCargo || (regras.length > 0 && isAdmin);
+
+      return {
+        usuarioId: u.uid,
+        usuarioNome: u.displayName || u.email || 'Usuário',
+        usuarioEmail: u.email,
+        usuarioCargo: u.cargo || (u.role === 'admin' ? 'Administrador' : u.role === 'gestor' ? 'Gestor' : 'Vendedor'),
+        usuarioRole: u.role,
+        isSeller,
+        regrasAvaliadas,
+        totalCalculado: totalRegras,
+        isento: isIsento,
+        elegivelExibicao,
+      };
+    }).filter((u) => u.elegivelExibicao);
+  }, [
+    usuariosCandidatos,
+    currentUser,
+    vendedorNome,
+    perfilComissao,
+    comissaoPercentualLucro,
+    comissaoFixa,
+    comissaoBonusTacPercent,
+    comissaoPercentualVenda,
+    comissaoValorFinal,
+    comissaoAjustadaManualmente,
+    totalRetornoTacBancos,
+    isFinanciamentoAtivo,
+    lucroBrutoSemTac,
+    valorVenda,
+    isencaoUsuarios,
+    isAdmin,
+  ]);
+
+  // Total de comissões ativas debitadas do DRE
+  const totalComissoesAtivasValor = useMemo(() => {
+    return comissoesUsuariosCalculadas
+      .filter((u) => !u.isento)
+      .reduce((acc, u) => acc + u.totalCalculado, 0);
+  }, [comissoesUsuariosCalculadas]);
+
+  // Lista para salvar em VendaVeiculo.comissoesDetalhadas
+  const comissoesDetalhadasParaVenda: ComissaoDetalhadaVenda[] = useMemo(() => {
+    const list: ComissaoDetalhadaVenda[] = [];
+    comissoesUsuariosCalculadas.forEach((u) => {
+      u.regrasAvaliadas.forEach((r) => {
+        list.push({
+          id: `com_${u.usuarioId}_${r.regraId}`,
+          usuarioId: u.usuarioId,
+          usuarioNome: u.usuarioNome,
+          usuarioEmail: u.usuarioEmail,
+          usuarioCargo: u.usuarioCargo,
+          usuarioRole: u.usuarioRole,
+          regraId: r.regraId,
+          tipoBase: r.tipoBase,
+          formato: r.formato,
+          valorOrPercentual: r.valorOrPercentual,
+          condicaoGatilho: r.condicaoGatilho,
+          valorCalculado: u.isento ? 0 : r.valorCalculado,
+          isento: u.isento,
+          motivoIsencao: u.isento ? 'Isentado nesta venda' : undefined,
+          status: 'Pendente',
+        });
+      });
+    });
+    return list;
+  }, [comissoesUsuariosCalculadas]);
+
+  // Alternar isenção do usuário
+  const handleToggleIsencao = (usuarioId: string) => {
+    setIsencaoUsuarios((prev) => ({
+      ...prev,
+      [usuarioId]: !prev[usuarioId],
+    }));
+  };
+
+  // Lucro Líquido Real no Bolso (imediata dedução de todas as comissões ativas)
+  const lucroLiquidoRealNoBolso = Number((lucroBruto - totalComissoesAtivasValor - valorFundoGarantia - valorImpostoMargem - rateioIndireto).toFixed(2));
   const margemRealPercent = valorVenda > 0 ? (lucroLiquidoRealNoBolso / valorVenda) * 100 : 0;
 
   // Helper para adicionar nova linha de pagamento híbrido
@@ -590,6 +876,8 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
       formaPagamento: modoPagamento === 'hibrido' ? 'Composição Híbrida' : formaSimples,
 
       // 1. Origem e Qualificação do Lead (Atração & CRM)
+      origemLead,
+      despesaMarketingAplicadaPosVenda: 0,
       canalOrigem,
       tipoAtendimento,
       investimentoAnuncioProprio: valorAnuncioAdicional > 0 ? valorAnuncioAdicional : undefined,
@@ -664,9 +952,10 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
       comissaoPercentual: perfilComissao === 'admin_gerente' ? Number(comissaoPercentualLucro) : (perfilComissao === 'percentual_venda' ? Number(comissaoPercentualVenda) : undefined),
       comissaoFixa: (perfilComissao === 'vendedor_padrao' || perfilComissao === 'vendedor_bonus_tac') ? Number(comissaoFixa) : undefined,
       comissaoBonusTacPercent: perfilComissao === 'vendedor_bonus_tac' ? Number(comissaoBonusTacPercent) : undefined,
-      comissaoValor: Number(comissaoValorFinal),
+      comissaoValor: Number(totalComissoesAtivasValor),
       comissaoAjustadaManualmente,
       comissaoStatus: 'Pendente',
+      comissoesDetalhadas: comissoesDetalhadasParaVenda,
       observacoesVenda,
     };
 
@@ -748,7 +1037,37 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
               <div>
-                <label className="block text-slate-300 font-bold mb-1">Origem do Cliente/Venda *</label>
+                <label className="block text-slate-300 font-bold mb-1">Origem do Lead (Atribuição) *</label>
+                <select
+                  value={origemLead}
+                  onChange={(e) => {
+                    const val = e.target.value as OrigemLeadType;
+                    setOrigemLead(val);
+                    if (val === 'Meta Ads' || val === 'Google Ads') {
+                      setCanalOrigem('Anúncio Pago (Tráfego / Ads)');
+                    } else if (val === 'Webmotors/OLX') {
+                      setCanalOrigem('Portais (Webmotors/OLX)');
+                    } else if (val === 'Passante') {
+                      setCanalOrigem('Orgânico / Pátio');
+                    } else if (val === 'Indicação') {
+                      setCanalOrigem('Indicação / Redes Sociais');
+                    } else if (val === 'WhatsApp') {
+                      setCanalOrigem('Anúncio Pago (Tráfego / Ads)');
+                    }
+                  }}
+                  className="w-full p-2.5 rounded-xl bg-black/40 border border-white/10 text-white font-semibold text-xs outline-none focus:border-blue-500"
+                >
+                  <option value="Meta Ads">📱 Meta Ads (Instagram / Facebook)</option>
+                  <option value="Google Ads">🎯 Google Ads (Pesquisa / YouTube)</option>
+                  <option value="Webmotors/OLX">🌐 Webmotors / OLX</option>
+                  <option value="Passante">🚶 Passante / Loja Física</option>
+                  <option value="Indicação">🤝 Indicação de Cliente</option>
+                  <option value="WhatsApp">💬 WhatsApp Direto</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">Canal de Origem CRM</label>
                 <select
                   value={canalOrigem}
                   onChange={(e) => setCanalOrigem(e.target.value as CanalOrigemLead)}
@@ -1930,311 +2249,365 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
             </div>
           </div>
 
-          {/* 6. Perfil e Cálculo de Comissionamento */}
-          <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/40 via-[#16171f] to-blue-950/40 border border-purple-500/30 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-white/5">
-              <div className="flex items-center gap-2">
-                <Award size={18} className="text-amber-400" />
+          {/* 6. Motor de Comissões Dinâmicas & Distribuição de Comissões Calculadas */}
+          <div className="rounded-2xl bg-gradient-to-r from-purple-950/40 via-[#16171f] to-blue-950/40 border border-purple-500/30 overflow-hidden shadow-lg transition">
+            {/* Header expansível com resumo das comissões */}
+            <div
+              onClick={() => setIsBlocoComissoesExpandido(!isBlocoComissoesExpandido)}
+              className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-white/[0.02] transition select-none"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-300">
+                  <Calculator size={20} />
+                </div>
                 <div>
-                  <span className="font-bold text-white text-xs block">
-                    {isAdmin ? 'Perfil de Comissionamento da Venda (Gestão Administrativa)' : 'Comissão de Venda (Definida pelo Administrador)'}
-                  </span>
-                  <span className="text-[10px] text-slate-400">
-                    {isAdmin
-                      ? 'Selecione a regra de comissionamento de acordo com o cargo e modelo de remuneração'
-                      : 'Modelo de remuneração e comissionamento pré-definido pelo Administrador na aprovação do usuário'}
+                  <div className="flex items-center gap-2">
+                    <span className="font-extrabold text-white text-xs sm:text-sm">
+                      Distribuição de Comissões Calculadas
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono font-bold border border-purple-500/30">
+                      Motor Dinâmico
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400">
+                    {comissoesUsuariosCalculadas.length} participante(s) • {comissoesUsuariosCalculadas.filter(u => !u.isento).length} ativo(s) na venda
                   </span>
                 </div>
               </div>
-              <div className="text-right flex items-center gap-2">
-                <span className="text-[10px] text-slate-400">Comissão a Receber:</span>
-                <span className="text-lg font-black text-emerald-400 font-mono">
-                  {formatCurrency(comissaoValorFinal)}
-                </span>
+
+              <div className="flex items-center justify-between sm:justify-end gap-3">
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                    Total Comissões da Venda:
+                  </span>
+                  <span className="text-base sm:text-lg font-black text-emerald-400 font-mono">
+                    {formatCurrency(totalComissoesAtivasValor)}
+                  </span>
+                </div>
+                <div className="p-1.5 rounded-lg bg-white/5 text-slate-400 hover:text-white transition">
+                  {isBlocoComissoesExpandido ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </div>
               </div>
             </div>
 
-            {isAdmin ? (
-              <>
-                {/* Profile Selection Tabs - VISÍVEL APENAS PARA ADMIN */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPerfilComissao('admin_gerente');
-                      setComissaoAjustadaManualmente(false);
-                    }}
-                    className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition cursor-pointer ${
-                      perfilComissao === 'admin_gerente'
-                        ? 'bg-purple-600/30 border-purple-500 text-purple-200 ring-1 ring-purple-500'
-                        : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span className="text-xs font-bold flex items-center gap-1.5 text-purple-300">
-                      <TrendingUp size={13} /> 1. % Lucro Bruto
-                    </span>
-                    <span className="text-[10px] text-slate-400 leading-tight">
-                      {comissaoPercentualLucro}% s/ Lucro
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPerfilComissao('vendedor_padrao');
-                      setComissaoAjustadaManualmente(false);
-                    }}
-                    className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition cursor-pointer ${
-                      perfilComissao === 'vendedor_padrao'
-                        ? 'bg-blue-600/30 border-blue-500 text-blue-200 ring-1 ring-blue-500'
-                        : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span className="text-xs font-bold flex items-center gap-1.5 text-blue-300">
-                      <DollarSign size={13} /> 2. Fixo por Carro
-                    </span>
-                    <span className="text-[10px] text-slate-400 leading-tight">
-                      {formatCurrency(comissaoFixa)}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPerfilComissao('vendedor_bonus_tac');
-                      setComissaoAjustadaManualmente(false);
-                    }}
-                    className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition cursor-pointer ${
-                      perfilComissao === 'vendedor_bonus_tac'
-                        ? 'bg-amber-600/30 border-amber-500 text-amber-200 ring-1 ring-amber-500'
-                        : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span className="text-xs font-bold flex items-center gap-1.5 text-amber-300">
-                      <Sparkles size={13} /> 3. Fixo + Bônus TAC
-                    </span>
-                    <span className="text-[10px] text-slate-400 leading-tight">
-                      Fixo + {comissaoBonusTacPercent}% Retorno
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPerfilComissao('percentual_venda');
-                      setComissaoAjustadaManualmente(false);
-                    }}
-                    className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition cursor-pointer ${
-                      perfilComissao === 'percentual_venda'
-                        ? 'bg-emerald-600/30 border-emerald-500 text-emerald-200 ring-1 ring-emerald-500'
-                        : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span className="text-xs font-bold flex items-center gap-1.5 text-emerald-300">
-                      <Percent size={13} /> 4. % Valor Carro
-                    </span>
-                    <span className="text-[10px] text-slate-400 leading-tight">
-                      {comissaoPercentualVenda}% do Veículo
-                    </span>
-                  </button>
+            {/* Conteúdo Expansível */}
+            {isBlocoComissoesExpandido && (
+              <div className="p-4 pt-0 space-y-4 border-t border-white/5 animate-fadeIn">
+                {/* Banner Explicativo */}
+                <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-500/20 text-[11px] text-purple-200/90 leading-relaxed flex items-start gap-2.5">
+                  <Sparkles size={16} className="text-purple-400 shrink-0 mt-0.5" />
+                  <span>
+                    O <strong>Motor de Comissões Dinâmicas</strong> calcula as remunerações de cada colaborador a partir das regras configuradas (fixo, lucro, retorno de TAC e percentuais de venda). Você pode <strong>isentar ou remover</strong> qualquer colaborador desta venda clicando no interruptor; o DRE da venda é recalculado instantaneamente.
+                  </span>
                 </div>
 
-                {/* Parameter Inputs - Visíveis para Admin */}
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 pt-1">
-                  <div>
-                    <label className="block text-slate-400 text-[10px] uppercase font-bold mb-1">Vendedor / Responsável</label>
-                    <input
-                      type="text"
-                      required
-                      value={vendedorNome}
-                      onChange={(e) => setVendedorNome(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-white/10 bg-[#16171f] text-white text-xs font-medium outline-none"
-                    />
-                    <span className="text-[10px] text-purple-400/80 block mt-1 leading-tight">
-                      💡 Se o vendedor ainda não tiver cadastro, a venda pode ser registrada agora e transferida depois pela administração.
-                    </span>
-                  </div>
+                {/* Lista de Usuários e Regras Avaliadas */}
+                <div className="space-y-3">
+                  {comissoesUsuariosCalculadas.map((u) => {
+                    const isIsento = u.isento;
+                    return (
+                      <div
+                        key={u.usuarioId}
+                        className={`p-3.5 rounded-xl border transition ${
+                          isIsento
+                            ? 'bg-rose-950/10 border-rose-500/30 opacity-80'
+                            : 'bg-[#121319] border-white/10 hover:border-purple-500/30'
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-white/5">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center text-white font-black text-xs">
+                              {u.usuarioNome.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-white text-xs">
+                                  {u.usuarioNome}
+                                </span>
+                                {u.isSeller && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30">
+                                    Vendedor Principal
+                                  </span>
+                                )}
+                                {isIsento && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30">
+                                    Isento nesta Venda
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-slate-400">
+                                {u.usuarioCargo} • {u.usuarioEmail || 'Sem e-mail'}
+                              </span>
+                            </div>
+                          </div>
 
-                  {perfilComissao === 'admin_gerente' && (
-                    <div>
-                      <label className="block text-purple-300 text-[10px] uppercase font-bold mb-1">% sobre Lucro Bruto</label>
-                      <input
-                        type="number"
-                        step="0.5"
-                        value={comissaoPercentualLucro}
-                        onChange={(e) => {
-                          setComissaoPercentualLucro(Number(e.target.value));
-                          setComissaoAjustadaManualmente(false);
-                        }}
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-purple-500/30 bg-[#16171f] text-purple-300 text-xs font-mono font-bold outline-none"
-                      />
-                    </div>
-                  )}
+                          <div className="flex items-center gap-3 justify-between sm:justify-end">
+                            {/* Botão de Isenção / Remoção de comissão para esta venda */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleIsencao(u.usuarioId)}
+                              className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                                isIsento
+                                  ? 'bg-rose-500/20 border-rose-500/50 text-rose-300 hover:bg-rose-500/30'
+                                  : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300 hover:bg-rose-500/20 hover:border-rose-500/40 hover:text-rose-300'
+                              }`}
+                              title={isIsento ? 'Reativar comissão desta venda' : 'Isentar/remover comissão deste colaborador exclusivamente nesta venda'}
+                            >
+                              {isIsento ? (
+                                <>
+                                  <ToggleLeft size={16} /> Isento da Venda
+                                </>
+                              ) : (
+                                <>
+                                  <ToggleRight size={16} /> Ativo na Venda
+                                </>
+                              )}
+                            </button>
 
-                  {(perfilComissao === 'vendedor_padrao' || perfilComissao === 'vendedor_bonus_tac') && (
-                    <div>
-                      <label className="block text-blue-300 text-[10px] uppercase font-bold mb-1">Comissão Fixa (R$)</label>
-                      <input
-                        type="number"
-                        step="50"
-                        value={comissaoFixa}
-                        onChange={(e) => {
-                          setComissaoFixa(Number(e.target.value));
-                          setComissaoAjustadaManualmente(false);
-                        }}
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-blue-500/30 bg-[#16171f] text-blue-300 text-xs font-mono font-bold outline-none"
-                      />
-                    </div>
-                  )}
+                            {/* Valor Calculado */}
+                            <div className="text-right min-w-[100px]">
+                              {isIsento ? (
+                                <div>
+                                  <span className="line-through text-slate-500 font-mono text-[11px] block">
+                                    {formatCurrency(u.totalCalculado)}
+                                  </span>
+                                  <span className="text-rose-400 font-mono font-bold text-xs">
+                                    R$ 0,00
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-base font-black text-emerald-400 font-mono">
+                                  {formatCurrency(u.totalCalculado)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
 
-                  {perfilComissao === 'vendedor_bonus_tac' && (
-                    <div>
-                      <label className="block text-amber-300 text-[10px] uppercase font-bold mb-1">% Bônus TAC Banco</label>
-                      <input
-                        type="number"
-                        step="1"
-                        value={comissaoBonusTacPercent}
-                        onChange={(e) => {
-                          setComissaoBonusTacPercent(Number(e.target.value));
-                          setComissaoAjustadaManualmente(false);
-                        }}
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-amber-500/30 bg-[#16171f] text-amber-300 text-xs font-mono font-bold outline-none"
-                      />
-                    </div>
-                  )}
-
-                  {perfilComissao === 'percentual_venda' && (
-                    <div>
-                      <label className="block text-slate-400 text-[10px] uppercase font-bold mb-1">% da Venda</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={comissaoPercentualVenda}
-                        onChange={(e) => {
-                          setComissaoPercentualVenda(Number(e.target.value));
-                          setComissaoAjustadaManualmente(false);
-                        }}
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-white/10 bg-[#16171f] text-white text-xs font-mono font-bold outline-none"
-                      />
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-emerald-400 text-[10px] uppercase font-bold mb-1">
-                      Comissão Final R$ {comissaoAjustadaManualmente ? '(Manual)' : '(Auto)'}
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={comissaoValorFinal}
-                      onChange={(e) => {
-                        setComissaoValorFinal(Number(e.target.value));
-                        setComissaoAjustadaManualmente(true);
-                      }}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-emerald-500/50 bg-[#16171f] text-emerald-400 text-xs font-mono font-black outline-none"
-                    />
-                  </div>
-                </div>
-              </>
-            ) : (
-              /* Resumo Bloqueado (Read-Only) para Vendedores e outros perfis */
-              <div className="p-3.5 rounded-2xl bg-black/40 border border-white/10 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-white/5">
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-white">Vendedor Responsável:</span>
-                      <span className="text-xs font-semibold text-blue-300">{vendedorNome}</span>
-                    </div>
-                    <span className="text-[11px] text-slate-400">
-                      Regra Atribuída:{' '}
-                      <strong className="text-slate-200">
-                        {perfilComissao === 'vendedor_padrao' && 'Valor Fixo por Carro Vendido'}
-                        {perfilComissao === 'vendedor_bonus_tac' && 'Valor Fixo + Bônus sobre Retorno Financiamento (TAC)'}
-                        {perfilComissao === 'admin_gerente' && 'Percentual sobre Lucro Bruto da Venda'}
-                        {perfilComissao === 'percentual_venda' && 'Percentual sobre Valor do Veículo'}
-                      </strong>
-                    </span>
-                  </div>
-
-                  <div className="px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold text-xs font-mono">
-                    Comissão Calculada: {formatCurrency(comissaoValorFinal)}
-                  </div>
+                        {/* Detalhamento do Cálculo das Regras */}
+                        <div className="pt-2 space-y-1.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Detalhamento do Cálculo:
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                            {u.regrasAvaliadas.map((rg, idx) => (
+                              <div
+                                key={rg.regraId || idx}
+                                className={`p-2 rounded-lg border text-[11px] ${
+                                  !rg.gatilhoAtendido
+                                    ? 'bg-black/20 border-white/5 text-slate-500'
+                                    : 'bg-black/30 border-white/5 text-slate-300'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between font-mono">
+                                  <span className="font-bold text-slate-200">
+                                    {rg.tipoBase}:
+                                  </span>
+                                  <span className={rg.gatilhoAtendido ? 'text-purple-300 font-bold' : 'text-slate-500'}>
+                                    {rg.gatilhoAtendido ? formatCurrency(rg.valorCalculado) : 'R$ 0,00'}
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  {rg.detalheCalculo}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
 
-                {/* Discriminação detalhada do cálculo */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                  {perfilComissao === 'vendedor_padrao' && (
-                    <div className="p-2.5 rounded-xl bg-[#16171f] border border-white/5 col-span-3">
-                      <span className="text-[10px] text-slate-400 block uppercase font-bold">Valor Fixo da Comissão:</span>
-                      <p className="text-base font-black text-emerald-400 font-mono mt-0.5">
-                        {formatCurrency(comissaoFixa)}
-                      </p>
-                      <span className="text-[10px] text-slate-500">
-                        Valor pré-fixado pelo administrador na sua contratação/aprovação.
+                {/* Controles de Configuração Manual do Vendedor Principal (Admin) */}
+                {isAdmin && (
+                  <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                      <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                        <Award size={14} className="text-amber-400" />
+                        Ajuste Manual / Sobrescrita do Vendedor Principal
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Opcional para personalização direta no fechamento
                       </span>
                     </div>
-                  )}
 
-                  {perfilComissao === 'vendedor_bonus_tac' && (
-                    <>
-                      <div className="p-2.5 rounded-xl bg-[#16171f] border border-white/5">
-                        <span className="text-[10px] text-slate-400 block uppercase font-bold">1. Base Fixa:</span>
-                        <p className="text-sm font-bold text-blue-300 font-mono mt-0.5">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPerfilComissao('admin_gerente');
+                          setComissaoAjustadaManualmente(false);
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition cursor-pointer ${
+                          perfilComissao === 'admin_gerente'
+                            ? 'bg-purple-600/30 border-purple-500 text-purple-200 ring-1 ring-purple-500'
+                            : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-xs font-bold flex items-center gap-1.5 text-purple-300">
+                          <TrendingUp size={13} /> 1. % Lucro Bruto
+                        </span>
+                        <span className="text-[10px] text-slate-400 leading-tight">
+                          {comissaoPercentualLucro}% s/ Lucro
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPerfilComissao('vendedor_padrao');
+                          setComissaoAjustadaManualmente(false);
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition cursor-pointer ${
+                          perfilComissao === 'vendedor_padrao'
+                            ? 'bg-blue-600/30 border-blue-500 text-blue-200 ring-1 ring-blue-500'
+                            : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-xs font-bold flex items-center gap-1.5 text-blue-300">
+                          <DollarSign size={13} /> 2. Fixo por Carro
+                        </span>
+                        <span className="text-[10px] text-slate-400 leading-tight">
                           {formatCurrency(comissaoFixa)}
-                        </p>
-                        <span className="text-[10px] text-slate-500">Fixo garantido da venda</span>
-                      </div>
-
-                      <div className="p-2.5 rounded-xl bg-[#16171f] border border-white/5">
-                        <span className="text-[10px] text-slate-400 block uppercase font-bold">
-                          2. Bônus TAC ({comissaoBonusTacPercent}%):
                         </span>
-                        <p className="text-sm font-bold text-amber-300 font-mono mt-0.5">
-                          {formatCurrency((totalRetornoTacBancos * comissaoBonusTacPercent) / 100)}
-                        </p>
-                        <span className="text-[10px] text-slate-500">
-                          {isFinanciamentoAtivo ? `Retorno Banco: ${formatCurrency(totalRetornoTacBancos)}` : 'Sem financiamento'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPerfilComissao('vendedor_bonus_tac');
+                          setComissaoAjustadaManualmente(false);
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition cursor-pointer ${
+                          perfilComissao === 'vendedor_bonus_tac'
+                            ? 'bg-amber-600/30 border-amber-500 text-amber-200 ring-1 ring-amber-500'
+                            : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-xs font-bold flex items-center gap-1.5 text-amber-300">
+                          <Sparkles size={13} /> 3. Fixo + Bônus TAC
                         </span>
+                        <span className="text-[10px] text-slate-400 leading-tight">
+                          Fixo + {comissaoBonusTacPercent}% Retorno
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPerfilComissao('percentual_venda');
+                          setComissaoAjustadaManualmente(false);
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition cursor-pointer ${
+                          perfilComissao === 'percentual_venda'
+                            ? 'bg-emerald-600/30 border-emerald-500 text-emerald-200 ring-1 ring-emerald-500'
+                            : 'bg-black/30 border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-xs font-bold flex items-center gap-1.5 text-emerald-300">
+                          <Percent size={13} /> 4. % Valor Carro
+                        </span>
+                        <span className="text-[10px] text-slate-400 leading-tight">
+                          {comissaoPercentualVenda}% do Veículo
+                        </span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 pt-1">
+                      <div>
+                        <label className="block text-slate-400 text-[10px] uppercase font-bold mb-1">Vendedor / Responsável</label>
+                        <input
+                          type="text"
+                          required
+                          value={vendedorNome}
+                          onChange={(e) => setVendedorNome(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-white/10 bg-[#16171f] text-white text-xs font-medium outline-none"
+                        />
                       </div>
 
-                      <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/20">
-                        <span className="text-[10px] text-emerald-400 block uppercase font-bold">3. Total a Receber:</span>
-                        <p className="text-sm font-black text-emerald-400 font-mono mt-0.5">
-                          {formatCurrency(comissaoValorFinal)}
-                        </p>
-                        <span className="text-[10px] text-slate-500">Fixo + % do retorno do banco</span>
+                      {perfilComissao === 'admin_gerente' && (
+                        <div>
+                          <label className="block text-purple-300 text-[10px] uppercase font-bold mb-1">% sobre Lucro Bruto</label>
+                          <input
+                            type="number"
+                            step="0.5"
+                            value={comissaoPercentualLucro}
+                            onChange={(e) => {
+                              setComissaoPercentualLucro(Number(e.target.value));
+                              setComissaoAjustadaManualmente(false);
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-purple-500/30 bg-[#16171f] text-purple-300 text-xs font-mono font-bold outline-none"
+                          />
+                        </div>
+                      )}
+
+                      {(perfilComissao === 'vendedor_padrao' || perfilComissao === 'vendedor_bonus_tac') && (
+                        <div>
+                          <label className="block text-blue-300 text-[10px] uppercase font-bold mb-1">Comissão Fixa (R$)</label>
+                          <input
+                            type="number"
+                            step="50"
+                            value={comissaoFixa}
+                            onChange={(e) => {
+                              setComissaoFixa(Number(e.target.value));
+                              setComissaoAjustadaManualmente(false);
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-blue-500/30 bg-[#16171f] text-blue-300 text-xs font-mono font-bold outline-none"
+                          />
+                        </div>
+                      )}
+
+                      {perfilComissao === 'vendedor_bonus_tac' && (
+                        <div>
+                          <label className="block text-amber-300 text-[10px] uppercase font-bold mb-1">% Bônus TAC Banco</label>
+                          <input
+                            type="number"
+                            step="1"
+                            value={comissaoBonusTacPercent}
+                            onChange={(e) => {
+                              setComissaoBonusTacPercent(Number(e.target.value));
+                              setComissaoAjustadaManualmente(false);
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-amber-500/30 bg-[#16171f] text-amber-300 text-xs font-mono font-bold outline-none"
+                          />
+                        </div>
+                      )}
+
+                      {perfilComissao === 'percentual_venda' && (
+                        <div>
+                          <label className="block text-slate-400 text-[10px] uppercase font-bold mb-1">% da Venda</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={comissaoPercentualVenda}
+                            onChange={(e) => {
+                              setComissaoPercentualVenda(Number(e.target.value));
+                              setComissaoAjustadaManualmente(false);
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-white/10 bg-[#16171f] text-white text-xs font-mono font-bold outline-none"
+                          />
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-emerald-400 text-[10px] uppercase font-bold mb-1">
+                          Comissão Direta R$ {comissaoAjustadaManualmente ? '(Manual)' : '(Auto)'}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={comissaoValorFinal}
+                          onChange={(e) => {
+                            setComissaoValorFinal(Number(e.target.value));
+                            setComissaoAjustadaManualmente(true);
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-emerald-500/50 bg-[#16171f] text-emerald-400 text-xs font-mono font-black outline-none"
+                        />
                       </div>
-                    </>
-                  )}
-
-                  {perfilComissao === 'admin_gerente' && (
-                    <div className="p-2.5 rounded-xl bg-[#16171f] border border-white/5 col-span-3">
-                      <span className="text-[10px] text-slate-400 block uppercase font-bold">
-                        {comissaoPercentualLucro}% sobre o Lucro Bruto Apurado:
-                      </span>
-                      <p className="text-base font-black text-purple-300 font-mono mt-0.5">
-                        {formatCurrency(comissaoValorFinal)}
-                      </p>
-                      <span className="text-[10px] text-slate-500">
-                        Calculado automaticamente sobre a margem da venda.
-                      </span>
                     </div>
-                  )}
-
-                  {perfilComissao === 'percentual_venda' && (
-                    <div className="p-2.5 rounded-xl bg-[#16171f] border border-white/5 col-span-3">
-                      <span className="text-[10px] text-slate-400 block uppercase font-bold">
-                        {comissaoPercentualVenda}% sobre o Valor de Venda do Veículo ({formatCurrency(valorVenda)}):
-                      </span>
-                      <p className="text-base font-black text-amber-300 font-mono mt-0.5">
-                        {formatCurrency(comissaoValorFinal)}
-                      </p>
-                      <span className="text-[10px] text-slate-500">
-                        Percentual bruto pré-definido pelo Administrador.
-                      </span>
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2343,8 +2716,8 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
                     <span className="text-white font-bold">{formatCurrency(lucroBruto)}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block">Comissão Vendedor:</span>
-                    <span className="text-rose-400 font-bold">-{formatCurrency(comissaoValorFinal)}</span>
+                    <span className="text-slate-500 block">Comissões ({comissoesUsuariosCalculadas.filter((u) => !u.isento).length} ativas):</span>
+                    <span className="text-rose-400 font-bold">-{formatCurrency(totalComissoesAtivasValor)}</span>
                   </div>
                   <div>
                     <span className="text-slate-500 block">Fundo Garantia (CDC):</span>

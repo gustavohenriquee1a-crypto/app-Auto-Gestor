@@ -328,18 +328,19 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
     const list: Array<{ veiculo: Veiculo; despesa: DespesaVeiculo }> = [];
     veiculosFrotaLocacao.forEach(v => {
       (v.despesas || []).forEach(d => {
+        if (!d) return;
         if (
           d.tipo === 'Mecânica / Revisão' || 
           d.tipo === 'Pneus' || 
           d.tipo === 'Funilaria / Pintura' || 
-          d.descricao.toLowerCase().includes('óleo') ||
-          d.descricao.toLowerCase().includes('revisão')
+          (d.descricao && d.descricao.toLowerCase().includes('óleo')) ||
+          (d.descricao && d.descricao.toLowerCase().includes('revisão'))
         ) {
           list.push({ veiculo: v, despesa: d });
         }
       });
     });
-    return list.sort((a, b) => new Date(b.despesa.data).getTime() - new Date(a.despesa.data).getTime());
+    return list.sort((a, b) => new Date(b?.despesa?.data || 0).getTime() - new Date(a?.despesa?.data || 0).getTime());
   }, [veiculosFrotaLocacao]);
 
   const totalCustoManutencoesFrota = useMemo(() => {
@@ -365,48 +366,51 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
     }
 
     // 2. Pagamentos de Aluguel Efetuados (Crédito)
-    contrato.pagamentos.forEach(p => {
+    (contrato.pagamentos || []).forEach(p => {
+      if (!p) return;
       if (p.status === 'Pago') {
-        saldoAcumulado += p.valor;
+        saldoAcumulado += (Number(p.valor) || 0);
         lancamentos.push({
           id: `cc-pag-${p.id}`,
-          data: p.dataPagamento || p.dataVencimento,
+          data: p.dataPagamento || p.dataVencimento || '',
           tipo: 'CREDITO_PAGAMENTO',
-          descricao: `Pagamento de Aluguel Semanal (${p.semanaReferencia})`,
-          valor: p.valor,
+          descricao: `Pagamento de Aluguel Semanal (${p.semanaReferencia || ''})`,
+          valor: (Number(p.valor) || 0),
           saldoApos: saldoAcumulado
         });
       }
     });
 
     // 3. Débitos de Semanas Vencidas (Débito)
-    contrato.pagamentos.forEach(p => {
-      saldoAcumulado -= p.valor;
+    (contrato.pagamentos || []).forEach(p => {
+      if (!p) return;
+      saldoAcumulado -= (Number(p.valor) || 0);
       lancamentos.push({
         id: `cc-deb-sem-${p.id}`,
-        data: p.dataVencimento,
+        data: p.dataVencimento || '',
         tipo: 'DEBITO_DIARIA',
-        descricao: `Cobrança Semanal de Locação (${p.semanaReferencia})`,
-        valor: -p.valor,
+        descricao: `Cobrança Semanal de Locação (${p.semanaReferencia || ''})`,
+        valor: -(Number(p.valor) || 0),
         saldoApos: saldoAcumulado
       });
     });
 
     // 4. Débitos de Multas e Avarias (Débito)
     (contrato.debitosMotorista || []).forEach(d => {
-      saldoAcumulado -= d.valorTotal;
+      if (!d) return;
+      saldoAcumulado -= (Number(d.valorTotal) || 0);
       lancamentos.push({
         id: `cc-multa-${d.id}`,
-        data: d.dataOcorrencia,
+        data: d.dataOcorrencia || '',
         tipo: d.tipo === 'Multa de Trânsito' ? 'DEBITO_MULTA' : 'DEBITO_AVARIA',
-        descricao: `${d.tipo}: ${d.descricao}`,
-        valor: -d.valorTotal,
+        descricao: `${d.tipo}: ${d.descricao || ''}`,
+        valor: -(Number(d.valorTotal) || 0),
         saldoApos: saldoAcumulado
       });
     });
 
     // Ordenar por data
-    lancamentos.sort((a, b) => new Date(a.data).getTime() - new Date(b.data).getTime());
+    lancamentos.sort((a, b) => new Date(a?.data || 0).getTime() - new Date(b?.data || 0).getTime());
 
     // Recalcular saldoApos em ordem cronológica
     let saldoCorrido = 0;

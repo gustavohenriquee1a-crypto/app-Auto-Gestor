@@ -207,7 +207,7 @@ export const DashboardExecutivoAvancado: React.FC<DashboardExecutivoAvancadoProp
 
     veiculos.forEach((v) => {
       (v.despesas || []).forEach((d) => {
-        if (!d.data) return;
+        if (!d || !d.data) return;
         const [ano, mes] = d.data.split('-');
         const chave = `${mes}/${ano.slice(2)}`;
         const val = Number(d.valor) || 0;

@@ -16,7 +16,7 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../lib/firebase';
-import { Usuario, RoleUsuario, StatusAprovacao, PermissoesUsuario } from '../types';
+import { Usuario, RoleUsuario, StatusAprovacao, PermissoesUsuario, RegraRemuneracao } from '../types';
 
 export const USERS_COLLECTION = 'users';
 
@@ -492,7 +492,8 @@ export async function approveUserInFirestore(
   tipoComissaoPadrao?: 'percentual' | 'fixo' | 'admin_gerente' | 'vendedor_padrao' | 'vendedor_bonus_tac' | 'percentual_venda',
   comissaoPadraoFixo?: number,
   regraComissaoPadrao?: 'admin_gerente' | 'vendedor_padrao' | 'vendedor_bonus_tac' | 'percentual_venda' | 'percentual' | 'fixo',
-  comissaoBonusTacPercent?: number
+  comissaoBonusTacPercent?: number,
+  regrasRemuneracao?: RegraRemuneracao[]
 ): Promise<void> {
   const userDocRef = doc(db, USERS_COLLECTION, uid);
   const basePerms = getDefaultPermissionsForRole(role);
@@ -508,6 +509,7 @@ export async function approveUserInFirestore(
     ativo: true,
     dataAprovacao: new Date().toISOString(),
     ...(adminEmail ? { aprovadoPor: adminEmail } : {}),
+    ...(regrasRemuneracao ? { regrasRemuneracao } : {}),
     ...(regraComissaoPadrao ? { regraComissaoPadrao } : {}),
     ...(tipoComissaoPadrao !== undefined ? { tipoComissaoPadrao } : {}),
     ...(comissaoPadraoPercent !== undefined ? { comissaoPadraoPercent } : {}),
@@ -569,6 +571,7 @@ export async function updateUserPermissionsInFirestore(
   updates: {
     role?: RoleUsuario;
     permissoes?: PermissoesUsuario;
+    regrasRemuneracao?: RegraRemuneracao[];
     regraComissaoPadrao?: 'admin_gerente' | 'vendedor_padrao' | 'vendedor_bonus_tac' | 'percentual_venda' | 'percentual' | 'fixo';
     tipoComissaoPadrao?: 'percentual' | 'fixo' | 'admin_gerente' | 'vendedor_padrao' | 'vendedor_bonus_tac' | 'percentual_venda';
     comissaoPadraoPercent?: number;

@@ -1,10 +1,10 @@
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import jsPDF from 'jspdf';
 
 /**
  * Utilitário de impressão e geração de PDF de alta fidelidade para o AUTO-GESTOR.
- * Suporta isolamento em iframe, conversão automática de cores modernas (oklch/lch)
- * para compatibilidade total com html2canvas e paginação A4 de alta resolução.
+ * Utiliza html2canvas-pro com suporte nativo a cores modernas (oklch, lab, lch, oklab),
+ * conversão matemática de segurança para RGB/RGBA e paginação A4 de alta resolução.
  */
 
 export interface PrintOptions {
@@ -13,8 +13,62 @@ export interface PrintOptions {
 }
 
 /**
+ * Conversão matemática exata de OKLCH para sRGB padrão (rgb/rgba).
+ * Referência: CSS Color Module Level 4 Specification.
+ */
+export const oklchToRgb = (lStr: string, cStr: string, hStr: string, aStr?: string): string => {
+  let L = parseFloat(lStr);
+  if (lStr.includes('%')) L = L / 100;
+
+  let C = parseFloat(cStr);
+  if (cStr.includes('%')) C = (parseFloat(cStr) / 100) * 0.4;
+
+  let H = parseFloat(hStr);
+  if (hStr.includes('rad')) H = (parseFloat(hStr) * 180) / Math.PI;
+  else if (hStr.includes('turn')) H = parseFloat(hStr) * 360;
+
+  let alpha = 1;
+  if (aStr !== undefined && aStr.trim() !== '') {
+    alpha = parseFloat(aStr);
+    if (aStr.includes('%')) alpha = alpha / 100;
+    if (isNaN(alpha)) alpha = 1;
+  }
+
+  if (isNaN(L)) L = 0;
+  if (isNaN(C)) C = 0;
+  if (isNaN(H)) H = 0;
+
+  const hRad = (H * Math.PI) / 180;
+  const a = C * Math.cos(hRad);
+  const b = C * Math.sin(hRad);
+
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+
+  const lVal = l_ * l_ * l_;
+  const mVal = m_ * m_ * m_;
+  const sVal = s_ * s_ * s_;
+
+  const rLin = +4.0767416621 * lVal - 3.3077115913 * mVal + 0.2309699292 * sVal;
+  const gLin = -1.2684380046 * lVal + 2.6097574011 * mVal - 0.3413193965 * sVal;
+  const bLin = -0.0041960863 * lVal - 0.7034186147 * mVal + 1.7076147010 * sVal;
+
+  const transfer = (c: number) => (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(Math.max(0, c), 1 / 2.4) - 0.055);
+
+  const r = Math.round(Math.min(Math.max(0, transfer(rLin)), 1) * 255);
+  const g = Math.round(Math.min(Math.max(0, transfer(gLin)), 1) * 255);
+  const bClamped = Math.round(Math.min(Math.max(0, transfer(bLin)), 1) * 255);
+
+  if (alpha < 1) {
+    return `rgba(${r}, ${g}, ${bClamped}, ${Number(alpha.toFixed(3))})`;
+  }
+  return `rgb(${r}, ${g}, ${bClamped})`;
+};
+
+/**
  * Converte qualquer string de cor CSS moderna (incluindo oklch, lch, color(...))
- * para formato padrão RGB/RGBA ou Hexadecimal utilizando o parser nativo Canvas 2D.
+ * para formato padrão RGB/RGBA ou Hexadecimal com conversão matemática à prova de falhas.
  */
 export const normalizeColorToRgb = (colorStr: string): string => {
   if (!colorStr || typeof colorStr !== 'string') return colorStr;
@@ -22,27 +76,47 @@ export const normalizeColorToRgb = (colorStr: string): string => {
     return colorStr;
   }
 
-  if (typeof document === 'undefined') return colorStr;
+  // 1. Substitui funções oklch(...) com precisão matemática para rgb/rgba
+  let result = colorStr.replace(
+    /oklch\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+(?:deg|rad|turn)?)\s*(?:\/\s*([\d.]+%?))?\s*\)/gi,
+    (_match, l, c, h, a) => oklchToRgb(l, c, h, a)
+  );
 
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 1;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return '#000000';
-
-    return colorStr.replace(/(?:oklch|lch|color)\([^)]+\)/gi, (match) => {
+  // 2. Se ainda restarem funções oklch/lch/color (com calc ou sintaxes relativas), tenta resolver via Canvas context
+  if (result.includes('oklch') || result.includes('lch') || result.includes('color(')) {
+    if (typeof document !== 'undefined') {
       try {
-        ctx.fillStyle = '#000000';
-        ctx.fillStyle = match;
-        return ctx.fillStyle || '#000000';
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          result = result.replace(/(?:oklch|lch|color)\([^)]+\)/gi, (m) => {
+            try {
+              ctx.fillStyle = '#000000';
+              ctx.fillStyle = m;
+              const fs = ctx.fillStyle;
+              if (fs && !fs.includes('oklch') && !fs.includes('lch') && !fs.includes('color(')) {
+                return fs;
+              }
+              return '#1e293b';
+            } catch {
+              return '#1e293b';
+            }
+          });
+        }
       } catch {
-        return '#000000';
+        // fallback
       }
-    });
-  } catch {
-    return colorStr;
+    }
   }
+
+  // 3. Garantia estrita: se ainda restar qualquer menção a oklch ou lch, substitui por cor escura padrão
+  if (result.includes('oklch') || result.includes('lch')) {
+    result = result.replace(/(?:oklch|lch)\([^)]+\)/gi, 'rgb(30, 41, 59)');
+  }
+
+  return result;
 };
 
 export type ElementTarget = string | HTMLElement | { current: HTMLElement | null } | null;

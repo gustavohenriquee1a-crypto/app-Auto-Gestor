@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   X, 
   Compass, 
@@ -17,9 +17,10 @@ import {
   Download,
   Loader2
 } from 'lucide-react';
-import { Veiculo, RegistroTestDrive, Usuario } from '../types';
+import { Veiculo, RegistroTestDrive, Usuario, ConfiguracaoLoja } from '../types';
 import { formatKm, formatDate } from '../utils/formatters';
 import { imprimirElemento, baixarElementoComoPdf } from '../utils/printPdfUtils';
+import { subscribeConfiguracoesLoja, getConfiguracaoLojaFirestore } from '../services/firestoreService';
 
 interface ModalTestDriveProps {
   isOpen: boolean;
@@ -57,6 +58,17 @@ export const ModalTestDrive: React.FC<ModalTestDriveProps> = ({
 
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [configLoja, setConfigLoja] = useState<ConfiguracaoLoja | null>(null);
+
+  useEffect(() => {
+    getConfiguracaoLojaFirestore().then((cfg) => {
+      if (cfg) setConfigLoja(cfg);
+    });
+    const unsub = subscribeConfiguracoesLoja((cfg) => {
+      if (cfg) setConfigLoja(cfg);
+    });
+    return () => unsub();
+  }, []);
 
   if (!isOpen || !veiculo) return null;
 
@@ -328,8 +340,8 @@ export const ModalTestDrive: React.FC<ModalTestDriveProps> = ({
                     <h1 className="text-base font-black uppercase text-slate-950">
                       TERMO DE RESPONSABILIDADE PARA TEST DRIVE
                     </h1>
-                    <p className="text-[10px] text-slate-500">
-                      TROCA FÁCIL VEÍCULOS • AUTO-GESTOR
+                    <p className="text-[10px] text-slate-500 font-medium">
+                      {(configLoja?.razaoSocial || configLoja?.nomeLoja || 'TROCA FÁCIL VEÍCULOS').toUpperCase()} • CNPJ: {configLoja?.cnpj || '47.271.452/0001-71'}
                     </p>
                   </div>
                   <div className="text-right">

@@ -1,4 +1,4 @@
-import { Veiculo, AgingSummary, ContratoLocacao, ItemManutencaoPreventiva, DebitoMotorista, VendaVeiculo, DespesaFixa, CategoriaDespesa } from '../types';
+import { Veiculo, AgingSummary, ContratoLocacao, PagamentoAluguel, ItemManutencaoPreventiva, DebitoMotorista, VendaVeiculo, DespesaFixa, CategoriaDespesa } from '../types';
 
 /**
  * Categorias de Repasse de Lucro e Distribuições.
@@ -413,12 +413,14 @@ export interface DRESummaryData {
   // 1. Receita Bruta
   receitaVendas: number;
   receitaLocacoes: number;
+  receitaMultasAcessorias: number; // Multas por atraso, excesso de KM e taxas de vistoria (DRE)
   receitaRetornoTac: number;
   receitaOperacionalBruta: number;
   
   // Percentuais de Receita (base = receitaOperacionalBruta)
   pctReceitaVendas: number;
   pctReceitaLocacoes: number;
+  pctReceitaMultasAcessorias: number;
   pctReceitaRetornoTac: number;
 
   // 2. CMV (Custo das Mercadorias Vendidas - Oficina/Peças/Aquisição)
@@ -503,30 +505,51 @@ export const calculateDRESummary = (
   const receitaVendas = vendasFiltradas.reduce((sum, v) => sum + (v.valorVenda || 0), 0);
   const receitaRetornoTac = vendasFiltradas.reduce((sum, v) => sum + (v.retornoFinanciamentoTac || 0), 0);
 
-  // Receitas de Locação (pagamentos quitados no mês ou acumulados)
+  // Receitas de Locação (Aluguel Base) e Receitas Acessórias - Multas (Excesso KM, Atrasos e Vistorias)
   let receitaLocacoes = 0;
+  let receitaMultasAcessorias = 0;
   let qtdLocacoesAtivas = 0;
 
+  const todosContratos: ContratoLocacao[] = [];
   veiculos.forEach((v) => {
-    if (v.contratoAtivo) {
-      if (v.contratoAtivo.status === 'Ativo') qtdLocacoesAtivas++;
-      v.contratoAtivo.pagamentos.forEach((p) => {
-        if (p.status === 'Pago') {
-          if (!mesFiltro || mesFiltro === 'todos') {
-            receitaLocacoes += p.valor || 0;
-          } else {
-            const dataRef = p.dataPagamento || p.dataVencimento;
-            if (dataRef && dataRef.startsWith(mesFiltro)) {
-              receitaLocacoes += p.valor || 0;
-            }
-          }
-        }
-      });
+    if (v.contratoAtivo) todosContratos.push(v.contratoAtivo);
+    if (v.historicoContratos && Array.isArray(v.historicoContratos)) {
+      todosContratos.push(...v.historicoContratos);
     }
   });
 
+  todosContratos.forEach((contrato) => {
+    if (contrato.status === 'Ativo') qtdLocacoesAtivas++;
+
+    // 1. Pagamentos de Aluguel Semanal e Multas por Atraso
+    contrato.pagamentos?.forEach((p) => {
+      if (p.status === 'Pago') {
+        const dataRef = p.dataPagamento || p.dataVencimento;
+        const noPeriodo = !mesFiltro || mesFiltro === 'todos' || (dataRef && dataRef.startsWith(mesFiltro));
+        if (noPeriodo) {
+          const valorMulta = p.multaAplicada || p.valorMultaAtraso || 0;
+          const valorAluguelBase = p.valorAluguelBase !== undefined ? p.valorAluguelBase : Math.max(0, (p.valor || 0) - valorMulta);
+          receitaLocacoes += valorAluguelBase;
+          receitaMultasAcessorias += valorMulta;
+        }
+      }
+    });
+
+    // 2. Débitos Quitados do Motorista (Excesso de KM, Vistoria, Multas de Trânsito, etc.)
+    contrato.debitosMotorista?.forEach((deb) => {
+      const quitado = deb.status === 'Pago pelo Motorista' || deb.status === 'Descontado do Caução' || deb.status === 'Quitado';
+      if (quitado && deb.valorPago > 0) {
+        const dataRef = deb.dataOcorrencia;
+        const noPeriodo = !mesFiltro || mesFiltro === 'todos' || (dataRef && dataRef.startsWith(mesFiltro));
+        if (noPeriodo) {
+          receitaMultasAcessorias += deb.valorPago;
+        }
+      }
+    });
+  });
+
   // Receita Operacional Bruta
-  const receitaOperacionalBruta = receitaVendas + receitaLocacoes + receitaRetornoTac;
+  const receitaOperacionalBruta = receitaVendas + receitaLocacoes + receitaMultasAcessorias + receitaRetornoTac;
 
   const getPct = (val: number) => {
     if (receitaOperacionalBruta <= 0) return 0;
@@ -680,10 +703,12 @@ export const calculateDRESummary = (
   return {
     receitaVendas,
     receitaLocacoes,
+    receitaMultasAcessorias,
     receitaRetornoTac,
     receitaOperacionalBruta,
     pctReceitaVendas: getPct(receitaVendas),
     pctReceitaLocacoes: getPct(receitaLocacoes),
+    pctReceitaMultasAcessorias: getPct(receitaMultasAcessorias),
     pctReceitaRetornoTac: getPct(receitaRetornoTac),
 
     cmvCompraVendidos,
@@ -774,4 +799,314 @@ export const checkIsVeiculoVendido = (v: Veiculo, vendasList: VendaVeiculo[] = [
   }
   return Boolean(getVendaForVeiculo(v, vendasList));
 };
+
+/**
+ * Placas conhecidas dedicadas à Frota de Locação (ex: TCT0B54, TCQ4A22, TCR7D90)
+ */
+export const PLACAS_FROTA_LOCACAO: string[] = ['TCT0B54', 'TCQ4A22', 'TCR7D90'];
+
+/**
+ * Identifica com precisão se um veículo pertence à Frota de Locação (Aluguel):
+ * 1. Placa está na lista de placas de locação (TCT0B54, TCQ4A22, TCR7D90)
+ * 2. tipoOperacao === 'Locacao'
+ * 3. Status é 'Alugado' ou possui contratoAtivo
+ */
+export const isVeiculoLocacao = (v?: Veiculo | null): boolean => {
+  if (!v) return false;
+  const placaLimpa = (v.placa || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  if (PLACAS_FROTA_LOCACAO.some((p) => p.toUpperCase() === placaLimpa)) return true;
+  if (v.tipoOperacao === 'Locacao') return true;
+  if (v.status === 'Alugado' || Boolean(v.contratoAtivo)) return true;
+  return false;
+};
+
+/**
+ * Estrutura detalhada de ROI, Custos, Receitas e Break-even da Frota de Locação
+ */
+export interface MetricasLocacaoVeiculo {
+  custoAquisicao: number;
+  custoFreteTaxas: number;
+  totalDespesasManutencao: number;
+  totalOutrasDespesas: number;
+  custoTotalVeiculo: number;
+  totalReceitaAluguel: number;
+  totalOutrasReceitas: number;
+  receitaTotalAcumulada: number;
+  saldoBreakEven: number; // receitaTotalAcumulada - custoTotalVeiculo
+  atingiuBreakEven: boolean; // saldoBreakEven >= 0
+  percentualAmortizacao: number; // (receitaTotalAcumulada / custoTotalVeiculo) * 100
+  valorFaltanteBreakEven: number; // quanto falta se não atingiu
+  lucroLiquidoExcedente: number; // lucro excedente se atingiu
+  semanasEstimadasParaBreakEven: number | null;
+  despesasManutencaoList: any[];
+  pagamentosRecebidosList: {
+    id: string;
+    data: string;
+    semanaReferencia: string;
+    valor: number;
+    motoristaNome: string;
+    metodoPagamento?: string;
+  }[];
+}
+
+/**
+ * Calcula o ROI, Break-even e métricas financeiras completas de um veículo da frota de locação
+ */
+export const calcularMetricasLocacaoVeiculo = (veiculo: Veiculo): MetricasLocacaoVeiculo => {
+  const custoAquisicao = Number(veiculo.custoAquisicao || 0);
+  const custoFreteTaxas = Number(veiculo.custo_frete_transporte || 0) + Number(veiculo.taxas_origem || 0);
+
+  // Histórico de manutenções, peças e revisões periódicas
+  const categoriasManutencao = [
+    'Peças',
+    'Mecânica / Mão de Obra',
+    'Funilaria / Pintura',
+    'Pneus',
+    'Estética / Lavagem',
+    'Frete / Guincho',
+    'Combustível',
+  ];
+
+  const todasDespesas = Array.isArray(veiculo.despesas) ? veiculo.despesas : [];
+  
+  // Separar despesas de manutenção vs outras despesas operacionais
+  const despesasManutencaoList = todasDespesas.filter((d) => 
+    !isCategoriaRepasseDistribuicao(d.categoria)
+  );
+
+  let totalDespesasManutencao = 0;
+  let totalOutrasDespesas = 0;
+
+  despesasManutencaoList.forEach((d) => {
+    const val = Number(d.valor || 0);
+    if (categoriasManutencao.includes(d.categoria)) {
+      totalDespesasManutencao += val;
+    } else {
+      totalOutrasDespesas += val;
+    }
+  });
+
+  const totalCustosAdicionais = totalDespesasManutencao + totalOutrasDespesas;
+  const custoTotalVeiculo = custoAquisicao + custoFreteTaxas + totalCustosAdicionais;
+
+  // Receitas geradas (soma de todos os aluguéis semanais/mensais pagos)
+  const pagamentosRecebidosList: {
+    id: string;
+    data: string;
+    semanaReferencia: string;
+    valor: number;
+    motoristaNome: string;
+    metodoPagamento?: string;
+  }[] = [];
+
+  let totalReceitaAluguel = 0;
+
+  if (veiculo.contratoAtivo?.pagamentos && Array.isArray(veiculo.contratoAtivo.pagamentos)) {
+    veiculo.contratoAtivo.pagamentos.forEach((p) => {
+      if (p.status === 'Pago') {
+        const val = Number(p.valor || 0);
+        totalReceitaAluguel += val;
+        pagamentosRecebidosList.push({
+          id: p.id,
+          data: p.dataPagamento || p.dataVencimento || '',
+          semanaReferencia: p.semanaReferencia || 'Semana',
+          valor: val,
+          motoristaNome: p.motoristaNome || veiculo.contratoAtivo?.motoristaNome || 'Motorista',
+          metodoPagamento: p.metodoPagamento || 'PIX',
+        });
+      }
+    });
+  }
+
+  // Ordenar pagamentos por data decrescente
+  pagamentosRecebidosList.sort((a, b) => new Date(b.data || 0).getTime() - new Date(a.data || 0).getTime());
+
+  const totalOutrasReceitas = 0;
+  const receitaTotalAcumulada = totalReceitaAluguel + totalOutrasReceitas;
+
+  // Ponto de Equilíbrio (Break-Even): Receitas - Custos
+  const saldoBreakEven = receitaTotalAcumulada - custoTotalVeiculo;
+  const atingiuBreakEven = saldoBreakEven >= 0;
+
+  const valorFaltanteBreakEven = atingiuBreakEven ? 0 : Math.abs(saldoBreakEven);
+  const lucroLiquidoExcedente = atingiuBreakEven ? saldoBreakEven : 0;
+
+  const percentualAmortizacao = custoTotalVeiculo > 0 
+    ? (receitaTotalAcumulada / custoTotalVeiculo) * 100 
+    : 100;
+
+  // Projeção de Semanas para o Break-Even
+  let semanasEstimadasParaBreakEven: number | null = null;
+  const valorSemanalAtivo = Number(veiculo.contratoAtivo?.valorSemanal || 0);
+
+  if (!atingiuBreakEven && valorSemanalAtivo > 0 && valorFaltanteBreakEven > 0) {
+    semanasEstimadasParaBreakEven = Math.ceil(valorFaltanteBreakEven / valorSemanalAtivo);
+  }
+
+  return {
+    custoAquisicao,
+    custoFreteTaxas,
+    totalDespesasManutencao,
+    totalOutrasDespesas,
+    custoTotalVeiculo,
+    totalReceitaAluguel,
+    totalOutrasReceitas,
+    receitaTotalAcumulada,
+    saldoBreakEven,
+    atingiuBreakEven,
+    percentualAmortizacao,
+    valorFaltanteBreakEven,
+    lucroLiquidoExcedente,
+    semanasEstimadasParaBreakEven,
+    despesasManutencaoList,
+    pagamentosRecebidosList,
+  };
+};
+
+/**
+ * Retorna o início do ciclo semanal (Segunda-feira 00:00:00) correspondente à data informada
+ */
+export const getInicioCicloSemanal = (dateInput?: string | Date): Date => {
+  const d = dateInput 
+    ? (typeof dateInput === 'string' ? new Date(dateInput.length === 10 ? dateInput + 'T00:00:00' : dateInput) : new Date(dateInput))
+    : new Date();
+  
+  const day = d.getDay(); // 0: Dom, 1: Seg, 2: Ter, 3: Qua, 4: Qui, 5: Sex, 6: Sáb
+  const diff = day === 0 ? -6 : 1 - day; // Se Dom, volta 6 dias. Se Seg, 0. Se Ter, -1...
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diff);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+};
+
+/**
+ * Calcula a quilometragem rodada na semana corrente (ciclo Segunda a Segunda)
+ * Respeita a dataInicioMedicaoKm (Data de Referência / Corte) caso definida no contrato:
+ * Leituras anteriores a essa data são desconsideradas para multas/cobrança, servindo apenas como histórico.
+ */
+export const calcularKmSemanaAtual = (
+  contrato: ContratoLocacao,
+  novoKmLeitura?: number,
+  dataLeitura?: string
+) => {
+  const limiteKmSemanal = contrato.limiteKmSemanal ?? 1750;
+  const valorMultaPorKm = contrato.valorMultaPorKmExcedente ?? 1.20;
+
+  const dataReferencia = dataLeitura || new Date().toISOString().split('T')[0];
+  const inicioCiclo = getInicioCicloSemanal(dataReferencia);
+  const inicioCicloStr = inicioCiclo.toISOString().split('T')[0];
+
+  // Data de corte / início de medição de KM (para contratos migrados)
+  const dataCorte = contrato.dataInicioMedicaoKm || '1970-01-01';
+
+  // Leituras válidas que respeitam o corte
+  const leiturasValidas = (contrato.registrosKmDiario || []).filter(
+    (reg) => reg.data >= dataCorte
+  );
+
+  // A medição considera a partir da data de início do ciclo da semana ou da data de corte (o que for mais recente)
+  const dataInicioEfetiva = dataCorte > inicioCicloStr ? dataCorte : inicioCicloStr;
+
+  const leiturasSemana = leiturasValidas.filter((reg) => reg.data >= dataInicioEfetiva);
+
+  let kmRodadoNaSemana = 0;
+
+  if (leiturasSemana.length > 0) {
+    kmRodadoNaSemana = leiturasSemana.reduce((sum, r) => sum + (r.kmRodadoNoDia || 0), 0);
+  } else if (contrato.kmAtual && contrato.kmInicial && (!contrato.dataInicioMedicaoKm || contrato.dataInicioMedicaoKm <= inicioCicloStr)) {
+    // Estimativa acumulada se não houver registros diários granulares
+    kmRodadoNaSemana = Math.max(0, contrato.kmAtual - contrato.kmInicial);
+  }
+
+  // Se houver um novo KM sendo inserido no modal de leitura
+  if (novoKmLeitura !== undefined && contrato.kmAtual !== undefined) {
+    const diffNovo = Math.max(0, novoKmLeitura - contrato.kmAtual);
+    kmRodadoNaSemana += diffNovo;
+  }
+
+  const kmExcedente = Math.max(0, kmRodadoNaSemana - limiteKmSemanal);
+  const valorMulta = Number((kmExcedente * valorMultaPorKm).toFixed(2));
+  const excedeuLimite = kmExcedente > 0;
+
+  return {
+    limiteKmSemanal,
+    valorMultaPorKm,
+    kmRodadoNaSemana,
+    kmExcedente,
+    valorMulta,
+    excedeuLimite,
+    inicioCicloStr,
+    dataInicioEfetiva,
+  };
+};
+
+/**
+ * Calcula a multa por atraso no aluguel semanal (Padrão 40% parametrizável por contrato)
+ */
+export const calcularMultaAtrasoPagamento = (
+  pagamento: PagamentoAluguel,
+  percentualPadrao = 40,
+  contratoPercentual?: number
+) => {
+  const percentual = contratoPercentual ?? percentualPadrao;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isAtrasado = pagamento.status === 'Atrasado' || (pagamento.status !== 'Pago' && pagamento.dataVencimento < todayStr);
+
+  const valorBase = pagamento.valorAluguelBase ?? pagamento.valor;
+  const valorMulta = isAtrasado ? Number((valorBase * (percentual / 100)).toFixed(2)) : (pagamento.multaAplicada || 0);
+  const valorTotal = valorBase + valorMulta;
+
+  return {
+    isAtrasado,
+    percentual,
+    valorBase,
+    valorMulta,
+    valorTotal,
+  };
+};
+
+/**
+ * Calcula o status de carência de 30 dias para liberação/devolução da caução
+ */
+export const calcularCarenciaCaucao = (contrato: ContratoLocacao, dataEncerramentoInformada?: string) => {
+  let dataLiberacao = contrato.dataLiberacaoCaucao;
+  const dataRef = dataEncerramentoInformada || contrato.fechamentoCaucao?.dataEncerramento || contrato.dataDevolucao || contrato.dataFimPrevista;
+
+  if (!dataLiberacao && dataRef) {
+    const d = new Date(dataRef + 'T00:00:00');
+    d.setDate(d.getDate() + 30);
+    dataLiberacao = d.toISOString().split('T')[0];
+  }
+
+  if (!dataLiberacao) {
+    // Se ainda não há encerramento formalizado, a carência prevista inicia ao devolver o carro
+    const hojePrev = new Date();
+    hojePrev.setDate(hojePrev.getDate() + 30);
+    return {
+      temCarencia: true,
+      emCarencia: true,
+      liberado: false,
+      diasRestantes: 30,
+      dataLiberacao: hojePrev.toISOString().split('T')[0],
+    };
+  }
+
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const dataAlvo = new Date(dataLiberacao + 'T00:00:00');
+  const diffMs = dataAlvo.getTime() - hoje.getTime();
+  const diasRestantes = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  const emCarencia = diasRestantes > 0;
+  const liberado = diasRestantes <= 0;
+
+  return {
+    temCarencia: true,
+    emCarencia,
+    liberado,
+    diasRestantes: Math.max(0, diasRestantes),
+    dataLiberacao,
+  };
+};
+
 

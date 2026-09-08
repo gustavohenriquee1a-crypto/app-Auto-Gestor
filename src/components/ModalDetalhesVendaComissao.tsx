@@ -24,7 +24,12 @@ import {
   TrendingUp,
   Tag,
   FolderOpen,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Link,
+  Unlink,
+  Edit3,
+  Calculator,
+  Check
 } from 'lucide-react';
 import { VendaVeiculo, Usuario, Veiculo } from '../types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
@@ -55,6 +60,8 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
 }) => {
   const isAdmin = currentUser?.role === 'admin';
   const isAdminOrGestor = currentUser?.role === 'admin' || currentUser?.role === 'gestor';
+  const canViewGerencial = isAdmin || (currentUser?.role === 'gestor' && currentUser?.permissoes?.verComissoesGerenciais !== false) || currentUser?.permissoes?.verComissoesGerenciais === true;
+  const canManageGerencial = isAdmin || (currentUser?.role === 'gestor' && currentUser?.permissoes?.gerenciarComissoesGerenciais !== false) || currentUser?.permissoes?.gerenciarComissoesGerenciais === true;
 
   // Buscar dados cadastrais completos do vendedor na lista de usuários do sistema
   const vendedorUser = useMemo(() => {
@@ -90,6 +97,20 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Estado para Comissão Administrativa / Overriding (Gestor / Admin)
+  const [comissaoGerencialAtiva, setComissaoGerencialAtiva] = useState(false);
+  const [comissaoGerencialTipo, setComissaoGerencialTipo] = useState<'porcentagem_venda' | 'porcentagem_lucro' | 'fixo' | 'manual'>('porcentagem_venda');
+  const [comissaoGerencialTaxa, setComissaoGerencialTaxa] = useState<number>(1.0);
+  const [comissaoGerencialValor, setComissaoGerencialValor] = useState<number>(0);
+  const [comissaoGerencialStatus, setComissaoGerencialStatus] = useState<'Pendente' | 'Paga'>('Pendente');
+  const [comissaoGerencialBeneficiarioId, setComissaoGerencialBeneficiarioId] = useState<string>('');
+  const [comissaoGerencialBeneficiarioNome, setComissaoGerencialBeneficiarioNome] = useState<string>('');
+  const [comissaoGerencialBeneficiarioEmail, setComissaoGerencialBeneficiarioEmail] = useState<string>('');
+  const [comissaoGerencialDataPagamento, setComissaoGerencialDataPagamento] = useState<string>('');
+  const [comissaoGerencialFormaPagamento, setComissaoGerencialFormaPagamento] = useState<string>('PIX');
+  const [comissaoGerencialObservacoes, setComissaoGerencialObservacoes] = useState<string>('');
+  const [isEditingGerencial, setIsEditingGerencial] = useState(false);
+
   useEffect(() => {
     if (venda) {
       setComissaoStatus(venda.comissaoStatus || 'Pendente');
@@ -100,6 +121,22 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
       setComissaoReciboAssinado(!!venda.comissaoReciboAssinado);
       setComissaoReciboDataAssinatura(venda.comissaoReciboDataAssinatura || '');
       setComissaoObservacoesAdmin(venda.comissaoObservacoesAdmin || '');
+
+      // Dados de Overriding Gerencial
+      const hasGerencial = venda.comissaoGerencialAtiva === true && (venda.comissaoGerencialValor ?? 0) > 0;
+      setComissaoGerencialAtiva(hasGerencial);
+      setComissaoGerencialTipo((venda.comissaoGerencialTipo as any) || 'porcentagem_venda');
+      setComissaoGerencialTaxa(venda.comissaoGerencialTaxa ?? 1.0);
+      setComissaoGerencialValor(venda.comissaoGerencialValor ?? 0);
+      setComissaoGerencialStatus(venda.comissaoGerencialStatus || 'Pendente');
+      setComissaoGerencialBeneficiarioId(venda.comissaoGerencialBeneficiarioId || '');
+      setComissaoGerencialBeneficiarioNome(venda.comissaoGerencialBeneficiarioNome || '');
+      setComissaoGerencialBeneficiarioEmail(venda.comissaoGerencialBeneficiarioEmail || '');
+      setComissaoGerencialDataPagamento(venda.comissaoGerencialDataPagamento || '');
+      setComissaoGerencialFormaPagamento(venda.comissaoGerencialFormaPagamento || 'PIX');
+      setComissaoGerencialObservacoes(venda.comissaoGerencialObservacoes || '');
+      setIsEditingGerencial(false);
+
       setSaveSuccess(false);
     }
   }, [venda]);
@@ -147,6 +184,19 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
         comissaoReciboAssinado: comissaoStatus === 'Paga' ? comissaoReciboAssinado : false,
         comissaoReciboDataAssinatura: comissaoStatus === 'Paga' && comissaoReciboAssinado ? (comissaoReciboDataAssinatura || new Date().toISOString().split('T')[0]) : undefined,
         comissaoObservacoesAdmin: comissaoObservacoesAdmin.trim() || undefined,
+
+        // Preservar ou atualizar comissão gerencial administrativa (Overriding)
+        comissaoGerencialAtiva: comissaoGerencialAtiva && Number(comissaoGerencialValor) > 0,
+        comissaoGerencialTipo: comissaoGerencialAtiva ? comissaoGerencialTipo : 'nenhuma',
+        comissaoGerencialTaxa: comissaoGerencialAtiva ? Number(comissaoGerencialTaxa) : 0,
+        comissaoGerencialValor: comissaoGerencialAtiva ? Number(comissaoGerencialValor) : 0,
+        comissaoGerencialStatus: comissaoGerencialAtiva ? comissaoGerencialStatus : undefined,
+        comissaoGerencialBeneficiarioId: comissaoGerencialAtiva ? (comissaoGerencialBeneficiarioId || undefined) : undefined,
+        comissaoGerencialBeneficiarioNome: comissaoGerencialAtiva ? (comissaoGerencialBeneficiarioNome || 'Diretoria / Gestor Geral') : undefined,
+        comissaoGerencialBeneficiarioEmail: comissaoGerencialAtiva ? (comissaoGerencialBeneficiarioEmail || undefined) : undefined,
+        comissaoGerencialDataPagamento: (comissaoGerencialAtiva && comissaoGerencialStatus === 'Paga') ? (comissaoGerencialDataPagamento || new Date().toISOString().split('T')[0]) : undefined,
+        comissaoGerencialFormaPagamento: (comissaoGerencialAtiva && comissaoGerencialStatus === 'Paga') ? comissaoGerencialFormaPagamento : undefined,
+        comissaoGerencialObservacoes: comissaoGerencialObservacoes.trim() || undefined,
       };
 
       await onUpdateVenda(vendaAtualizada);
@@ -157,6 +207,89 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
       alert('Ocorreu um erro ao salvar as alterações da comissão.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleVincularGerencial = async () => {
+    if (!onUpdateVenda || !venda) return;
+    const taxaPadrao = 1.0;
+    const valorCalculado = Number(((venda.valorVenda * taxaPadrao) / 100).toFixed(2));
+    const nomePadrao = currentUser?.displayName || currentUser?.email || 'Diretoria / Gestor Geral';
+
+    setComissaoGerencialAtiva(true);
+    setComissaoGerencialTipo('porcentagem_venda');
+    setComissaoGerencialTaxa(taxaPadrao);
+    setComissaoGerencialValor(valorCalculado);
+    setComissaoGerencialStatus('Pendente');
+    setComissaoGerencialBeneficiarioId(currentUser?.uid || '');
+    setComissaoGerencialBeneficiarioNome(nomePadrao);
+    setComissaoGerencialBeneficiarioEmail(currentUser?.email || '');
+    setIsEditingGerencial(true);
+
+    try {
+      setIsSaving(true);
+      const vendaAtualizada: VendaVeiculo = {
+        ...venda,
+        comissaoGerencialAtiva: true,
+        comissaoGerencialTipo: 'porcentagem_venda',
+        comissaoGerencialTaxa: taxaPadrao,
+        comissaoGerencialValor: valorCalculado,
+        comissaoGerencialStatus: 'Pendente',
+        comissaoGerencialBeneficiarioId: currentUser?.uid || undefined,
+        comissaoGerencialBeneficiarioNome: nomePadrao,
+        comissaoGerencialBeneficiarioEmail: currentUser?.email || undefined,
+      };
+      await onUpdateVenda(vendaAtualizada);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err) {
+      console.error('Erro ao vincular comissão gerencial:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDesvincularGerencial = async () => {
+    if (!onUpdateVenda || !venda) return;
+    const confirm = window.confirm(
+      'Tem certeza que deseja desvincular e remover a comissão administrativa (overriding) desta venda?'
+    );
+    if (!confirm) return;
+
+    setComissaoGerencialAtiva(false);
+    setComissaoGerencialValor(0);
+    setIsEditingGerencial(false);
+
+    try {
+      setIsSaving(true);
+      const vendaAtualizada: VendaVeiculo = {
+        ...venda,
+        comissaoGerencialAtiva: false,
+        comissaoGerencialValor: 0,
+        comissaoGerencialStatus: undefined,
+      };
+      await onUpdateVenda(vendaAtualizada);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err) {
+      console.error('Erro ao desvincular comissão gerencial:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleRecalcularValorGerencial = (tipo: 'porcentagem_venda' | 'porcentagem_lucro' | 'fixo' | 'manual', taxa: number) => {
+    setComissaoGerencialTipo(tipo);
+    setComissaoGerencialTaxa(taxa);
+    if (tipo === 'porcentagem_venda') {
+      const val = (venda.valorVenda * taxa) / 100;
+      setComissaoGerencialValor(Number(val.toFixed(2)));
+    } else if (tipo === 'porcentagem_lucro') {
+      const lucro = Math.max(0, venda.lucroLiquido || 0);
+      const val = (lucro * taxa) / 100;
+      setComissaoGerencialValor(Number(val.toFixed(2)));
+    } else if (tipo === 'fixo') {
+      setComissaoGerencialValor(taxa);
     }
   };
 
@@ -902,6 +1035,322 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
               </div>
             )}
           </form>
+          )}
+
+          {/* 3.1 GESTÃO DA COMISSÃO ADMINISTRATIVA GLOBAL (OVERRIDING GESTOR/ADMIN) */}
+          {canViewGerencial && (
+            <div className="bg-gradient-to-br from-[#1c1914] to-[#12131a] p-5 rounded-2xl border border-amber-500/30 space-y-4 animate-fadeIn">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-500/20 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                    <Award size={18} />
+                  </div>
+                  <div>
+                    <h4 className="font-extrabold text-sm text-white flex items-center gap-2">
+                      <span>Comissão Administrativa de Gestão (Overriding)</span>
+                      {comissaoGerencialAtiva ? (
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
+                          comissaoGerencialStatus === 'Paga'
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                            : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                        }`}>
+                          {comissaoGerencialStatus === 'Paga' ? '✓ Paga' : '⏳ Pendente'}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-white/10">
+                          Desvinculada
+                        </span>
+                      )}
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      Remuneração global destinada ao Gestor/Admin sobre as vendas da loja, calculada sem reduzir o valor do vendedor.
+                    </p>
+                  </div>
+                </div>
+
+                {canManageGerencial && (
+                  <div className="flex items-center gap-2">
+                    {comissaoGerencialAtiva ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingGerencial(!isEditingGerencial)}
+                          className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                          <Edit3 size={13} />
+                          <span>{isEditingGerencial ? 'Recolher Edição' : 'Editar Regras'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDesvincularGerencial}
+                          className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                          title="Tirar a comissão administrativa desta venda"
+                        >
+                          <Unlink size={13} />
+                          <span>Tirar Comissão</span>
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleVincularGerencial}
+                        className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-amber-950/40 flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Link size={13} />
+                        <span>Vincular Comissão Administrativa</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {comissaoGerencialAtiva ? (
+                <div className="space-y-4">
+                  {/* Resumo da Comissão Gerencial */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="bg-black/30 p-3 rounded-xl border border-white/5">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Valor a Receber</span>
+                      <span className="text-base font-black text-amber-300 font-mono">
+                        {formatCurrency(comissaoGerencialValor)}
+                      </span>
+                    </div>
+
+                    <div className="bg-black/30 p-3 rounded-xl border border-white/5">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Regra Aplicada</span>
+                      <span className="text-xs font-bold text-white capitalize">
+                        {comissaoGerencialTipo === 'porcentagem_venda' && `${comissaoGerencialTaxa}% sobre Venda`}
+                        {comissaoGerencialTipo === 'porcentagem_lucro' && `${comissaoGerencialTaxa}% sobre Lucro`}
+                        {comissaoGerencialTipo === 'fixo' && `Fixo (${formatCurrency(comissaoGerencialTaxa)})`}
+                        {comissaoGerencialTipo === 'manual' && 'Definição Manual'}
+                      </span>
+                    </div>
+
+                    <div className="bg-black/30 p-3 rounded-xl border border-white/5">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Beneficiário</span>
+                      <span className="text-xs font-bold text-slate-200 truncate block">
+                        {comissaoGerencialBeneficiarioNome || 'Diretoria Geral'}
+                      </span>
+                    </div>
+
+                    <div className="bg-black/30 p-3 rounded-xl border border-white/5">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Status do Pagamento</span>
+                      <span className={`text-xs font-bold flex items-center gap-1 ${
+                        comissaoGerencialStatus === 'Paga' ? 'text-emerald-400' : 'text-amber-400'
+                      }`}>
+                        {comissaoGerencialStatus === 'Paga' ? (
+                          <>
+                            <Check size={13} /> Liquidada
+                            {comissaoGerencialDataPagamento && ` (${comissaoGerencialDataPagamento.split('-').reverse().join('/')})`}
+                          </>
+                        ) : (
+                          <>
+                            <Clock size={13} /> Aguardando Liberação
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Painel de Edição da Comissão Administrativa */}
+                  {(isEditingGerencial || canManageGerencial) && (
+                    <div className="bg-black/40 p-4 rounded-xl border border-amber-500/20 space-y-4">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                          <Edit3 size={13} />
+                          <span>Configuração e Liquidação do Overriding desta Venda</span>
+                        </span>
+                        <span className="text-[10px] text-slate-500">Exclusivo Admin / Gestor</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        {/* Tipo de Regra */}
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-300 uppercase mb-1">
+                            Modelo de Cálculo:
+                          </label>
+                          <select
+                            value={comissaoGerencialTipo}
+                            onChange={(e) => {
+                              const tipo = e.target.value as any;
+                              handleRecalcularValorGerencial(tipo, comissaoGerencialTaxa);
+                            }}
+                            className="w-full bg-[#16171f] border border-amber-500/30 rounded-xl px-2.5 py-2 text-xs text-white font-bold outline-none"
+                          >
+                            <option value="porcentagem_venda">% sobre Valor da Venda</option>
+                            <option value="porcentagem_lucro">% sobre Lucro Líquido</option>
+                            <option value="fixo">Valor Fixo em R$</option>
+                            <option value="manual">Definição Livre / Manual</option>
+                          </select>
+                        </div>
+
+                        {/* Taxa ou Alíquota */}
+                        {comissaoGerencialTipo !== 'manual' && (
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-300 uppercase mb-1">
+                              {comissaoGerencialTipo === 'fixo' ? 'Taxa Fixa (R$):' : 'Taxa / Alíquota (%):'}
+                            </label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={comissaoGerencialTaxa}
+                              onChange={(e) => {
+                                const taxa = Number(e.target.value);
+                                handleRecalcularValorGerencial(comissaoGerencialTipo, taxa);
+                              }}
+                              className="w-full bg-[#16171f] border border-white/10 rounded-xl px-2.5 py-2 text-xs text-amber-300 font-mono font-bold outline-none"
+                            />
+                          </div>
+                        )}
+
+                        {/* Valor Calculado / Ajustado */}
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-300 uppercase mb-1">
+                            Valor Final da Comissão (R$):
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={comissaoGerencialValor}
+                            onChange={(e) => setComissaoGerencialValor(Number(e.target.value))}
+                            className="w-full bg-[#16171f] border border-amber-500/50 rounded-xl px-2.5 py-2 text-xs text-amber-300 font-mono font-black outline-none"
+                          />
+                        </div>
+
+                        {/* Beneficiário */}
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-300 uppercase mb-1">
+                            Beneficiário Administrativo:
+                          </label>
+                          <select
+                            value={comissaoGerencialBeneficiarioId}
+                            onChange={(e) => {
+                              const bId = e.target.value;
+                              setComissaoGerencialBeneficiarioId(bId);
+                              const sel = usuarios.find((u) => u.uid === bId);
+                              if (sel) {
+                                setComissaoGerencialBeneficiarioNome(sel.displayName || sel.email || 'Gestor');
+                                setComissaoGerencialBeneficiarioEmail(sel.email || '');
+                              } else {
+                                setComissaoGerencialBeneficiarioNome('Diretoria Geral');
+                                setComissaoGerencialBeneficiarioEmail('');
+                              }
+                            }}
+                            className="w-full bg-[#16171f] border border-white/10 rounded-xl px-2.5 py-2 text-xs text-white font-medium outline-none"
+                          >
+                            <option value="">Diretoria Geral (Sem gestor específico)</option>
+                            {usuarios
+                              .filter((u) => u.role === 'admin' || u.role === 'gestor' || u.recebeComissaoOverriding)
+                              .map((u) => (
+                                <option key={u.uid} value={u.uid}>
+                                  {u.displayName || u.email} ({u.role})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Dados de Liquidação */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-white/5">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-300 uppercase mb-1">
+                            Status da Quitação:
+                          </label>
+                          <select
+                            value={comissaoGerencialStatus}
+                            onChange={(e) => setComissaoGerencialStatus(e.target.value as 'Pendente' | 'Paga')}
+                            className="w-full bg-[#16171f] border border-amber-500/30 rounded-xl px-2.5 py-2 text-xs text-white font-bold outline-none"
+                          >
+                            <option value="Pendente">⏳ Pendente (Aguardando)</option>
+                            <option value="Paga">✓ Paga (Liquidada)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-300 uppercase mb-1">
+                            Data do Pagamento:
+                          </label>
+                          <input
+                            type="date"
+                            value={comissaoGerencialDataPagamento}
+                            onChange={(e) => setComissaoGerencialDataPagamento(e.target.value)}
+                            className="w-full bg-[#16171f] border border-white/10 rounded-xl px-2.5 py-2 text-xs text-white outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-300 uppercase mb-1">
+                            Forma de Pagamento:
+                          </label>
+                          <select
+                            value={comissaoGerencialFormaPagamento}
+                            onChange={(e) => setComissaoGerencialFormaPagamento(e.target.value)}
+                            className="w-full bg-[#16171f] border border-white/10 rounded-xl px-2.5 py-2 text-xs text-white outline-none"
+                          >
+                            <option value="PIX">⚡ Transferência Instantânea PIX</option>
+                            <option value="Transferência Bancária">🏦 Transferência Bancária / TED</option>
+                            <option value="Dinheiro / Espécie">💵 Dinheiro em Mãos</option>
+                            <option value="Conta Corrente">💼 Crédito em Conta</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Observações */}
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-300 uppercase mb-1">
+                          Observações Internas da Comissão Administrativa:
+                        </label>
+                        <input
+                          type="text"
+                          value={comissaoGerencialObservacoes}
+                          onChange={(e) => setComissaoGerencialObservacoes(e.target.value)}
+                          placeholder="Ex: Pagamento referente ao fechamento quinzenal de vendas..."
+                          className="w-full bg-[#16171f] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 outline-none"
+                        />
+                      </div>
+
+                      <div className="flex justify-end pt-1">
+                        <button
+                          type="button"
+                          onClick={handleSalvarComissao}
+                          disabled={isSaving}
+                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-amber-950/40 flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                        >
+                          <FileCheck size={15} />
+                          <span>{isSaving ? 'Salvando...' : 'Salvar Alterações da Comissão Administrativa'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-4 bg-black/30 rounded-xl border border-dashed border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-white/5 text-slate-400 flex items-center justify-center font-bold shrink-0">
+                      <Unlink size={16} />
+                    </div>
+                    <div>
+                      <span className="font-bold text-white text-xs block">
+                        Nenhuma comissão administrativa vinculada a esta venda
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        Esta negociação foi registrada sem comissão para o Gestor/Admin. Você pode vinculá-la a qualquer momento.
+                      </span>
+                    </div>
+                  </div>
+
+                  {canManageGerencial && (
+                    <button
+                      type="button"
+                      onClick={handleVincularGerencial}
+                      className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                    >
+                      <Link size={14} />
+                      <span>Vincular Comissão Agora</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           {/* 4. ZONA DE EXCLUSÃO DA VENDA (SOMENTE ADMIN) */}

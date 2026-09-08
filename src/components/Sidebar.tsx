@@ -29,10 +29,12 @@ import {
   FolderCog,
   Shield,
   Calendar,
-  Settings
+  Settings,
+  Info
 } from 'lucide-react';
-import { Usuario } from '../types';
+import { Usuario, ConfiguracaoLoja } from '../types';
 import { subscribeConfiguracoesLoja, saveConfiguracaoLojaFirestore, getConfiguracaoLojaFirestore } from '../services/firestoreService';
+import { ModalDadosEmpresa } from './ModalDadosEmpresa';
 
 interface SidebarProps {
   activeTab: string;
@@ -49,6 +51,7 @@ interface SidebarProps {
     totalBancos?: number;
     pendentesAprovacao?: number;
     comissoesPendentes?: number;
+    comissoesGerenciaisPendentes?: number;
     despesasPendentes?: number;
     recebiveisPendentes?: number;
   };
@@ -104,12 +107,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [customLogo, setCustomLogo] = useState<string>('');
+  const [configLoja, setConfigLoja] = useState<ConfiguracaoLoja | null>(null);
+  const [modalEmpresaOpen, setModalEmpresaOpen] = useState(false);
 
-  // Sincronização em tempo real do logotipo global da loja (documento 'geral' no Firestore)
+  // Sincronização em tempo real das configurações e logotipo global da loja (documento 'geral' no Firestore)
   useEffect(() => {
+    getConfiguracaoLojaFirestore().then((cfg) => {
+      if (cfg) {
+        setConfigLoja(cfg);
+        if (cfg.logoUrl !== undefined) {
+          setCustomLogo(cfg.logoUrl || '');
+        }
+      }
+    });
+
     const unsub = subscribeConfiguracoesLoja((config) => {
-      if (config && config.logoUrl !== undefined) {
-        setCustomLogo(config.logoUrl || '');
+      if (config) {
+        setConfigLoja(config);
+        if (config.logoUrl !== undefined) {
+          setCustomLogo(config.logoUrl || '');
+        }
       }
     });
     return () => unsub();
@@ -317,6 +334,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         icon: FolderCog,
         items: [
           {
+            id: 'comissoes-gerenciais',
+            label: 'Comissões da Gestão',
+            icon: Award,
+            badge: (counts.comissoesGerenciaisPendentes ?? 0) > 0 ? `${counts.comissoesGerenciaisPendentes} pend.` : 'Overriding',
+            badgeColor: (counts.comissoesGerenciaisPendentes ?? 0) > 0 ? 'bg-amber-500 text-slate-950 font-bold animate-pulse' : 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30',
+            alertCount: counts.comissoesGerenciaisPendentes || 0,
+            visible: perms.verComissoesGerenciais === true || (currentUser?.role === 'admin' && perms.verComissoesGerenciais !== false) || (currentUser?.role === 'gestor' && perms.verComissoesGerenciais !== false),
+          },
+          {
             id: 'usuarios-item',
             label: 'Gestão de Usuários',
             icon: Users,
@@ -395,9 +421,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         />
       )}
 
-      {/* Cabeçalho da Marca / Logo */}
+      {/* Cabeçalho da Marca / Logo / Dados da Empresa */}
       <div className="p-4 xl:p-5 border-b border-white/5 flex items-center justify-between relative shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <div
             onClick={() => {
               if (isAdmin) {
@@ -426,23 +452,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
 
-          <div className="min-w-0">
-            <span className="font-extrabold text-base xl:text-lg tracking-tight text-white flex items-center gap-1.5 truncate">
-              TROCA <span className="text-blue-400">FÁCIL</span>
+          <div
+            onClick={() => setModalEmpresaOpen(true)}
+            className="min-w-0 cursor-pointer group/empresa"
+            title="Clique para ver e alterar as informações da empresa (CNPJ, Razão Social, Endereço)"
+          >
+            <span className="font-extrabold text-base xl:text-lg tracking-tight text-white flex items-center gap-1 truncate group-hover/empresa:text-blue-400 transition">
+              {configLoja?.nomeLoja ? (
+                <span>{configLoja.nomeLoja}</span>
+              ) : (
+                <>TROCA <span className="text-blue-400">FÁCIL</span></>
+              )}
+              <Info size={11} className="text-slate-500 group-hover/empresa:text-blue-400 shrink-0" />
             </span>
-            <p className="text-[10px] xl:text-[11px] text-slate-400 font-medium truncate">Autos e Repasse</p>
+            <p className="text-[10px] xl:text-[11px] text-slate-400 font-medium truncate">
+              {configLoja?.cnpj ? `CNPJ: ${configLoja.cnpj}` : 'Autos e Repasse'}
+            </p>
           </div>
         </div>
 
-        {customLogo && isAdmin && (
+        <div className="flex items-center gap-1 shrink-0">
           <button
-            onClick={handleRemoveLogo}
-            className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg bg-white/5 hover:bg-rose-500/10 border border-white/5 transition shrink-0 cursor-pointer"
-            title="Restaurar logo padrão (Admin)"
+            type="button"
+            onClick={() => setModalEmpresaOpen(true)}
+            className="p-1.5 rounded-lg bg-white/5 hover:bg-blue-600/20 text-slate-400 hover:text-blue-400 border border-white/5 hover:border-blue-500/30 transition cursor-pointer"
+            title="Dados e Informações da Empresa (CNPJ, Razão Social, Endereço)"
           >
-            <Trash2 size={13} />
+            <Building2 size={15} />
           </button>
-        )}
+
+          {customLogo && isAdmin && (
+            <button
+              onClick={handleRemoveLogo}
+              className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg bg-white/5 hover:bg-rose-500/10 border border-white/5 transition shrink-0 cursor-pointer"
+              title="Restaurar logo padrão (Admin)"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Botão de Ação Rápida */}
@@ -716,6 +764,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
       </div>
+
+      {/* MODAL DE DADOS E INFORMAÇÕES DA EMPRESA (CNPJ, RAZÃO SOCIAL, ENDEREÇO) */}
+      <ModalDadosEmpresa
+        isOpen={modalEmpresaOpen}
+        onClose={() => setModalEmpresaOpen(false)}
+        currentUser={currentUser}
+      />
     </aside>
   );
 };

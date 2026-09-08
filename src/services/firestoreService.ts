@@ -24,6 +24,10 @@ import {
   DespesaVeiculo,
   CategoriaFornecedor,
   CategoriaDespesa,
+  PagadorPreCadastro,
+  PagamentoAluguel,
+  ContratoLocacao,
+  LancamentoContaMotorista,
 } from '../types';
 import { initialVeiculos, initialVendas, initialDespesasFixas } from '../data/initialData';
 
@@ -39,6 +43,7 @@ const COLLECTIONS = {
   CONFIGURACOES: 'configuracoes_loja',
   CONTAS_BANCARIAS: 'contas_bancarias',
   MOVIMENTACOES_CONTAS: 'movimentacoes_contas',
+  PAGADORES: 'pagadores',
 };
 
 /**
@@ -755,12 +760,103 @@ export async function deleteFornecedorFirestore(fornecedorId: string): Promise<v
   await deleteDoc(docRef);
 }
 
+// ---------------------------------------------------------------------------
+// GESTÃO DE PAGADORES / MOTORISTAS PRÉ-CADASTRADOS (SEM CONTRATO ATIVO)
+// ---------------------------------------------------------------------------
+export async function getPagadoresFirestore(): Promise<PagadorPreCadastro[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.PAGADORES));
+    const list: PagadorPreCadastro[] = [];
+    snap.forEach((d) => {
+      list.push({ ...d.data(), id: d.id } as PagadorPreCadastro);
+    });
+    if (list.length > 0) {
+      localStorage.setItem('troca_facil_pagadores', JSON.stringify(list));
+      return list;
+    }
+  } catch (err) {
+    console.warn('Erro ao buscar pagadores no Firestore:', err);
+  }
+  const cached = localStorage.getItem('troca_facil_pagadores');
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch {
+      // ignore
+    }
+  }
+  return [];
+}
+
+export async function savePagadorFirestore(pagador: PagadorPreCadastro): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTIONS.PAGADORES, pagador.id);
+    const cleanData = JSON.parse(JSON.stringify(pagador));
+    await setDoc(docRef, cleanData, { merge: true });
+  } catch (err) {
+    console.warn('Erro ao gravar pagador no Firestore:', err);
+  }
+  try {
+    const cached = localStorage.getItem('troca_facil_pagadores');
+    const list: PagadorPreCadastro[] = cached ? JSON.parse(cached) : [];
+    const idx = list.findIndex((p) => p.id === pagador.id);
+    if (idx >= 0) list[idx] = pagador;
+    else list.unshift(pagador);
+    localStorage.setItem('troca_facil_pagadores', JSON.stringify(list));
+  } catch {}
+}
+
+export async function deletePagadorFirestore(pagadorId: string): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTIONS.PAGADORES, pagadorId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.warn('Erro ao deletar pagador do Firestore:', err);
+  }
+  try {
+    const cached = localStorage.getItem('troca_facil_pagadores');
+    if (cached) {
+      const list: PagadorPreCadastro[] = JSON.parse(cached).filter((p: any) => p.id !== pagadorId);
+      localStorage.setItem('troca_facil_pagadores', JSON.stringify(list));
+    }
+  } catch {}
+}
+
+export function subscribePagadoresFirestore(
+  onData: (pagadores: PagadorPreCadastro[]) => void
+) {
+  const colRef = collection(db, COLLECTIONS.PAGADORES);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const list: PagadorPreCadastro[] = [];
+      snapshot.forEach((d) => {
+        list.push({ ...d.data(), id: d.id } as PagadorPreCadastro);
+      });
+      localStorage.setItem('troca_facil_pagadores', JSON.stringify(list));
+      onData(list);
+    },
+    (err) => {
+      console.warn('Erro no onSnapshot de pagadores:', err);
+      const cached = localStorage.getItem('troca_facil_pagadores');
+      if (cached) {
+        try {
+          onData(JSON.parse(cached));
+        } catch {}
+      }
+    }
+  );
+}
+
 export async function saveVeiculoFirestore(veiculo: Veiculo): Promise<void> {
   const docRef = doc(db, COLLECTIONS.VEICULOS, veiculo.id);
   // Clean undefined properties before saving to firestore
   const cleanData: any = JSON.parse(JSON.stringify(veiculo));
 
   // Explicitly assign null to fields that were cleared so Firestore updates and removes old values
+  if (veiculo.contratoAtivo === undefined || veiculo.contratoAtivo === null) {
+    cleanData.contratoAtivo = null;
+  }
   if (veiculo.fornecedorAtualId === undefined || veiculo.fornecedorAtualId === null) {
     cleanData.fornecedorAtualId = null;
   }
@@ -899,6 +995,51 @@ export async function saveCorFirestore(nome: string, criadoPor?: string): Promis
   return nomeFormatado;
 }
 
+// --- CRUD: Pagadores Pré-cadastrados (Locação & Frota) ---
+
+/**
+ * Salva ou atualiza um Pagador Pré-cadastrado no Firestore
+ */
+export async function savePagadorPreCadastroFirestore(pagador: PagadorPreCadastro): Promise<void> {
+  const docRef = doc(db, COLLECTIONS.PAGADORES, pagador.id);
+  const data = {
+    ...pagador,
+    updatedAt: new Date().toISOString(),
+  };
+  await setDoc(docRef, data, { merge: true });
+}
+
+/**
+ * Busca todos os pagadores pré-cadastrados no Firestore
+ */
+export async function buscarPagadoresPreCadastroFirestore(): Promise<PagadorPreCadastro[]> {
+  try {
+    const colRef = collection(db, COLLECTIONS.PAGADORES);
+    const snap = await getDocs(colRef);
+    const lista: PagadorPreCadastro[] = [];
+    snap.forEach((d) => {
+      lista.push({ ...d.data(), id: d.id } as PagadorPreCadastro);
+    });
+    return lista.sort((a, b) => new Date(b.dataCadastro || 0).getTime() - new Date(a.dataCadastro || 0).getTime());
+  } catch (error) {
+    console.warn('Aviso: Coleção pagadores ainda vazia ou inacessível no Firestore.', error);
+    return [];
+  }
+}
+
+/**
+ * Deleta um pagador pré-cadastrado do Firestore
+ */
+export async function deletarPagadorPreCadastroFirestore(id: string): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTIONS.PAGADORES, id);
+    await deleteDoc(docRef);
+  } catch (error) {
+    console.error('Erro ao deletar pagador pré-cadastrado:', error);
+    throw error;
+  }
+}
+
 // --- Limpeza Total de Dados Demonstrativos ---
 
 export async function clearAllDemoDataFirestore(): Promise<void> {
@@ -1031,10 +1172,24 @@ export const DEFAULT_CONFIGURACOES_LOJA: ConfiguracaoLoja = {
   nomeLoja: 'Troca Fácil Veículos',
   razaoSocial: 'TROCA FÁCIL COMÉRCIO DE VEÍCULOS LTDA',
   cnpj: '47.271.452/0001-71',
+  inscricaoEstadual: 'ISENTO',
   endereco: 'RUA NICOLAU CACCIATORI, 477, JD DOS PIONEIROS, CEP: 19.050-340, PRESIDENTE PRUDENTE-SP',
+  logradouro: 'Rua Nicolau Cacciatori',
+  numero: '477',
+  bairro: 'Jd. dos Pioneiros',
+  cep: '19050-340',
   cidadeUf: 'Presidente Prudente - SP',
   telefone: '(18) 3222-0000',
+  email: 'contato@trocafacil.com.br',
+  chavePixPadrao: '47.271.452/0001-71',
+  responsavelLegal: 'Diretoria Executiva',
+  cpfResponsavel: '000.000.000-00',
   logoUrl: '',
+  comissaoGerenteAtiva: true,
+  comissaoGerenteTipo: 'porcentagem_venda',
+  comissaoGerenteTaxa: 1.0,
+  comissaoGerenteBeneficiarioNome: 'Diretoria / Gestor Geral',
+  comissaoGerenteObservacoes: 'Regra Global de Overriding da Loja (1% sobre valor da venda)',
 };
 
 /**
@@ -2051,6 +2206,16 @@ export interface ParametrosLancamentoExpresso {
   comprovanteNumero?: string;
   observacoes?: string;
   usuarioNome?: string;
+  // Extensões para Frota, Pátio, Múltiplos Veículos e Pré-cadastro de Pagadores
+  modoRateioMultiplos?: boolean;
+  veiculosMultiplos?: { id: string; placa: string; modelo?: string; valorRateado?: number }[];
+  categoriasMultiplas?: string[];
+  fornecedoresMultiplos?: string[];
+  salvarNovoPagadorSemContrato?: boolean;
+  dadosNovoPagador?: { cpf?: string; telefone?: string; app?: string; observacoes?: string };
+  contratoLocacaoId?: string;
+  vincularAoPainelLocacao?: boolean;
+  periodicidadeRecebimento?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Diária' | 'Avulso';
 }
 
 export async function salvarLancamentoExpressoFirestore(
@@ -2061,6 +2226,9 @@ export async function salvarLancamentoExpressoFirestore(
   novoFornecedorCriado?: FornecedorPrestador;
   novoVeiculoLocacaoCriado?: Veiculo;
   despesaFixaCriada?: DespesaFixa;
+  novoPagadorCriado?: PagadorPreCadastro;
+  veiculosAtualizados?: Veiculo[];
+  veiculoLocacaoAtualizado?: Veiculo;
 }> {
   const {
     tipo,
@@ -2089,6 +2257,15 @@ export async function salvarLancamentoExpressoFirestore(
     comprovanteNumero,
     observacoes,
     usuarioNome = 'Sistema',
+    modoRateioMultiplos,
+    veiculosMultiplos,
+    categoriasMultiplas,
+    fornecedoresMultiplos,
+    salvarNovoPagadorSemContrato,
+    dadosNovoPagador,
+    contratoLocacaoId,
+    vincularAoPainelLocacao = true,
+    periodicidadeRecebimento = 'Semanal',
   } = params;
 
   if (!contaId) {
@@ -2123,6 +2300,28 @@ export async function salvarLancamentoExpressoFirestore(
     }
   }
 
+  // 1.1 Pré-cadastro de novo Pagador / Motorista sem contrato ativo
+  let novoPagadorCriado: PagadorPreCadastro | undefined;
+  if (salvarNovoPagadorSemContrato && pagadorRecebedor && pagadorRecebedor.trim()) {
+    try {
+      const pagId = `pag_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+      novoPagadorCriado = {
+        id: pagId,
+        nome: pagadorRecebedor.trim(),
+        cpf: dadosNovoPagador?.cpf?.trim() || undefined,
+        telefone: dadosNovoPagador?.telefone?.trim() || undefined,
+        tipo: 'Motorista de App',
+        app: (dadosNovoPagador?.app as any) || 'Uber',
+        status: 'Sem Contrato',
+        observacoes: dadosNovoPagador?.observacoes?.trim() || `Pré-cadastro realizado via Lançamento Expresso (${usuarioNome})`,
+        createdAt: new Date().toISOString(),
+      };
+      await savePagadorFirestore(novoPagadorCriado);
+    } catch (errPag) {
+      console.warn('Erro ao salvar pré-cadastro de pagador:', errPag);
+    }
+  }
+
   // 2. Roteamento Contábil
   let despesaFixaIdGerado: string | undefined;
   let despesaVeiculoIdGerado: string | undefined;
@@ -2130,6 +2329,8 @@ export async function salvarLancamentoExpressoFirestore(
   let placaVinculada: string | undefined;
   let despesaFixaCriada: DespesaFixa | undefined;
   let novoVeiculoLocacaoCriado: Veiculo | undefined;
+  const veiculosAtualizadosRateio: Veiculo[] = [];
+  let veiculoLocacaoAtualizado: Veiculo | undefined;
 
   // A) Rota 1: Despesa/Receita da Loja -> DespesaFixa
   if (destinoRoteamento === 'despesa_fixa') {
@@ -2200,7 +2401,56 @@ export async function salvarLancamentoExpressoFirestore(
     }
   }
 
-  // C) Rota 3: Veículo de Venda (Estoque) -> Se Saída: Despesa do Veículo; Se Entrada: Crédito/Sinal vinculado
+  // C) Rota 3: Despesa com Múltiplos Veículos / Rateio de Pátio e Frota
+  else if (isSaida && modoRateioMultiplos && veiculosMultiplos && veiculosMultiplos.length > 0) {
+    const totalCarros = veiculosMultiplos.length;
+    for (let i = 0; i < totalCarros; i++) {
+      const item = veiculosMultiplos[i];
+      const valorItem = item.valorRateado && item.valorRateado > 0 ? item.valorRateado : (valor / totalCarros);
+      try {
+        const vSnap = await getDoc(doc(db, COLLECTIONS.VEICULOS, item.id));
+        if (vSnap.exists()) {
+          const vData = vSnap.data() as Veiculo;
+          const despId = `desp_rateio_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
+          const fornecedorStr = (fornecedoresMultiplos && fornecedoresMultiplos.length > 0)
+            ? fornecedoresMultiplos.join(', ')
+            : (pagadorRecebedor?.trim() || 'Fornecedor Avulso');
+          const categoriasStr = (categoriasMultiplas && categoriasMultiplas.length > 0)
+            ? categoriasMultiplas.join(' + ')
+            : (categoriaDespesaVeiculo || categoria || 'Manutenção Pátio/Frota');
+
+          const novaDesp: DespesaVeiculo = {
+            id: despId,
+            veiculoId: vData.id,
+            chassi: vData.chassi || '',
+            placa: vData.placa,
+            categoria: (categoriasMultiplas?.[0] as CategoriaDespesa) || categoriaDespesaVeiculo || 'Peças',
+            descricao: `${descricaoFinal} [Rateio ${i + 1}/${totalCarros} - ${item.placa}]`,
+            valor: valorItem,
+            data: dataLancamento,
+            dataPagamento: dataLancamento,
+            fornecedor: fornecedorStr,
+            statusPagamento: 'Pago',
+            contaBancariaId: contaId,
+            contaBancariaNome: contaNome,
+            formaPagamento: formaPagamento,
+            observacoes: `Rateio pátio/frota (${usuarioNome}). Categorias: ${categoriasStr}. Veículos: ${veiculosMultiplos.map((v) => v.placa).join(', ')}`,
+          };
+
+          const veicUpdated: Veiculo = {
+            ...vData,
+            despesas: [novaDesp, ...(vData.despesas || [])],
+          };
+          await saveVeiculoFirestore(veicUpdated);
+          veiculosAtualizadosRateio.push(veicUpdated);
+        }
+      } catch (errRateio) {
+        console.error(`Erro ao salvar despesa rateada no veículo ${item.placa}:`, errRateio);
+      }
+    }
+  }
+
+  // D) Rota 4: Veículo de Venda (Estoque) Individual
   else if (destinoRoteamento === 'veiculo_estoque' && veiculoEstoqueId) {
     try {
       const veicSnap = await getDoc(doc(db, COLLECTIONS.VEICULOS, veiculoEstoqueId));
@@ -2211,17 +2461,21 @@ export async function salvarLancamentoExpressoFirestore(
 
         if (isSaida) {
           const despId = `desp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+          const fornecedorStr = (fornecedoresMultiplos && fornecedoresMultiplos.length > 0)
+            ? fornecedoresMultiplos.join(', ')
+            : (pagadorRecebedor?.trim() || 'Fornecedor Avulso');
+
           const novaDespesaVeiculo: DespesaVeiculo = {
             id: despId,
             veiculoId: veicData.id,
             chassi: veicData.chassi || '',
             placa: veicData.placa || '',
-            categoria: categoriaDespesaVeiculo || 'Peças',
+            categoria: (categoriasMultiplas?.[0] as CategoriaDespesa) || categoriaDespesaVeiculo || 'Peças',
             descricao: descricaoFinal,
             valor: valor,
             data: dataLancamento,
             dataPagamento: dataLancamento,
-            fornecedor: pagadorRecebedor?.trim() || 'Fornecedor Avulso',
+            fornecedor: fornecedorStr,
             statusPagamento: 'Pago',
             contaBancariaId: contaId,
             contaBancariaNome: contaNome,
@@ -2237,6 +2491,7 @@ export async function salvarLancamentoExpressoFirestore(
 
           await saveVeiculoFirestore(veicAtualizado);
           despesaVeiculoIdGerado = despId;
+          veiculosAtualizadosRateio.push(veicAtualizado);
         }
       }
     } catch (err) {
@@ -2244,37 +2499,46 @@ export async function salvarLancamentoExpressoFirestore(
     }
   }
 
-  // D) Rota 4: Veículo de Locação / Placa Avulsa
-  else if (destinoRoteamento === 'veiculo_locacao' && veiculoLocacaoPlaca?.trim()) {
-    const placaLimpa = veiculoLocacaoPlaca.trim().toUpperCase();
+  // E) Rota 5: Veículo de Locação / Frota (Receitas e Custos)
+  else if (destinoRoteamento === 'veiculo_locacao') {
+    const placaLimpa = veiculoLocacaoPlaca?.trim().toUpperCase() || '';
     placaVinculada = placaLimpa;
 
     try {
-      // Buscar se já existe veículo com essa placa
+      // Buscar se já existe veículo com essa placa ou contratoId
       const todosVeicsSnap = await getDocs(collection(db, COLLECTIONS.VEICULOS));
       let veiculoEncontrado: Veiculo | undefined;
       todosVeicsSnap.forEach((d) => {
         const v = d.data() as Veiculo;
-        if (v.placa && v.placa.trim().toUpperCase() === placaLimpa) {
+        if (contratoLocacaoId && v.contratoAtivo?.id === contratoLocacaoId) {
+          veiculoEncontrado = { ...v, id: d.id };
+        } else if (!veiculoEncontrado && placaLimpa && v.placa && v.placa.trim().toUpperCase() === placaLimpa) {
           veiculoEncontrado = { ...v, id: d.id };
         }
       });
 
       if (veiculoEncontrado) {
         veiculoIdVinculado = veiculoEncontrado.id;
+        placaVinculada = veiculoEncontrado.placa;
+
         if (isSaida) {
+          // Despesa / Custo de Manutenção da Frota
           const despId = `desp_loc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+          const fornecedorStr = (fornecedoresMultiplos && fornecedoresMultiplos.length > 0)
+            ? fornecedoresMultiplos.join(', ')
+            : (pagadorRecebedor?.trim() || 'Oficina / Parceiro');
+
           const novaDespesaVeiculo: DespesaVeiculo = {
             id: despId,
             veiculoId: veiculoEncontrado.id,
             chassi: veiculoEncontrado.chassi || '',
             placa: veiculoEncontrado.placa,
-            categoria: categoriaDespesaVeiculo || 'Mecânica / Mão de Obra',
+            categoria: (categoriasMultiplas?.[0] as CategoriaDespesa) || categoriaDespesaVeiculo || 'Mecânica / Mão de Obra',
             descricao: descricaoFinal,
             valor: valor,
             data: dataLancamento,
             dataPagamento: dataLancamento,
-            fornecedor: pagadorRecebedor?.trim() || 'Oficina / Parceiro',
+            fornecedor: fornecedorStr,
             statusPagamento: 'Pago',
             contaBancariaId: contaId,
             contaBancariaNome: contaNome,
@@ -2288,8 +2552,92 @@ export async function salvarLancamentoExpressoFirestore(
           };
           await saveVeiculoFirestore(veicAtualizado);
           despesaVeiculoIdGerado = despId;
+          veiculoLocacaoAtualizado = veicAtualizado;
+        } else {
+          // RECEITA DE FROTA: Vinculação Automática ao Painel de Locação
+          if (vincularAoPainelLocacao && veiculoEncontrado.contratoAtivo) {
+            const contrato = veiculoEncontrado.contratoAtivo;
+            const pagId = `pag_loc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+            const periodicidade = periodicidadeRecebimento || (categoria?.toLowerCase().includes('semanal') ? 'Semanal' : 'Semanal');
+
+            // Calcular próximo vencimento caso seja cobrança semanal
+            let proximoVenc = contrato.proximoVencimento;
+            if (periodicidade === 'Semanal') {
+              try {
+                const baseDate = new Date((contrato.proximoVencimento || dataLancamento) + 'T12:00:00');
+                baseDate.setDate(baseDate.getDate() + 7);
+                proximoVenc = baseDate.toISOString().split('T')[0];
+              } catch {
+                // fallback
+              }
+            }
+
+            const novoPagamento: PagamentoAluguel = {
+              id: pagId,
+              contratoId: contrato.id,
+              veiculoId: veiculoEncontrado.id,
+              motoristaNome: contrato.motoristaNome,
+              semanaReferencia: `Recebimento ${periodicidade} (${dataLancamento})`,
+              dataVencimento: contrato.proximoVencimento || dataLancamento,
+              valor: valor,
+              status: 'Pago',
+              dataPagamento: dataLancamento,
+              metodoPagamento: formaPagamento.includes('PIX')
+                ? 'PIX'
+                : formaPagamento.includes('Boleto')
+                ? 'Boleto'
+                : formaPagamento.includes('Dinheiro')
+                ? 'Dinheiro'
+                : 'Transferência',
+              observacao: observacoes?.trim() || `Recebido via Lançamento Expresso (${categoria || 'Aluguel Semanal'})`,
+            };
+
+            const novoCreditoCC: LancamentoContaMotorista = {
+              id: `cc_cr_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+              data: dataLancamento,
+              tipo: 'CREDITO_PAGAMENTO',
+              descricao: `${categoria || 'Aluguel Semanal'} - Recebido via Lançamento Expresso`,
+              valor: valor,
+              saldoApos: (contrato.caucaoSaldoAtual !== undefined ? contrato.caucaoSaldoAtual : contrato.caucao) || 0,
+            };
+
+            const updatedContrato: ContratoLocacao = {
+              ...contrato,
+              proximoVencimento: proximoVenc || contrato.proximoVencimento,
+              pagamentos: [novoPagamento, ...(contrato.pagamentos || [])],
+              contaCorrenteMotorista: [novoCreditoCC, ...(contrato.contaCorrenteMotorista || [])],
+            };
+
+            const veicAtualizado: Veiculo = {
+              ...veiculoEncontrado,
+              contratoAtivo: updatedContrato,
+            };
+
+            await saveVeiculoFirestore(veicAtualizado);
+            veiculoLocacaoAtualizado = veicAtualizado;
+          }
         }
-      } else if (salvarNovoVeiculoLocacao) {
+
+        // Salvar pré-cadastro de pagador de locação se solicitado
+        if (!isSaida && salvarNovoPagadorSemContrato && pagadorRecebedor) {
+          const pagadorSalvo: PagadorPreCadastro = {
+            id: `pagador_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+            nome: pagadorRecebedor.trim(),
+            cpf: dadosNovoPagador?.cpf || '',
+            telefone: dadosNovoPagador?.telefone || '',
+            app: dadosNovoPagador?.app || 'Uber / 99',
+            observacoes: dadosNovoPagador?.observacoes || `Pré-cadastro via Lançamento Expresso (${dataLancamento})`,
+            dataCadastro: dataLancamento,
+            ultimoPagamento: dataLancamento,
+            totalPagoAcumulado: valor,
+            veiculoPlacaInteresse: placaLimpa || undefined,
+            status: 'Ativo',
+            criadoPor: usuarioNome,
+          };
+          await savePagadorPreCadastroFirestore(pagadorSalvo);
+          novoPagadorCriado = pagadorSalvo;
+        }
+      } else if (salvarNovoVeiculoLocacao && placaLimpa) {
         const novoId = `veic_loc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
         veiculoIdVinculado = novoId;
         const despId = `desp_loc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
@@ -2298,7 +2646,7 @@ export async function salvarLancamentoExpressoFirestore(
           veiculoId: novoId,
           chassi: `LOC-${placaLimpa.replace(/[^A-Z0-9]/g, '')}`,
           placa: placaLimpa,
-          categoria: categoriaDespesaVeiculo || 'Mecânica / Mão de Obra',
+          categoria: (categoriasMultiplas?.[0] as CategoriaDespesa) || categoriaDespesaVeiculo || 'Mecânica / Mão de Obra',
           descricao: descricaoFinal,
           valor: valor,
           data: dataLancamento,
@@ -2328,16 +2676,16 @@ export async function salvarLancamentoExpressoFirestore(
           kmUltimaRevisao: 0,
           custoAquisicao: 0,
           dataEntrada: dataLancamento,
-          despesas: [novaDespesaVeiculo],
+          despesas: novaDespesaVeiculo ? [novaDespesaVeiculo] : [],
           observacoes: `Pré-cadastro rápido realizado via Lançamento Expresso por ${usuarioNome}`,
         };
 
         await saveVeiculoFirestore(novoVeiculoLocacaoCriado);
-        despesaVeiculoIdGerado = despId;
+        if (isSaida) despesaVeiculoIdGerado = despId;
         veiculoIdVinculado = novoId;
       }
     } catch (err) {
-      console.error('Erro ao vincular despesa de locação:', err);
+      console.error('Erro ao processar lançamento de locação:', err);
     }
   }
 
@@ -2384,9 +2732,12 @@ export async function salvarLancamentoExpressoFirestore(
   } else if (destinoRoteamento === 'despesa_fixa') {
     catCustoFinal = tipoCusto === 'Variável' ? 'Custo Variável' : 'Custo Fixo';
     tipoCustoFinal = tipoCusto || 'Fixo';
-  } else if (destinoRoteamento === 'veiculo_estoque' || destinoRoteamento === 'veiculo_locacao') {
-    catCustoFinal = 'Custo Variável';
-    tipoCustoFinal = 'Variável';
+  } else if (destinoRoteamento === 'veiculo_estoque') {
+    catCustoFinal = isSaida ? 'Custo Variável' : 'Neutro';
+    tipoCustoFinal = isSaida ? 'Variável' : 'Neutro';
+  } else if (destinoRoteamento === 'veiculo_locacao') {
+    catCustoFinal = isSaida ? 'Custo Variável' : 'Receita Locação';
+    tipoCustoFinal = isSaida ? 'Variável' : 'Neutro';
   } else if (destinoRoteamento === 'retirada_socio') {
     catCustoFinal = 'Retirada Sócio';
     tipoCustoFinal = 'Neutro';
@@ -2394,6 +2745,7 @@ export async function salvarLancamentoExpressoFirestore(
 
   const categoriaFinal = (categoria && categoria.trim()) ||
     categoriaDespesaFixa ||
+    (destinoRoteamento === 'veiculo_locacao' && !isSaida ? (periodicidadeRecebimento === 'Semanal' ? 'Recebimento Semanal de Locação' : 'Receita de Locação') : undefined) ||
     categoriaDespesaVeiculo ||
     (destinoRoteamento === 'retirada_socio' ? (isSaida ? 'Pró-labore' : 'Aporte de Sócio') :
      destinoRoteamento === 'venda_realizada' ? (vinculoVendaTipo || 'Receita de Venda') :
@@ -2424,6 +2776,13 @@ export async function salvarLancamentoExpressoFirestore(
     observacoes: observacoes?.trim() || undefined,
     criadoPor: usuarioNome,
     createdAt: new Date().toISOString(),
+    veiculosMultiplosIds: veiculosMultiplos?.map((v) => v.id),
+    veiculosMultiplosPlacas: veiculosMultiplos?.map((v) => v.placa),
+    categoriasMultiplas: categoriasMultiplas,
+    fornecedoresMultiplos: fornecedoresMultiplos,
+    contratoLocacaoId: contratoLocacaoId,
+    pagadorSemContrato: !!salvarNovoPagadorSemContrato,
+    periodicidadeRecebimento: periodicidadeRecebimento,
   };
 
   await saveMovimentacaoContaFirestore(novaMovimentacao);
@@ -2434,6 +2793,9 @@ export async function salvarLancamentoExpressoFirestore(
     novoFornecedorCriado,
     novoVeiculoLocacaoCriado,
     despesaFixaCriada,
+    novoPagadorCriado,
+    veiculosAtualizados: veiculosAtualizadosRateio.length > 0 ? veiculosAtualizadosRateio : undefined,
+    veiculoLocacaoAtualizado,
   };
 }
 

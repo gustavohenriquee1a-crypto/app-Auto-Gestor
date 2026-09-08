@@ -27,7 +27,7 @@ import {
   ShoppingBag
 } from 'lucide-react';
 import { Veiculo, VendaVeiculo, Usuario } from '../types';
-import { formatCurrency, formatKm, checkIsVeiculoVendido } from '../utils/formatters';
+import { formatCurrency, formatKm, checkIsVeiculoVendido, isVeiculoLocacao } from '../utils/formatters';
 
 interface DashboardVendedorViewProps {
   vendas: VendaVeiculo[];
@@ -153,11 +153,11 @@ export const DashboardVendedorView: React.FC<DashboardVendedorViewProps> = ({
   // Ocultar imediatamente qualquer veículo vendido ('Vendido' no estoque ou com venda registrada)
   const carrosComerciais = useMemo(() => {
     return veiculos.filter((v) => {
-      // 1. Excluir veículos vendidos de qualquer vitrine de vendas
-      if (checkIsVeiculoVendido(v, vendas)) {
+      // 1. Excluir veículos vendidos ou da frota de locação de qualquer vitrine de vendas
+      if (checkIsVeiculoVendido(v, vendas) || isVeiculoLocacao(v) || v.tipoOperacao === 'Locacao') {
         return false;
       }
-      if (v.status_estoque === 'Em Trânsito' || v.status === 'Alugado') return false;
+      if (v.status_estoque === 'Em Trânsito' || v.status === 'Alugado' || Boolean(v.contratoAtivo)) return false;
 
       const statusEstoque = v.status_estoque || (v.status === 'Em Preparação' ? 'Em Preparação' : 'No Pátio');
       if (statusEstoque !== 'No Pátio' && statusEstoque !== 'Em Preparação') return false;
@@ -170,6 +170,8 @@ export const DashboardVendedorView: React.FC<DashboardVendedorViewProps> = ({
 
   const countDisponiveis = veiculos.filter((v) => 
     !checkIsVeiculoVendido(v, vendas) && 
+    !isVeiculoLocacao(v) && 
+    v.tipoOperacao !== 'Locacao' && 
     v.status_estoque !== 'Em Trânsito' && 
     v.status !== 'Alugado' && 
     (v.status === 'Disponível' || v.status_estoque === 'No Pátio') && 
@@ -178,6 +180,8 @@ export const DashboardVendedorView: React.FC<DashboardVendedorViewProps> = ({
 
   const countPreparacao = veiculos.filter((v) => 
     !checkIsVeiculoVendido(v, vendas) && 
+    !isVeiculoLocacao(v) && 
+    v.tipoOperacao !== 'Locacao' && 
     v.status_estoque !== 'Em Trânsito' && 
     v.status !== 'Alugado' && 
     (v.status === 'Em Preparação' || v.status_estoque === 'Em Preparação')

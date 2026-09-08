@@ -3,7 +3,9 @@ import {
   X,
   Zap,
   CheckCircle,
+  CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
   Building2,
@@ -22,10 +24,12 @@ import {
   Tag,
   Receipt,
   Sparkles,
+  Wrench,
 } from 'lucide-react';
 import {
   ContaBancariaCaixa,
   Veiculo,
+  ContratoLocacao,
   FornecedorPrestador,
   Usuario,
   MovimentacaoConta,
@@ -52,7 +56,14 @@ interface ModalLancamentoExpressoProps {
   vendas?: VendaVeiculo[];
   currentUser?: Usuario | null;
   movimentacaoToEdit?: MovimentacaoConta | null;
+  initialTipo?: 'Saída' | 'Entrada';
+  initialDestino?: 'despesa_fixa' | 'veiculo_estoque' | 'veiculo_locacao' | 'retirada_socio' | 'receita_loja' | 'venda_realizada';
+  initialPlaca?: string;
+  initialPagador?: string;
   onSuccess?: (mensagem: string) => void;
+  onUpdateVeiculo?: (veiculo: Veiculo) => void;
+  onUpdateVeiculos?: (veiculos: Veiculo[]) => void;
+  onOpenNovoContrato?: (veiculo?: Veiculo, motoristaData?: { nome?: string; cpf?: string; telefone?: string; app?: string; placaInteresse?: string }) => void;
 }
 
 export const CATEGORIAS_SAIDA: Record<string, string[]> = {
@@ -85,12 +96,14 @@ export const CATEGORIAS_SAIDA: Record<string, string[]> = {
   veiculo_locacao: [
     'Manutenção Preventiva / Revisão',
     'Peças & Troca de Óleo',
-    'Pneus / Alinhamento',
-    'Funilaria / Reparos',
+    'Pneus / Alinhamento & Balanceamento',
+    'Funilaria / Reparos de Lataria',
     'Lavagem / Higienização',
-    'Seguro Frota / Rastreador',
-    'Documentação / IPVA',
-    'Franquia / Sinistro',
+    'Seguro Frota / Rastreador & Telemetria',
+    'Documentação, IPVA & Licenciamento',
+    'Franquia / Coparticipação de Sinistro',
+    'Frete / Guincho / Reboque Frota',
+    'Combustível de Apoio / Pátio',
     'Outros Custos de Frota',
   ],
   retirada_socio: [
@@ -121,11 +134,18 @@ export const CATEGORIAS_ENTRADA: Record<string, string[]> = {
     'Receita Extra de Veículo',
   ],
   veiculo_locacao: [
-    'Diária / Mensalidade de Locação',
-    'Caução / Depósito de Garantia',
-    'Cobrança de Multa / Sinistro',
-    'Taxa de Limpeza / Combustível',
-    'Outras Receitas de Locação',
+    'Recebimento Semanal (Aluguel Semanal / Semanalidade)',
+    'Recebimento Quinzenal de Locação',
+    'Recebimento Mensal de Locação',
+    'Diária Avulsa de Locação',
+    'Caução / Depósito de Garantia de Locação',
+    'Cobrança de Multa de Trânsito / Notificação',
+    'Taxa de Higienização / Limpeza / Devolução',
+    'Reembolso de Combustível / Pedágio',
+    'Coparticipação em Sinistro / Franquia',
+    'Taxa de Adesão / Ativação de Motorista',
+    'Acordo / Quitação de Débito de Locação',
+    'Outras Receitas de Frota / Locação',
   ],
   retirada_socio: [
     'Aporte de Sócio / Capital',
@@ -137,6 +157,7 @@ export const CATEGORIAS_ENTRADA: Record<string, string[]> = {
 
 const CATEGORIAS_LOJA = CATEGORIAS_SAIDA.despesa_fixa;
 const CATEGORIAS_VEICULO: CategoriaDespesa[] = CATEGORIAS_SAIDA.veiculo_estoque as CategoriaDespesa[];
+const CATEGORIAS_CUSTO_FROTA: string[] = CATEGORIAS_SAIDA.veiculo_locacao;
 
 const CATEGORIAS_FORNECEDOR: CategoriaFornecedor[] = [
   'Oficina Mecânica',
@@ -167,7 +188,14 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   vendas = [],
   currentUser,
   movimentacaoToEdit,
+  initialTipo,
+  initialDestino,
+  initialPlaca,
+  initialPagador,
   onSuccess,
+  onUpdateVeiculo,
+  onUpdateVeiculos,
+  onOpenNovoContrato,
 }) => {
   const isEditing = !!movimentacaoToEdit;
 
@@ -206,6 +234,34 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   const [veiculoLocacaoModelo, setVeiculoLocacaoModelo] = useState<string>('');
   const [salvarNovoVeiculoLocacao, setSalvarNovoVeiculoLocacao] = useState<boolean>(false);
 
+  // --- NOVOS CAMPOS PARA RECEITA DE FROTA & LOCAÇÃO ---
+  const [periodicidadeRecebimento, setPeriodicidadeRecebimento] = useState<
+    'Semanal' | 'Quinzenal' | 'Mensal' | 'Diária' | 'Avulso'
+  >('Semanal');
+  const [vincularAoPainelLocacao, setVincularAoPainelLocacao] = useState<boolean>(true);
+  const [salvarNovoPagadorSemContrato, setSalvarNovoPagadorSemContrato] = useState<boolean>(false);
+  const [dadosNovoPagador, setDadosNovoPagador] = useState<{
+    cpf: string;
+    telefone: string;
+    app: string;
+    observacoes: string;
+  }>({ cpf: '', telefone: '', app: 'Uber / 99', observacoes: '' });
+
+  // --- NOVOS CAMPOS PARA DESPESAS MULTI-VEÍCULOS / RATEIO PÁTIO E FROTA ---
+  const [modoVeiculosDespesa, setModoVeiculosDespesa] = useState<'unico' | 'multiplos'>('unico');
+  const [veiculosMultiplosSelecionados, setVeiculosMultiplosSelecionados] = useState<string[]>([]);
+  const [modoRateio, setModoRateio] = useState<'igual' | 'personalizado'>('igual');
+  const [valoresRateioCustom, setValoresRateioCustom] = useState<Record<string, string>>({});
+  const [buscaVeiculoMultiplo, setBuscaVeiculoMultiplo] = useState<string>('');
+
+  // Categorias Múltiplas / Abrangentes para Custos de Pátio
+  const [categoriasMultiplas, setCategoriasMultiplas] = useState<string[]>([]);
+  const [novaCategoriaInput, setNovaCategoriaInput] = useState<string>('');
+
+  // Fornecedores Múltiplos
+  const [fornecedoresMultiplos, setFornecedoresMultiplos] = useState<string[]>([]);
+  const [novoFornecedorTagInput, setNovoFornecedorTagInput] = useState<string>('');
+
   // Vínculo Direto a Venda
   const [vinculoVendaId, setVinculoVendaId] = useState<string>('');
   const [vinculoVendaTipo, setVinculoVendaTipo] = useState<string>('Entrada no Caixa');
@@ -218,6 +274,65 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   // Status de Envio
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Contratos de locação ativos indexados
+  const contratosAtivos = useMemo(() => {
+    const lista: { veiculo: Veiculo; contrato: ContratoLocacao }[] = [];
+    veiculos.forEach((v) => {
+      if (v.contratoAtivo && v.contratoAtivo.status === 'Ativo') {
+        lista.push({ veiculo: v, contrato: v.contratoAtivo });
+      }
+    });
+    return lista;
+  }, [veiculos]);
+
+  // Detecção Automática de Contrato Ativo
+  const contratoAtivoDetectado = useMemo(() => {
+    if (destinoRoteamento !== 'veiculo_locacao') return null;
+    const placaClean = veiculoLocacaoPlaca.trim().toUpperCase();
+    const pagadorClean = pagadorRecebedor.trim().toLowerCase();
+
+    if (placaClean) {
+      const matchPlaca = contratosAtivos.find(
+        (c) => c.veiculo.placa?.trim().toUpperCase() === placaClean
+      );
+      if (matchPlaca) return matchPlaca;
+    }
+
+    if (pagadorClean.length >= 3) {
+      const matchNome = contratosAtivos.find(
+        (c) =>
+          c.contrato.motoristaNome?.toLowerCase().includes(pagadorClean) ||
+          (c.contrato.motoristaCpf &&
+            c.contrato.motoristaCpf.replace(/\D/g, '').includes(pagadorClean.replace(/\D/g, '')))
+      );
+      if (matchNome) return matchNome;
+    }
+
+    return null;
+  }, [destinoRoteamento, veiculoLocacaoPlaca, pagadorRecebedor, contratosAtivos]);
+
+  // Próximo vencimento projetado caso aluguel semanal
+  const novoVencimentoCalculado = useMemo(() => {
+    if (!contratoAtivoDetectado?.contrato) return null;
+    const c = contratoAtivoDetectado.contrato;
+    const baseStr = c.proximoVencimento || data || new Date().toISOString().split('T')[0];
+    try {
+      const d = new Date(baseStr + 'T12:00:00');
+      if (periodicidadeRecebimento === 'Semanal') {
+        d.setDate(d.getDate() + 7);
+      } else if (periodicidadeRecebimento === 'Quinzenal') {
+        d.setDate(d.getDate() + 15);
+      } else if (periodicidadeRecebimento === 'Mensal') {
+        d.setMonth(d.getMonth() + 1);
+      } else if (periodicidadeRecebimento === 'Diária') {
+        d.setDate(d.getDate() + 1);
+      }
+      return d.toISOString().split('T')[0];
+    } catch {
+      return null;
+    }
+  }, [contratoAtivoDetectado, periodicidadeRecebimento, data]);
 
   // Lista dinâmica de categorias com base no Tipo e Destino
   const categoriasDisponiveis = useMemo(() => {
@@ -270,7 +385,7 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
     }
   };
 
-  // Inicializar dados quando abre ou muda movimentacaoToEdit
+  // Inicializar dados quando abre ou muda movimentacaoToEdit ou props iniciais
   useEffect(() => {
     if (!isOpen) {
       setErrorMsg(null);
@@ -327,25 +442,38 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
       }
     } else {
       // Criação limpa
-      setTipo('Saída');
+      const initialT = initialTipo || 'Saída';
+      const initialD = initialDestino || (initialT === 'Saída' ? 'despesa_fixa' : 'veiculo_locacao');
+      setTipo(initialT);
       setValor('');
       setData(new Date().toISOString().split('T')[0]);
       setContaId(contasBancarias[0]?.id || '');
       setFormaPagamento('PIX / Transf.');
-      setPagadorRecebedor('');
+      setPagadorRecebedor(initialPagador || '');
       setSalvarNovoFornecedor(false);
       setCategoriaNovoFornecedor('Outro Parceiro');
-      setDestinoRoteamento('despesa_fixa');
-      setCategoria(CATEGORIAS_SAIDA.despesa_fixa[0]);
-      setTipoCusto('Fixo');
+      setDestinoRoteamento(initialD);
+      const mapa = initialT === 'Saída' ? CATEGORIAS_SAIDA : CATEGORIAS_ENTRADA;
+      setCategoria(mapa[initialD]?.[0] || 'Despesa Operacional');
+      setTipoCusto(initialT === 'Saída' ? (initialD === 'despesa_fixa' ? 'Fixo' : 'Variável') : 'Neutro');
       setModoDespesaFixa('nova');
       setDespesaFixaExistenteId('');
       setCategoriaDespesaFixa(CATEGORIAS_SAIDA.despesa_fixa[0]);
       setVeiculoEstoqueId(veiculos.filter((v) => v.status !== 'Vendido')[0]?.id || '');
       setCategoriaDespesaVeiculo('Mecânica / Mão de Obra');
-      setVeiculoLocacaoPlaca('');
+      setVeiculoLocacaoPlaca(initialPlaca || '');
       setVeiculoLocacaoModelo('');
       setSalvarNovoVeiculoLocacao(false);
+      setPeriodicidadeRecebimento('Semanal');
+      setVincularAoPainelLocacao(true);
+      setSalvarNovoPagadorSemContrato(false);
+      setDadosNovoPagador({ cpf: '', telefone: '', app: 'Uber / 99', observacoes: '' });
+      setModoVeiculosDespesa('unico');
+      setVeiculosMultiplosSelecionados([]);
+      setModoRateio('igual');
+      setValoresRateioCustom({});
+      setCategoriasMultiplas([]);
+      setFornecedoresMultiplos([]);
       setVinculoVendaId('');
       setVinculoVendaTipo('Entrada no Caixa');
       setClienteNome('');
@@ -353,7 +481,7 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
       setObservacoes('');
       setErrorMsg(null);
     }
-  }, [isOpen, movimentacaoToEdit, contasBancarias, veiculos]);
+  }, [isOpen, movimentacaoToEdit, contasBancarias, veiculos, initialTipo, initialDestino, initialPlaca, initialPagador]);
 
   // Lista combinada de sugestões para Pagador/Recebedor
   const sugestoesNomes = useMemo(() => {
@@ -361,12 +489,18 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
     fornecedores.forEach((f) => {
       if (f.nome && !lista.includes(f.nome)) lista.push(f.nome);
     });
+    // Adicionar motoristas de locação ativos
+    contratosAtivos.forEach((c) => {
+      if (c.contrato.motoristaNome && !lista.includes(c.contrato.motoristaNome)) {
+        lista.push(c.contrato.motoristaNome);
+      }
+    });
     usuarios.forEach((u) => {
       const nome = u.nomeCompleto || u.displayName;
       if (nome && !lista.includes(nome)) lista.push(nome);
     });
     return lista;
-  }, [fornecedores, usuarios]);
+  }, [fornecedores, contratosAtivos, usuarios]);
 
   // Verifica se o texto digitado já existe
   const nomeExisteNoCadastro = useMemo(() => {
@@ -378,7 +512,7 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   // Placas de veículos de locação existentes
   const placasLocacaoExistentes = useMemo(() => {
     return veiculos
-      .filter((v) => v.tipoOperacao === 'Locacao' || v.status === 'Disponível')
+      .filter((v) => v.tipoOperacao === 'Locacao' || v.contratoAtivo || v.status === 'Disponível')
       .map((v) => v.placa?.toUpperCase().trim())
       .filter(Boolean);
   }, [veiculos]);
@@ -398,6 +532,19 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   const veiculosEstoque = useMemo(() => {
     return veiculos.filter((v) => v.status !== 'Vendido');
   }, [veiculos]);
+
+  // Lista filtrada de todos os veículos ativos para rateio
+  const veiculosParaRateio = useMemo(() => {
+    const query = buscaVeiculoMultiplo.trim().toLowerCase();
+    const lista = veiculos.filter((v) => v.status !== 'Vendido');
+    if (!query) return lista;
+    return lista.filter(
+      (v) =>
+        v.placa?.toLowerCase().includes(query) ||
+        v.modelo?.toLowerCase().includes(query) ||
+        v.marca?.toLowerCase().includes(query)
+    );
+  }, [veiculos, buscaVeiculoMultiplo]);
 
   // Cálculo da diferença de saldo em modo de edição
   const diferencaEdicao = useMemo(() => {
@@ -424,13 +571,24 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
       return;
     }
 
-    if (destinoRoteamento === 'veiculo_estoque' && !veiculoEstoqueId) {
+    if (destinoRoteamento === 'veiculo_estoque' && modoVeiculosDespesa === 'unico' && !veiculoEstoqueId) {
       setErrorMsg('Selecione um veículo em estoque para vincular a despesa.');
       return;
     }
 
-    if (destinoRoteamento === 'veiculo_locacao' && !veiculoLocacaoPlaca.trim()) {
-      setErrorMsg('Informe a placa do veículo de locação.');
+    if (destinoRoteamento === 'veiculo_locacao') {
+      if (tipo === 'Saída' && modoVeiculosDespesa === 'unico' && !veiculoLocacaoPlaca.trim()) {
+        setErrorMsg('Informe a placa do veículo de locação.');
+        return;
+      }
+      if (tipo === 'Entrada' && !veiculoLocacaoPlaca.trim() && !pagadorRecebedor.trim()) {
+        setErrorMsg('Informe ao menos a placa do veículo ou o nome do pagador da frota.');
+        return;
+      }
+    }
+
+    if (tipo === 'Saída' && modoVeiculosDespesa === 'multiplos' && veiculosMultiplosSelecionados.length === 0) {
+      setErrorMsg('Selecione ao menos um veículo para associar ao rateio de custos.');
       return;
     }
 
@@ -479,7 +637,26 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
           })} aplicada no saldo da conta.`
         );
       } else {
-        // MODO CRIAÇÃO: LANÇAMENTO EXPRESSO ULTRA-RÁPIDO
+        // MODO CRIAÇÃO: LANÇAMENTO EXPRESSO ULTRA-RÁPIDO COM SUPORTE MULTI-VEÍCULOS E FROTA
+        const isMultiplo = tipo === 'Saída' && modoVeiculosDespesa === 'multiplos' && veiculosMultiplosSelecionados.length > 0;
+        
+        const listaVeiculosMultiplos = isMultiplo
+          ? veiculosMultiplosSelecionados.map((vId) => {
+              const v = veiculos.find((veic) => veic.id === vId);
+              let valRateado = valorNum / veiculosMultiplosSelecionados.length;
+              if (modoRateio === 'personalizado' && valoresRateioCustom[vId]) {
+                const customVal = parseFloat(valoresRateioCustom[vId].replace(',', '.'));
+                if (!isNaN(customVal) && customVal > 0) valRateado = customVal;
+              }
+              return {
+                id: vId,
+                placa: v?.placa || '',
+                modelo: v?.modelo || '',
+                valorRateado: valRateado,
+              };
+            })
+          : undefined;
+
         const params: ParametrosLancamentoExpresso = {
           tipo: tipo,
           valor: valorNum,
@@ -510,9 +687,27 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
           formaPagamento: formaPagamento,
           observacoes: observacoes.trim() || undefined,
           usuarioNome: currentUser?.displayName || currentUser?.email || 'Operador',
+          // Novos parâmetros de Frota e Pátio
+          modoRateioMultiplos: isMultiplo,
+          veiculosMultiplos: listaVeiculosMultiplos,
+          categoriasMultiplas: categoriasMultiplas.length > 0 ? categoriasMultiplas : undefined,
+          fornecedoresMultiplos: fornecedoresMultiplos.length > 0 ? fornecedoresMultiplos : (pagadorRecebedor ? [pagadorRecebedor] : undefined),
+          salvarNovoPagadorSemContrato: tipo === 'Entrada' && salvarNovoPagadorSemContrato,
+          dadosNovoPagador: tipo === 'Entrada' && salvarNovoPagadorSemContrato ? dadosNovoPagador : undefined,
+          contratoLocacaoId: contratoAtivoDetectado?.contrato.id,
+          vincularAoPainelLocacao: tipo === 'Entrada' && vincularAoPainelLocacao,
+          periodicidadeRecebimento: periodicidadeRecebimento,
         };
 
-        await salvarLancamentoExpressoFirestore(params);
+        const res = await salvarLancamentoExpressoFirestore(params);
+
+        // Notificar e atualizar veículos no estado global
+        if (res.veiculosAtualizados && res.veiculosAtualizados.length > 0) {
+          onUpdateVeiculos?.(res.veiculosAtualizados);
+          res.veiculosAtualizados.forEach((v) => onUpdateVeiculo?.(v));
+        } else if (res.veiculoLocacaoAtualizado) {
+          onUpdateVeiculo?.(res.veiculoLocacaoAtualizado);
+        }
 
         onSuccess?.(
           `Lançamento expresso de R$ ${valorNum.toLocaleString('pt-BR', {
@@ -1106,71 +1301,591 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
               </div>
             )}
 
-            {/* Rota 3: Veículo de Locação / Placa Avulsa */}
+            {/* Rota 3: Veículo de Locação / Frota (Receitas e Custos Separados) */}
             {destinoRoteamento === 'veiculo_locacao' && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                      Placa do Veículo de Locação *
-                    </label>
-                    <input
-                      type="text"
-                      list="placas-locacao-lista"
-                      placeholder="Ex: ABC1D23"
-                      value={veiculoLocacaoPlaca}
-                      onChange={(e) => setVeiculoLocacaoPlaca(e.target.value.toUpperCase())}
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono uppercase text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                    />
-                    <datalist id="placas-locacao-lista">
-                      {placasLocacaoExistentes.map((p, idx) => (
-                        <option key={idx} value={p} />
-                      ))}
-                    </datalist>
-                  </div>
+              <div className="space-y-4">
+                {/* 1. SE FOR ENTRADA: RECEITA DE FROTA TOTALMENTE INDEPENDENTE DE CUSTO */}
+                {tipo === 'Entrada' ? (
+                  <div className="space-y-3.5">
+                    {/* Badge informativo de Receita de Frota */}
+                    <div className="flex items-center justify-between p-2.5 bg-emerald-50/80 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800/60">
+                      <div className="flex items-center gap-2">
+                        <KeyRound size={16} className="text-emerald-600 dark:text-emerald-400" />
+                        <div>
+                          <span className="text-xs font-bold text-emerald-950 dark:text-emerald-200">
+                            Recebimento de Locação de Frota
+                          </span>
+                          <p className="text-[10px] text-emerald-700 dark:text-emerald-300">
+                            Entradas independentes de opções de custo, com controle de periodicidade e baixa automática.
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-200/60 dark:bg-emerald-800/60 text-emerald-800 dark:text-emerald-200">
+                        Receita Ativa
+                      </span>
+                    </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                      Tipo de Reparo / Categoria
-                    </label>
-                    <select
-                      value={categoriaDespesaVeiculo}
-                      onChange={(e) => setCategoriaDespesaVeiculo(e.target.value as CategoriaDespesa)}
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                    >
-                      {CATEGORIAS_VEICULO.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                    {/* Periodicidade de Recebimento */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                          <Calendar size={13} className="text-indigo-600 dark:text-indigo-400" />
+                          Periodicidade do Recebimento *
+                        </label>
+                        <span className="text-[10px] text-emerald-700 dark:text-emerald-300 font-medium">
+                          ⚡ Padrão da rotina: Semanal (+7 dias de vigência)
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-5 gap-1.5">
+                        {(['Semanal', 'Quinzenal', 'Mensal', 'Diária', 'Avulso'] as const).map((per) => (
+                          <button
+                            key={per}
+                            type="button"
+                            onClick={() => {
+                              setPeriodicidadeRecebimento(per);
+                              if (per === 'Semanal' && !categoria.toLowerCase().includes('semanal')) {
+                                setCategoria('Recebimento Semanal (Aluguel Semanal / Semanalidade)');
+                              }
+                            }}
+                            className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center gap-0.5 ${
+                              periodicidadeRecebimento === per
+                                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20 ring-2 ring-emerald-500/30'
+                                : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-750'
+                            }`}
+                          >
+                            <span>{per}</span>
+                            {per === 'Semanal' && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-800/60 text-emerald-100 font-normal">
+                                Principal
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
 
-                {/* Opção de Salvar como Novo Veículo se não existir */}
-                {!placaLocacaoExiste && veiculoLocacaoPlaca.trim().length >= 7 && (
-                  <div className="p-3 bg-amber-50 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-800/80 space-y-2">
-                    <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-amber-900 dark:text-amber-200">
-                      <input
-                        type="checkbox"
-                        checked={salvarNovoVeiculoLocacao}
-                        onChange={(e) => setSalvarNovoVeiculoLocacao(e.target.checked)}
-                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
-                      />
-                      <span>Placa não encontrada. Salvar como novo Veículo de Locação (Pré-cadastro)?</span>
-                    </label>
-
-                    {salvarNovoVeiculoLocacao && (
+                    {/* Seleção do Veículo da Frota e Motorista */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                          Placa do Veículo da Frota *
+                        </label>
                         <input
                           type="text"
-                          placeholder="Modelo do Veículo (ex: Fiat Cronos 1.3 Drive)"
-                          value={veiculoLocacaoModelo}
-                          onChange={(e) => setVeiculoLocacaoModelo(e.target.value)}
-                          className="w-full px-3 py-1.5 bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none"
+                          list="placas-locacao-lista"
+                          placeholder="Ex: ABC1D23"
+                          value={veiculoLocacaoPlaca}
+                          onChange={(e) => {
+                            const val = e.target.value.toUpperCase();
+                            setVeiculoLocacaoPlaca(val);
+                            // Se encontrar contrato por placa, sugere automaticamente o motorista
+                            const match = contratosAtivos.find(
+                              (c) => c.veiculo.placa?.trim().toUpperCase() === val.trim()
+                            );
+                            if (match) {
+                              if (!pagadorRecebedor) setPagadorRecebedor(match.contrato.motoristaNome);
+                              if (!valor || valor === '0') setValor(match.contrato.valorSemanal.toString());
+                            }
+                          }}
+                          className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono uppercase text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                         />
+                        <datalist id="placas-locacao-lista">
+                          {placasLocacaoExistentes.map((p, idx) => (
+                            <option key={idx} value={p} />
+                          ))}
+                        </datalist>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                          Motorista / Contrato Ativo
+                        </label>
+                        <select
+                          value={contratoAtivoDetectado ? contratoAtivoDetectado.contrato.id : ''}
+                          onChange={(e) => {
+                            const match = contratosAtivos.find((c) => c.contrato.id === e.target.value);
+                            if (match) {
+                              setVeiculoLocacaoPlaca(match.veiculo.placa || '');
+                              setPagadorRecebedor(match.contrato.motoristaNome);
+                              if (!valor || valor === '0') setValor(match.contrato.valorSemanal.toString());
+                              setDescricao(
+                                `Recebimento ${periodicidadeRecebimento}: ${match.contrato.motoristaNome} (${match.veiculo.placa})`
+                              );
+                            }
+                          }}
+                          className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                        >
+                          <option value="">Selecione ou identifique pela placa/nome...</option>
+                          {contratosAtivos.map((c, idx) => (
+                            <option key={`${c.veiculo.id}_${c.contrato.id}_${idx}`} value={c.contrato.id}>
+                              {c.contrato.motoristaNome} — {c.veiculo.placa} (R$ {c.contrato.valorSemanal}/sem)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* CARD A: CONTRATO ATIVO ENCONTRADO -> VINCULAÇÃO AUTOMÁTICA AO PAINEL DE LOCAÇÃO */}
+                    {contratoAtivoDetectado ? (
+                      <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/40 rounded-xl border border-emerald-300 dark:border-emerald-800 space-y-2">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 mt-0.5" />
+                            <div>
+                              <div className="text-xs font-bold text-emerald-950 dark:text-emerald-100">
+                                Contrato Ativo Localizado: {contratoAtivoDetectado.contrato.motoristaNome}
+                              </div>
+                              <div className="text-[11px] text-emerald-800 dark:text-emerald-300">
+                                Veículo: <strong>{contratoAtivoDetectado.veiculo.modelo}</strong> ({contratoAtivoDetectado.veiculo.placa}) | Valor Semanalidade: R$ {contratoAtivoDetectado.contrato.valorSemanal?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          </div>
+                          {novoVencimentoCalculado && (
+                            <div className="text-right">
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 block">Novo Vencimento:</span>
+                              <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                                {novoVencimentoCalculado.split('-').reverse().join('/')}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <label className="flex items-center gap-2 cursor-pointer pt-1 border-t border-emerald-200 dark:border-emerald-800/80 text-xs font-medium text-emerald-900 dark:text-emerald-200">
+                          <input
+                            type="checkbox"
+                            checked={vincularAoPainelLocacao}
+                            onChange={(e) => setVincularAoPainelLocacao(e.target.checked)}
+                            className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-emerald-300"
+                          />
+                          <span>
+                            <strong>Vincular automaticamente ao Painel de Locação:</strong> Gerar recibo de aluguel e avançar data do próximo vencimento (+7 dias).
+                          </span>
+                        </label>
+                      </div>
+                    ) : (
+                      /* CARD B: PAGADOR SEM CONTRATO ATIVO -> PRÉ-CADASTRO */
+                      <div className="p-3 bg-amber-50/70 dark:bg-amber-950/40 rounded-xl border border-amber-300 dark:border-amber-800 space-y-2.5">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                          <div>
+                            <div className="text-xs font-bold text-amber-950 dark:text-amber-200">
+                              Pagador sem contrato ativo vinculado no momento
+                            </div>
+                            <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                              O valor será creditado no caixa/conta normalmente. Você pode pré-cadastrar este pagador para o painel de locação.
+                            </p>
+                          </div>
+                        </div>
+
+                        <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-amber-900 dark:text-amber-200">
+                          <input
+                            type="checkbox"
+                            checked={salvarNovoPagadorSemContrato}
+                            onChange={(e) => setSalvarNovoPagadorSemContrato(e.target.checked)}
+                            className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-amber-300"
+                          />
+                          <span>
+                            Pré-cadastrar Pagador / Motorista no Painel de Locação (sem contrato ativo)
+                          </span>
+                        </label>
+
+                        {salvarNovoPagadorSemContrato && (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-amber-200 dark:border-amber-800/80">
+                            <div>
+                              <label className="block text-[10px] font-semibold text-amber-950 dark:text-amber-200 mb-1">
+                                CPF do Pagador
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="000.000.000-00"
+                                value={dadosNovoPagador.cpf}
+                                onChange={(e) =>
+                                  setDadosNovoPagador({ ...dadosNovoPagador, cpf: e.target.value })
+                                }
+                                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-semibold text-amber-950 dark:text-amber-200 mb-1">
+                                WhatsApp / Telefone
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="(11) 99999-9999"
+                                value={dadosNovoPagador.telefone}
+                                onChange={(e) =>
+                                  setDadosNovoPagador({ ...dadosNovoPagador, telefone: e.target.value })
+                                }
+                                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-semibold text-amber-950 dark:text-amber-200 mb-1">
+                                Aplicativo / Perfil
+                              </label>
+                              <select
+                                value={dadosNovoPagador.app}
+                                onChange={(e) =>
+                                  setDadosNovoPagador({ ...dadosNovoPagador, app: e.target.value })
+                                }
+                                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none"
+                              >
+                                <option value="Uber / 99">Uber & 99 Pop</option>
+                                <option value="Uber Black">Uber Black / Comfort</option>
+                                <option value="Indrive">InDrive</option>
+                                <option value="Entrega / Logística">Entrega / Logística</option>
+                                <option value="Particular / Empresa">Particular / Frota Própria</option>
+                              </select>
+                            </div>
+                          </div>
+                        )}
+
+                        {onOpenNovoContrato && (
+                          <div className="pt-2 flex justify-end border-t border-amber-200/60 dark:border-amber-800/40">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const vMatch = veiculos.find(
+                                  (veic) =>
+                                    veic.placa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() ===
+                                    veiculoLocacaoPlaca.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
+                                );
+                                onClose();
+                                onOpenNovoContrato(vMatch, {
+                                  nome: pagadorRecebedor,
+                                  cpf: dadosNovoPagador.cpf,
+                                  telefone: dadosNovoPagador.telefone,
+                                  app: dadosNovoPagador.app,
+                                  placaInteresse: veiculoLocacaoPlaca,
+                                });
+                              }}
+                              className="text-[11px] font-bold text-amber-900 dark:text-amber-200 hover:text-amber-950 dark:hover:text-white flex items-center gap-1.5 underline decoration-amber-400 cursor-pointer"
+                            >
+                              <FileText size={13} />
+                              Formalizar Contrato completo agora com estes dados pré-preenchidos &rarr;
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
+                  </div>
+                ) : (
+                  /* 2. SE FOR SAÍDA: CUSTO DE FROTA E MANUTENÇÃO COM MULTI-VEÍCULO E RATEIO */
+                  <div className="space-y-3.5">
+                    {/* Modo de aplicação de custo: Veículo único vs Múltiplos Veículos */}
+                    <div className="flex items-center justify-between p-2.5 bg-slate-100 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700">
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <Wrench size={14} className="text-rose-600 dark:text-rose-400" />
+                        Destino do Custo de Frota:
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setModoVeiculosDespesa('unico')}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                            modoVeiculosDespesa === 'unico'
+                              ? 'bg-white dark:bg-slate-700 text-rose-700 dark:text-rose-300 shadow-sm'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          🚗 Veículo Único
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setModoVeiculosDespesa('multiplos')}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                            modoVeiculosDespesa === 'multiplos'
+                              ? 'bg-rose-600 text-white shadow-sm'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          🚙 Múltiplos Veículos / Rateio Pátio ({veiculosMultiplosSelecionados.length})
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* MODO VEÍCULO ÚNICO */}
+                    {modoVeiculosDespesa === 'unico' ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                            Placa do Veículo de Frota *
+                          </label>
+                          <input
+                            type="text"
+                            list="placas-locacao-lista"
+                            placeholder="Ex: ABC1D23"
+                            value={veiculoLocacaoPlaca}
+                            onChange={(e) => setVeiculoLocacaoPlaca(e.target.value.toUpperCase())}
+                            className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white font-mono uppercase text-sm focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                          />
+                          <datalist id="placas-locacao-lista">
+                            {placasLocacaoExistentes.map((p, idx) => (
+                              <option key={idx} value={p} />
+                            ))}
+                          </datalist>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                            Tipo de Custo de Frota / Manutenção
+                          </label>
+                          <select
+                            value={categoriaDespesaVeiculo}
+                            onChange={(e) => setCategoriaDespesaVeiculo(e.target.value as CategoriaDespesa)}
+                            className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                          >
+                            {CATEGORIAS_CUSTO_FROTA.map((cat) => (
+                              <option key={cat} value={cat}>
+                                {cat}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ) : (
+                      /* MODO MÚLTIPLOS VEÍCULOS / RATEIO PÁTIO E FROTA */
+                      <div className="p-3 bg-rose-50/50 dark:bg-rose-950/20 rounded-xl border border-rose-200 dark:border-rose-900/60 space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <span className="text-xs font-bold text-rose-950 dark:text-rose-200">
+                              Selecione os veículos para rateio ({veiculosMultiplosSelecionados.length} selecionados)
+                            </span>
+                            <p className="text-[11px] text-rose-700 dark:text-rose-300">
+                              O custo total será distribuído proporcionalmente na ficha financeira de cada veículo.
+                            </p>
+                          </div>
+
+                          {/* Seletor do Modo de Rateio */}
+                          <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-lg border border-rose-200 dark:border-rose-800 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => setModoRateio('igual')}
+                              className={`px-2.5 py-1 rounded font-bold ${
+                                modoRateio === 'igual'
+                                  ? 'bg-rose-600 text-white'
+                                  : 'text-slate-600 dark:text-slate-400'
+                              }`}
+                            >
+                              Divisão Igual
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setModoRateio('personalizado')}
+                              className={`px-2.5 py-1 rounded font-bold ${
+                                modoRateio === 'personalizado'
+                                  ? 'bg-rose-600 text-white'
+                                  : 'text-slate-600 dark:text-slate-400'
+                              }`}
+                            >
+                              Personalizar
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Campo de Busca Rápida de Veículos */}
+                        <div className="relative">
+                          <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="Buscar veículo por placa, modelo ou marca..."
+                            value={buscaVeiculoMultiplo}
+                            onChange={(e) => setBuscaVeiculoMultiplo(e.target.value)}
+                            className="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none"
+                          />
+                        </div>
+
+                        {/* Lista de Seleção de Veículos com Scroll */}
+                        <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                          {veiculosParaRateio.map((v) => {
+                            const isSelected = veiculosMultiplosSelecionados.includes(v.id);
+                            return (
+                              <div
+                                key={v.id}
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setVeiculosMultiplosSelecionados(
+                                      veiculosMultiplosSelecionados.filter((id) => id !== v.id)
+                                    );
+                                  } else {
+                                    setVeiculosMultiplosSelecionados([...veiculosMultiplosSelecionados, v.id]);
+                                  }
+                                }}
+                                className={`p-2 rounded-lg border flex items-center justify-between cursor-pointer transition-all ${
+                                  isSelected
+                                    ? 'bg-rose-100/60 dark:bg-rose-900/40 border-rose-400 dark:border-rose-700 text-rose-950 dark:text-rose-100 font-semibold'
+                                    : 'bg-white dark:bg-slate-850 border-slate-200 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => {}} // tratado no onClick do container
+                                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 border-slate-300"
+                                  />
+                                  <span className="font-mono text-xs uppercase px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-bold">
+                                    {v.placa || 'S/ PLACA'}
+                                  </span>
+                                  <span className="text-xs truncate max-w-[200px]">
+                                    {v.marca} {v.modelo}
+                                  </span>
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
+                                    {v.tipoOperacao === 'Locacao' ? 'Frota' : 'Estoque'}
+                                  </span>
+                                </div>
+
+                                {isSelected && modoRateio === 'personalizado' && (
+                                  <div
+                                    className="flex items-center gap-1"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <span className="text-[10px] text-slate-500">R$</span>
+                                    <input
+                                      type="text"
+                                      placeholder="Valor"
+                                      value={valoresRateioCustom[v.id] || ''}
+                                      onChange={(e) =>
+                                        setValoresRateioCustom({
+                                          ...valoresRateioCustom,
+                                          [v.id]: e.target.value,
+                                        })
+                                      }
+                                      className="w-20 px-2 py-0.5 bg-white dark:bg-slate-800 border border-rose-300 dark:border-rose-700 rounded text-xs font-bold text-slate-900 dark:text-white"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Resumo de Rateio */}
+                        {veiculosMultiplosSelecionados.length > 0 && valor && (
+                          <div className="pt-2 border-t border-rose-200 dark:border-rose-900/60 flex items-center justify-between text-xs text-rose-900 dark:text-rose-200">
+                            <span>
+                              Média por veículo:{' '}
+                              <strong>
+                                R${' '}
+                                {(
+                                  parseFloat(valor.replace(',', '.')) /
+                                  veiculosMultiplosSelecionados.length
+                                ).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </strong>
+                            </span>
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                              Lançamentos individuais serão registrados em cada veículo
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* CATEGORIAS ABRANGENTES / MÚLTIPLAS */}
+                    <div className="p-3 bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+                      <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                        <span>Categorias Adicionais / Serviços Combinados (Opcional):</span>
+                        <span className="text-[10px] text-slate-500 font-normal">Permite associar custos a várias áreas</span>
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {CATEGORIAS_CUSTO_FROTA.slice(0, 6).map((cat) => {
+                          const isPicked = categoriasMultiplas.includes(cat);
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => {
+                                if (isPicked) {
+                                  setCategoriasMultiplas(categoriasMultiplas.filter((c) => c !== cat));
+                                } else {
+                                  setCategoriasMultiplas([...categoriasMultiplas, cat]);
+                                }
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                                isPicked
+                                  ? 'bg-indigo-600 text-white shadow-sm'
+                                  : 'bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
+                              }`}
+                            >
+                              {isPicked ? '✓ ' : '+ '}
+                              {cat}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* FORNECEDORES MÚLTIPLOS / SEM RESTRIÇÃO A UM ÚNICO FORNECEDOR */}
+                    <div className="p-3 bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                          Fornecedores & Parceiros Adicionais:
+                        </label>
+                        <span className="text-[10px] text-slate-500 font-normal">
+                          Não se restrinja a um único prestador
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          placeholder="Adicionar outro fornecedor (ex: Auto Peças Silva, Guincho Express)..."
+                          value={novoFornecedorTagInput}
+                          onChange={(e) => setNovoFornecedorTagInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (novoFornecedorTagInput.trim()) {
+                                setFornecedoresMultiplos([
+                                  ...fornecedoresMultiplos,
+                                  novoFornecedorTagInput.trim(),
+                                ]);
+                                setNovoFornecedorTagInput('');
+                              }
+                            }
+                          }}
+                          className="flex-1 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (novoFornecedorTagInput.trim()) {
+                              setFornecedoresMultiplos([
+                                ...fornecedoresMultiplos,
+                                novoFornecedorTagInput.trim(),
+                              ]);
+                              setNovoFornecedorTagInput('');
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-bold hover:bg-slate-300"
+                        >
+                          Adicionar
+                        </button>
+                      </div>
+
+                      {fornecedoresMultiplos.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {fornecedoresMultiplos.map((f, i) => (
+                            <span
+                              key={i}
+                              className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs flex items-center gap-1"
+                            >
+                              <span>{f}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setFornecedoresMultiplos(fornecedoresMultiplos.filter((_, idx) => idx !== i))
+                                }
+                                className="hover:text-rose-500 font-bold ml-0.5"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

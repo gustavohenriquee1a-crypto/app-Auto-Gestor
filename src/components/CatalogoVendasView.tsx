@@ -36,7 +36,8 @@ import {
   calculateAging, 
   calculateCustoTotal,
   getVendaForVeiculo,
-  checkIsVeiculoVendido
+  checkIsVeiculoVendido,
+  isVeiculoLocacao
 } from '../utils/formatters';
 
 interface CatalogoVendasViewProps {
@@ -119,8 +120,8 @@ export const CatalogoVendasView: React.FC<CatalogoVendasViewProps> = ({
         return false;
       }
 
-      // 2. Veículos 'Em Trânsito', 'Alugado', com contrato ativo ou destinados exclusivamente à Locação/Frota não entram no Catálogo Comercial de Vendas
-      if (v.status_estoque === 'Em Trânsito' || v.status === 'Alugado' || v.tipoOperacao === 'Locacao' || !!v.contratoAtivo) {
+      // 2. Veículos 'Em Trânsito', 'Alugado', com contrato ativo ou destinados à Locação/Frota (como TCT0B54, TCQ4A22, TCR7D90) são estritamente removidos do Catálogo / Showroom
+      if (isVeiculoLocacao(v) || v.tipoOperacao === 'Locacao' || v.status === 'Alugado' || Boolean(v.contratoAtivo) || v.status_estoque === 'Em Trânsito') {
         return false;
       }
 

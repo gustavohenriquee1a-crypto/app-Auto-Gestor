@@ -28,7 +28,13 @@ import {
   Percent,
   CheckCircle,
   HelpCircle,
-  Eye
+  Eye,
+  Zap,
+  UserCheck,
+  UserPlus,
+  Trash2,
+  Key,
+  Edit3
 } from 'lucide-react';
 import { 
   Veiculo, 
@@ -40,8 +46,16 @@ import {
   ReposicaoCaucaoParcelada, 
   DespesaVeiculo,
   ChecklistLocacao,
-  LancamentoContaMotorista
+  LancamentoContaMotorista,
+  PagadorPreCadastro,
+  ConfiguracaoLoja,
+  ContaBancariaCaixa
 } from '../types';
+import {
+  buscarPagadoresPreCadastroFirestore,
+  deletarPagadorPreCadastroFirestore,
+  savePagadorPreCadastroFirestore
+} from '../services/firestoreService';
 import { 
   formatCurrency, 
   formatDate, 
@@ -50,7 +64,9 @@ import {
   getItensManutencaoPadrao, 
   calcularStatusManutencao, 
   calcularResumoCaucao, 
-  calcularResumoDebitos 
+  calcularResumoDebitos,
+  isVeiculoLocacao,
+  calcularMetricasLocacaoVeiculo
 } from '../utils/formatters';
 
 // Modals
@@ -59,6 +75,12 @@ import { ModalGerenciarManutencoesLocacao } from './ModalGerenciarManutencoesLoc
 import { ModalNovoDebitoMotorista } from './ModalNovoDebitoMotorista';
 import { ModalGerenciarCaucao } from './ModalGerenciarCaucao';
 import { ModalNovoChecklistLocacao } from './ModalNovoChecklistLocacao';
+import { ModalDetalhesLocacaoVeiculo } from './ModalDetalhesLocacaoVeiculo';
+import { ModalEditarContratoAtivo } from './ModalEditarContratoAtivo';
+import { ModalCarenciaDevolucao } from './ModalCarenciaDevolucao';
+import { ModalContratoLocacaoPdf } from './ModalContratoLocacaoPdf';
+import { ModalTermoResponsabilidadeMultaPdf } from './ModalTermoResponsabilidadeMultaPdf';
+import { ModalTermoVistoriaPdf } from './ModalTermoVistoriaPdf';
 
 export type TabLocacao = 
   | 'dashboard_frota' 
@@ -68,12 +90,13 @@ export type TabLocacao =
   // Sub-rotas mantidas para retrocompatibilidade
   | 'km_diario'
   | 'debitos'
-  | 'caucao';
+  | 'caucao'
+  | 'pagadores';
 
 interface LocacaoViewProps {
   veiculos: Veiculo[];
   initialSubTab?: TabLocacao;
-  onOpenNovoContrato: (veiculo?: Veiculo) => void;
+  onOpenNovoContrato: (veiculo?: Veiculo, motoristaData?: { nome?: string; cpf?: string; telefone?: string; app?: string; placaInteresse?: string }) => void;
   onRegistrarPagamento: (contratoId: string, pagamentoId: string) => void;
   onOpenRegistrarRevisao: (veiculo: Veiculo) => void;
   onEncerrarContrato: (contratoId: string) => void;
@@ -104,6 +127,29 @@ interface LocacaoViewProps {
     score?: 'A' | 'B' | 'C' | 'D'
   ) => void;
   onOpenCadastrarDespesaVeiculo?: (veiculo: Veiculo) => void;
+  onOpenLancamentoExpresso?: (options?: { tipo?: 'Entrada' | 'Saída'; destino?: 'veiculo_locacao'; placa?: string; pagador?: string }) => void;
+  onOpenDetalhesLocacao?: (veiculo: Veiculo) => void;
+  onUpdateVeiculo?: (veiculo: Veiculo) => void;
+  onSalvarEdicaoContrato?: (
+    veiculoAntigoId: string,
+    veiculoNovoId: string,
+    contratoAtualizado: ContratoLocacao
+  ) => Promise<void> | void;
+  onExcluirContrato?: (veiculoId: string, contratoId: string) => Promise<void> | void;
+  onSalvarCarencia?: (
+    veiculoId: string,
+    contratoId: string,
+    carencia: {
+      emCarencia: boolean;
+      dataInicio: string;
+      dataFimPrevista: string;
+      diasCarencia: number;
+      motivo?: string;
+    },
+    devolverCarroParaPatio: boolean
+  ) => Promise<void> | void;
+  configuracaoLoja?: ConfiguracaoLoja | null;
+  contasBancarias?: ContaBancariaCaixa[];
 }
 
 export const LocacaoView: React.FC<LocacaoViewProps> = ({
@@ -120,6 +166,14 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
   onSalvarDebitoMotorista,
   onSalvarCaucaoMotorista,
   onOpenCadastrarDespesaVeiculo,
+  onOpenLancamentoExpresso,
+  onOpenDetalhesLocacao,
+  onUpdateVeiculo,
+  onSalvarEdicaoContrato,
+  onExcluirContrato,
+  onSalvarCarencia,
+  configuracaoLoja,
+  contasBancarias,
 }) => {
   // Estado da aba ativa
   const [activeSubTab, setActiveSubTab] = useState<TabLocacao>(() => {
@@ -144,6 +198,20 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
   const [modalCaucaoTarget, setModalCaucaoTarget] = useState<{ veiculo: Veiculo; contrato: ContratoLocacao } | null>(null);
   const [modalNovoChecklistOpen, setModalNovoChecklistOpen] = useState(false);
   const [modalContaCorrenteTarget, setModalContaCorrenteTarget] = useState<{ veiculo: Veiculo; contrato: ContratoLocacao } | null>(null);
+  const [modalEditarContratoTarget, setModalEditarContratoTarget] = useState<{ veiculo: Veiculo; contrato: ContratoLocacao } | null>(null);
+  const [modalLocacaoVeiculo, setModalLocacaoVeiculo] = useState<Veiculo | null>(null);
+  const [modalCarenciaTarget, setModalCarenciaTarget] = useState<{ veiculo: Veiculo; contrato: ContratoLocacao } | null>(null);
+  const [modalContratoPdfTarget, setModalContratoPdfTarget] = useState<{ veiculo: Veiculo; contrato: ContratoLocacao } | null>(null);
+  const [modalTermoMultaPdfTarget, setModalTermoMultaPdfTarget] = useState<{ debito: DebitoMotorista; veiculo?: Veiculo; contrato?: ContratoLocacao } | null>(null);
+  const [modalTermoVistoriaPdfTarget, setModalTermoVistoriaPdfTarget] = useState<ChecklistLocacao | null>(null);
+
+  const handleAbrirDetalhesVeiculo = (v: Veiculo) => {
+    if (onOpenDetalhesLocacao) {
+      onOpenDetalhesLocacao(v);
+    } else {
+      setModalLocacaoVeiculo(v);
+    }
+  };
 
   // Checklists persistidos em localStorage com seed inicial de qualidade
   const [checklists, setChecklists] = useState<ChecklistLocacao[]>(() => {
@@ -224,18 +292,78 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
     });
   };
 
+  // Pré-cadastros de pagadores / motoristas sem contrato ativo
+  const [pagadoresPreCadastro, setPagadoresPreCadastro] = useState<PagadorPreCadastro[]>([]);
+  const [carregandoPagadores, setCarregandoPagadores] = useState(false);
+  const [termoBuscaPagador, setTermoBuscaPagador] = useState('');
+
+  const carregarPagadores = async () => {
+    try {
+      setCarregandoPagadores(true);
+      const lista = await buscarPagadoresPreCadastroFirestore();
+      setPagadoresPreCadastro(lista || []);
+    } catch (err) {
+      console.warn('Erro ao carregar pré-cadastros de pagadores:', err);
+    } finally {
+      setCarregandoPagadores(false);
+    }
+  };
+
+  React.useEffect(() => {
+    carregarPagadores();
+  }, []);
+
+  const handleExcluirPagador = async (id: string, nome: string) => {
+    if (!window.confirm(`Deseja remover o pré-cadastro do pagador/motorista "${nome}"?`)) return;
+    try {
+      await deletarPagadorPreCadastroFirestore(id);
+      setPagadoresPreCadastro(prev => prev.filter(p => p.id !== id));
+    } catch (err) {
+      console.error('Erro ao excluir pré-cadastro:', err);
+      alert('Erro ao excluir pré-cadastro.');
+    }
+  };
+
+  const handleCriarContratoParaPagador = (pagador: PagadorPreCadastro) => {
+    let veicSugerido: Veiculo | undefined;
+    const placa = pagador.veiculoPlacaInteresse || pagador.veiculoPlaca;
+    if (placa) {
+      veicSugerido = veiculos.find(v => v.placa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === placa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase());
+    }
+    onOpenNovoContrato(veicSugerido, {
+      nome: pagador.nome,
+      cpf: pagador.cpf,
+      telefone: pagador.telefone,
+      app: pagador.app,
+      placaInteresse: placa,
+    });
+  };
+
   // Extrair veículos da frota de locação e contratos ativos
   const veiculosFrotaLocacao = useMemo(() => {
-    return veiculos.filter(v => v.tipoOperacao === 'Locacao' || !!v.contratoAtivo || v.status === 'Alugado');
+    return veiculos.filter(v => isVeiculoLocacao(v) || v.tipoOperacao === 'Locacao' || !!v.contratoAtivo || v.status === 'Alugado');
   }, [veiculos]);
 
   const contratosAtivos = useMemo(() => {
-    return veiculos
-      .filter((v) => v.contratoAtivo && v.contratoAtivo.status === 'Ativo')
-      .map((v) => ({
-        veiculo: v,
-        contrato: v.contratoAtivo!,
-      }));
+    const list: { veiculo: Veiculo; contrato: ContratoLocacao }[] = [];
+    veiculos.forEach((v) => {
+      if (v.contratoAtivo && v.contratoAtivo.status === 'Ativo') {
+        const cid = v.contratoAtivo.id;
+        const existingIdx = list.findIndex((item) => item.contrato.id === cid);
+        if (existingIdx >= 0) {
+          // If contract explicitly belongs to this vehicle, prefer this one
+          if (v.contratoAtivo.veiculoId === v.id) {
+            list[existingIdx] = { veiculo: v, contrato: v.contratoAtivo };
+          }
+        } else {
+          list.push({
+            veiculo: v,
+            contrato: v.contratoAtivo,
+          });
+        }
+      }
+    });
+    return list;
   }, [veiculos]);
 
   const filteredContratos = useMemo(() => {
@@ -449,6 +577,16 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2.5">
+          {onOpenLancamentoExpresso && (
+            <button
+              type="button"
+              onClick={() => onOpenLancamentoExpresso({ tipo: 'Entrada', destino: 'veiculo_locacao' })}
+              className="px-4 py-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-lg shadow-emerald-600/10"
+            >
+              <Zap size={16} className="text-emerald-400" /> Lançamento Expresso
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setModalNovoChecklistOpen(true)}
@@ -563,6 +701,16 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
             }`}
           >
             <ShieldCheck size={13} /> Caução
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('pagadores')}
+            title="Motoristas e Pagadores Pré-cadastrados sem Contrato Ativo"
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+              activeSubTab === 'pagadores' ? 'bg-teal-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <UserCheck size={13} /> Pré-cadastros ({pagadoresPreCadastro.length})
           </button>
         </div>
       </div>
@@ -719,8 +867,8 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
-                  {pagamentosAtrasados.map(({ contrato, veiculo, pagamento }) => (
-                    <div key={pagamento.id} className="bg-[#16171f] p-4 rounded-xl border border-amber-500/30 flex flex-col justify-between space-y-3">
+                  {pagamentosAtrasados.map(({ contrato, veiculo, pagamento }, idx) => (
+                    <div key={`${pagamento.id || 'pag'}_${veiculo.id}_${idx}`} className="bg-[#16171f] p-4 rounded-xl border border-amber-500/30 flex flex-col justify-between space-y-3">
                       <div>
                         <div className="flex justify-between items-start">
                           <div>
@@ -760,6 +908,140 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Nova Seção Dedicada: Veículos da Frota de Locação e Retorno Financeiro (ROI) */}
+          <div className="bg-[#111116] p-5 rounded-2xl border border-white/5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h4 className="font-bold text-sm text-white flex items-center gap-2">
+                  <Key size={16} className="text-blue-400" />
+                  <span>Frota de Locação: Desempenho Financeiro, ROI e Break-Even ({veiculosFrotaLocacao.length} veículos)</span>
+                </h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Acompanhe amortização de aquisição, despesas de manutenção, receita acumulada e retorno do investimento (ROI) de cada carro.
+                </p>
+              </div>
+            </div>
+
+            {veiculosFrotaLocacao.length === 0 ? (
+              <div className="p-8 text-center bg-[#16171f] rounded-xl border border-white/5 text-xs text-slate-400">
+                Nenhum veículo cadastrado com finalidade "Locação" ou com contrato ativo.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {veiculosFrotaLocacao.map((v) => {
+                  const metricas = calcularMetricasLocacaoVeiculo(v);
+                  const contrato = v.contratoAtivo;
+                  const isAlugado = !!contrato && contrato.status === 'Ativo';
+
+                  return (
+                    <div
+                      key={v.id}
+                      className="p-4 rounded-xl bg-[#16171f] border border-white/5 hover:border-blue-500/30 transition flex flex-col justify-between space-y-3"
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="font-mono font-black text-xs text-white bg-white/5 px-2 py-0.5 rounded border border-white/10">
+                              {v.placa}
+                            </span>
+                            <h5 className="font-bold text-sm text-slate-100 mt-1">
+                              {v.modelo}
+                            </h5>
+                            <p className="text-[11px] text-slate-400">
+                              {v.marca} • Ano: {v.anoModelo || v.ano || '-'} • {formatKm(v.kmAtual)}
+                            </p>
+                          </div>
+
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                            isAlugado
+                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                              : 'bg-blue-500/10 text-blue-300 border-blue-500/30'
+                          }`}>
+                            {isAlugado ? 'Alugado' : 'Disponível'}
+                          </span>
+                        </div>
+
+                        {/* Motorista se alugado */}
+                        {isAlugado && contrato && (
+                          <div className="mt-2 text-xs bg-white/[0.02] p-2 rounded-lg border border-white/5 flex items-center justify-between text-slate-300">
+                            <span className="truncate max-w-[150px]">
+                              {contrato.motoristaNome}
+                            </span>
+                            <span className="font-mono text-emerald-400 font-bold">
+                              {formatCurrency(contrato.valorSemanal)}/sem
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Mini Métricas de ROI */}
+                        {(() => {
+                          const roiPercentual = metricas.custoTotalVeiculo > 0
+                            ? ((metricas.receitaTotalAcumulada - metricas.custoTotalVeiculo) / metricas.custoTotalVeiculo) * 100
+                            : 0;
+
+                          return (
+                            <>
+                              <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
+                                <div className="p-2 rounded-lg bg-black/20 border border-white/5">
+                                  <span className="text-[10px] text-slate-500 block uppercase font-bold">Investido Total</span>
+                                  <span className="font-mono font-bold text-slate-200">
+                                    {formatCurrency(metricas.custoTotalVeiculo)}
+                                  </span>
+                                </div>
+                                <div className="p-2 rounded-lg bg-black/20 border border-white/5">
+                                  <span className="text-[10px] text-slate-500 block uppercase font-bold">Receita Gerada</span>
+                                  <span className="font-mono font-bold text-emerald-400">
+                                    {formatCurrency(metricas.receitaTotalAcumulada)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Break-Even Progress */}
+                              <div className="mt-2.5 space-y-1">
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="text-slate-400">Progresso Break-even:</span>
+                                  <span className={`font-mono font-bold ${metricas.atingiuBreakEven ? 'text-emerald-400' : 'text-blue-400'}`}>
+                                    {metricas.percentualAmortizacao.toFixed(1)}%
+                                  </span>
+                                </div>
+                                <div className="w-full bg-white/5 rounded-full h-1.5 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${
+                                      metricas.atingiuBreakEven ? 'bg-emerald-500' : 'bg-blue-500'
+                                    }`}
+                                    style={{ width: `${Math.min(100, metricas.percentualAmortizacao)}%` }}
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between text-[10px] text-slate-500">
+                                  <span>
+                                    {metricas.atingiuBreakEven
+                                      ? '✓ Carro Quitado / Amortizado'
+                                      : `Faltam ${formatCurrency(metricas.valorFaltanteBreakEven)}`}
+                                  </span>
+                                  <span className="font-bold">
+                                    ROI: {roiPercentual >= 0 ? `+${roiPercentual.toFixed(1)}%` : `${roiPercentual.toFixed(1)}%`}
+                                  </span>
+                                </div>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleAbrirDetalhesVeiculo(v)}
+                        className="w-full py-2 bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer border border-blue-500/30"
+                      >
+                        <TrendingUp size={14} /> Ficha Completa & ROI
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -820,14 +1102,14 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
               </button>
             </div>
           ) : (
-            filteredContratos.map(({ veiculo, contrato }) => {
+            filteredContratos.map(({ veiculo, contrato }, idx) => {
               const caucaoInfo = calcularResumoCaucao(contrato);
               const debitosInfo = calcularResumoDebitos(contrato.debitosMotorista || []);
               const cc = gerarContaCorrenteMotorista(contrato);
 
               return (
                 <div
-                  key={contrato.id}
+                  key={`${veiculo.id}_${contrato.id}_${idx}`}
                   className="bg-[#111116] rounded-2xl border border-white/5 overflow-hidden transition hover:border-white/15"
                 >
                   {/* Contract Header Bar */}
@@ -944,6 +1226,35 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
                       >
                         <ShieldCheck size={14} /> Gestão Caução
                       </button>
+
+                      {/* Botão Editar Contrato Ativo */}
+                      <button
+                        type="button"
+                        onClick={() => setModalEditarContratoTarget({ veiculo, contrato })}
+                        className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-blue-600/20"
+                        title="Editar termos do contrato, trocar carro vinculado, ajustar valores, caução e saldo pago"
+                      >
+                        <Edit3 size={14} /> Editar Contrato
+                      </button>
+
+                      {/* Botão Ficha Frota & ROI */}
+                      <button
+                        type="button"
+                        onClick={() => handleAbrirDetalhesVeiculo(veiculo)}
+                        className="px-3 py-2 rounded-xl bg-cyan-600/20 hover:bg-cyan-600 text-cyan-300 hover:text-white border border-cyan-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <TrendingUp size={14} /> Ficha Frota & ROI
+                      </button>
+
+                      {/* Botão Visualizar Contrato PDF */}
+                      <button
+                        type="button"
+                        onClick={() => setModalContratoPdfTarget({ veiculo, contrato })}
+                        className="px-3 py-2 rounded-xl bg-slate-700/50 hover:bg-slate-700 text-slate-200 border border-white/10 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        title="Visualizar e Imprimir Contrato Completo de Locação (PDF)"
+                      >
+                        <FileText size={14} className="text-blue-400" /> Contrato PDF
+                      </button>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -958,6 +1269,23 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
                     </div>
                   </div>
 
+                  {/* Banner de Carência Ativa se houver */}
+                  {(contrato.carenciaDevolucao?.emCarencia || contrato.status === 'Em Carência') && (
+                    <div className="mx-6 mt-4 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
+                      <Clock className="text-amber-400 shrink-0 mt-0.5" size={18} />
+                      <div className="text-xs">
+                        <p className="font-bold text-amber-300">
+                          Contrato em Período de Carência / Aviso Prévio de Devolução ({contrato.carenciaDevolucao?.diasCarencia || 30} dias)
+                        </p>
+                        <p className="text-amber-200/80 mt-0.5">
+                          Início: {formatDate(contrato.carenciaDevolucao?.dataInicio || '')} • Término Previsto: {formatDate(contrato.carenciaDevolucao?.dataFimPrevista || '')}.
+                          {contrato.carenciaDevolucao?.motivo && ` Motivo: "${contrato.carenciaDevolucao.motivo}".`}
+                          {` Caução retida para averiguação de multas e notificações de trânsito pendentes.`}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Contract Body: Payments Grid */}
                   <div className="p-6 space-y-6">
                     <div>
@@ -971,9 +1299,9 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                        {contrato.pagamentos.map((pag) => (
+                        {contrato.pagamentos.map((pag, pIdx) => (
                           <div
-                            key={pag.id}
+                            key={`${pag.id || 'pag'}_${pIdx}`}
                             className={`p-3.5 rounded-xl border text-xs flex flex-col justify-between ${
                               pag.status === 'Pago'
                                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
@@ -1023,17 +1351,58 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
                     </div>
 
                     {/* Actions footer */}
-                    <div className="flex justify-end pt-3 border-t border-white/5 gap-2">
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Deseja realmente encerrar a locação de ${contrato.motoristaNome} com devolução do veículo ${veiculo.placa}?`)) {
-                            onEncerrarContrato(contrato.id);
-                          }
-                        }}
-                        className="text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/30 font-semibold px-3 py-2 rounded-xl transition cursor-pointer"
-                      >
-                        Encerrar Contrato & Devolver Carro
-                      </button>
+                    <div className="flex flex-wrap items-center justify-between pt-3 border-t border-white/5 gap-2">
+                      <div className="flex items-center gap-2">
+                        {/* Botão de Lixinho para apagar contratos incorretos do banco */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`ATENÇÃO: Deseja apagar permanentemente este registro de contrato do banco de dados?\n\nMotorista: ${contrato.motoristaNome}\nVeículo: ${veiculo.placa}\n\nUse esta opção se o contrato foi cadastrado errado. O veículo voltará a ficar disponível e o registro será excluído.`)) {
+                              if (onExcluirContrato) {
+                                onExcluirContrato(veiculo.id, contrato.id);
+                              } else {
+                                onEncerrarContrato(veiculo.id || contrato.id);
+                              }
+                            }
+                          }}
+                          className="text-xs text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 font-semibold px-3 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                          title="Apagar contrato incorreto do banco de dados"
+                        >
+                          <Trash2 size={13} /> Excluir Contrato
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {/* Botão Carência / Aviso de 30 Dias */}
+                        <button
+                          type="button"
+                          onClick={() => setModalCarenciaTarget({ veiculo, contrato })}
+                          className={`text-xs font-semibold px-3 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer ${
+                            contrato.carenciaDevolucao?.emCarencia || contrato.status === 'Em Carência'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                              : 'text-amber-400 hover:bg-amber-500/10 border border-amber-500/30'
+                          }`}
+                          title="Definir período de carência (30 dias) para aguardar notificações de multas antes do encerramento final"
+                        >
+                          <Clock size={13} />
+                          {contrato.carenciaDevolucao?.emCarencia || contrato.status === 'Em Carência'
+                            ? `Em Carência (${contrato.carenciaDevolucao?.diasCarencia || 30}d)`
+                            : 'Definir Carência (30 dias)'}
+                        </button>
+
+                        {/* Encerrar Contrato & Devolver Carro */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`Deseja realmente encerrar a locação de ${contrato.motoristaNome} com devolução do veículo ${veiculo.placa}?`)) {
+                              onEncerrarContrato(veiculo.id || contrato.id);
+                            }
+                          }}
+                          className="text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/30 font-semibold px-3 py-2 rounded-xl transition cursor-pointer"
+                        >
+                          Encerrar Contrato & Devolver Carro
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1180,11 +1549,21 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
 
                     <div className="pt-2 border-t border-white/5 flex items-center justify-between text-xs text-slate-400">
                       <span>Vistoriador: <strong>{chk.responsavelVistoria}</strong></span>
-                      {chk.assinaturaMotoristaConcordou && (
-                        <span className="text-emerald-400 flex items-center gap-1 font-semibold">
-                          <Check size={14} /> Assinado pelo Motorista
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {chk.assinaturaMotoristaConcordou && (
+                          <span className="text-emerald-400 flex items-center gap-1 font-semibold">
+                            <Check size={14} /> Assinado
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setModalTermoVistoriaPdfTarget(chk)}
+                          className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/30 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                          title="Gerar e Imprimir Laudo de Vistoria (PDF)"
+                        >
+                          <FileText size={12} /> Laudo PDF
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1240,13 +1619,13 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
             </h4>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {contratosAtivos.map(({ veiculo, contrato }) => {
+              {contratosAtivos.map(({ veiculo, contrato }, idx) => {
                 const itens = contrato.itensManutencao && contrato.itensManutencao.length > 0
                   ? contrato.itensManutencao
                   : getItensManutencaoPadrao(veiculo.kmAtual);
 
                 return (
-                  <div key={contrato.id} className="p-5 rounded-2xl bg-[#111116] border border-white/5 space-y-4">
+                  <div key={`manut_${veiculo.id}_${contrato.id}_${idx}`} className="p-5 rounded-2xl bg-[#111116] border border-white/5 space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
                         <h4 className="font-extrabold text-base text-white">{contrato.motoristaNome}</h4>
@@ -1352,11 +1731,11 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {contratosAtivos.map(({ veiculo, contrato }) => {
+            {contratosAtivos.map(({ veiculo, contrato }, idx) => {
               const registros = contrato.registrosKmDiario || [];
 
               return (
-                <div key={contrato.id} className="p-5 rounded-2xl bg-[#111116] border border-white/5 space-y-4">
+                <div key={`km_${veiculo.id}_${contrato.id}_${idx}`} className="p-5 rounded-2xl bg-[#111116] border border-white/5 space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <h4 className="font-extrabold text-base text-white">{contrato.motoristaNome}</h4>
@@ -1438,12 +1817,12 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
           </div>
 
           <div className="space-y-4">
-            {contratosAtivos.map(({ veiculo, contrato }) => {
+            {contratosAtivos.map(({ veiculo, contrato }, idx) => {
               const debitos = contrato.debitosMotorista || [];
               const resumoDeb = calcularResumoDebitos(debitos);
 
               return (
-                <div key={contrato.id} className="p-5 rounded-2xl bg-[#111116] border border-white/5 space-y-4">
+                <div key={`deb_${veiculo.id}_${contrato.id}_${idx}`} className="p-5 rounded-2xl bg-[#111116] border border-white/5 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                       <h4 className="font-extrabold text-base text-white">{contrato.motoristaNome}</h4>
@@ -1489,6 +1868,22 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
                             <span className="text-slate-400">Status Quitação:</span>
                             <span className="font-semibold text-amber-300">{deb.status}</span>
                           </div>
+
+                          {(deb.tipo === 'Multa de Trânsito' || deb.numeroAit) && (
+                            <div className="pt-2 border-t border-white/5 flex items-center justify-between">
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {deb.numeroAit ? `AIT: ${deb.numeroAit}` : 'Multa'} {deb.pontosCnh ? `• ${deb.pontosCnh} pts` : ''}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setModalTermoMultaPdfTarget({ debito: deb, veiculo, contrato })}
+                                className="px-2 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                                title="Gerar Termo de Transferência e Notificação de Multa (PDF)"
+                              >
+                                <FileText size={11} /> Termo AIT (PDF)
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1517,11 +1912,11 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {contratosAtivos.map(({ veiculo, contrato }) => {
+            {contratosAtivos.map(({ veiculo, contrato }, idx) => {
               const res = calcularResumoCaucao(contrato);
 
               return (
-                <div key={contrato.id} className="p-5 rounded-2xl bg-[#111116] border border-white/5 space-y-4">
+                <div key={`caucao_${veiculo.id}_${contrato.id}_${idx}`} className="p-5 rounded-2xl bg-[#111116] border border-white/5 space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <h4 className="font-extrabold text-base text-white">{contrato.motoristaNome}</h4>
@@ -1575,6 +1970,261 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 8. SUB-ABA: PRÉ-CADASTROS DE PAGADORES / MOTORISTAS */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'pagadores' && (
+        <div className="space-y-4">
+          <div className="p-4 rounded-2xl bg-[#111116] border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <UserCheck size={16} className="text-teal-400" /> Motoristas & Pagadores Pré-Cadastrados
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                  {pagadoresPreCadastro.length} cadastrados
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Motoristas com lançamentos avulsos ou pré-registro na locadora prontos para formalização de contrato de locação com 1 clique.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filtrar motorista, CPF, placa..."
+                  value={termoBuscaPagador}
+                  onChange={(e) => setTermoBuscaPagador(e.target.value)}
+                  className="pl-8 pr-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-teal-500 transition w-56"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={carregarPagadores}
+                disabled={carregandoPagadores}
+                className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition cursor-pointer"
+                title="Recarregar lista do servidor"
+              >
+                {carregandoPagadores ? 'Carregando...' : 'Atualizar'}
+              </button>
+
+              {onOpenLancamentoExpresso && (
+                <button
+                  type="button"
+                  onClick={() => onOpenLancamentoExpresso({ tipo: 'Entrada', destino: 'veiculo_locacao' })}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-lg shadow-emerald-600/20"
+                >
+                  <Zap size={14} /> Novo Lançamento
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Cards KPI Rápidos */}
+          {(() => {
+            const totalPagoGeral = pagadoresPreCadastro.reduce((acc, p) => acc + (p.totalPagoAcumulado || 0), 0);
+            const comPlacaCount = pagadoresPreCadastro.filter(p => p.veiculoPlacaInteresse || p.veiculoPlaca).length;
+
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-4 rounded-xl bg-[#111116] border border-white/5 flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                    <UserCheck size={20} />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-semibold text-slate-400 block">Total de Pré-Cadastros</span>
+                    <span className="text-lg font-black text-white font-mono">{pagadoresPreCadastro.length}</span>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#111116] border border-white/5 flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <DollarSign size={20} />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-semibold text-slate-400 block">Total Pago Acumulado</span>
+                    <span className="text-lg font-black text-emerald-400 font-mono">{formatCurrency(totalPagoGeral)}</span>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#111116] border border-white/5 flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                    <Car size={20} />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-semibold text-slate-400 block">Com Veículo Vinculado</span>
+                    <span className="text-lg font-black text-blue-400 font-mono">{comPlacaCount} motoristas</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Grid de Pagadores */}
+          {(() => {
+            const termo = termoBuscaPagador.toLowerCase().trim();
+            const filtrados = pagadoresPreCadastro.filter(p => {
+              if (!termo) return true;
+              return (
+                p.nome?.toLowerCase().includes(termo) ||
+                p.cpf?.includes(termo) ||
+                p.telefone?.includes(termo) ||
+                p.veiculoPlaca?.toLowerCase().includes(termo) ||
+                p.veiculoPlacaInteresse?.toLowerCase().includes(termo) ||
+                p.app?.toLowerCase().includes(termo)
+              );
+            });
+
+            if (filtrados.length === 0) {
+              return (
+                <div className="p-10 rounded-2xl bg-[#111116] border border-white/5 text-center space-y-3">
+                  <UserCheck size={32} className="mx-auto text-slate-600" />
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-white">Nenhum pré-cadastro encontrado</h4>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      {termoBuscaPagador 
+                        ? 'Nenhum registro corresponde aos filtros digitados.' 
+                        : 'Quando você registra lançamentos no Lançamento Expresso com novo pagador ou realiza um cadastro de motorista, ele aparecerá aqui com todos os dados prontos para formalizar contrato.'}
+                    </p>
+                  </div>
+                  {onOpenLancamentoExpresso && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenLancamentoExpresso({ tipo: 'Entrada', destino: 'veiculo_locacao' })}
+                      className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition inline-flex items-center gap-1.5 cursor-pointer shadow-lg shadow-teal-600/20"
+                    >
+                      <Zap size={14} /> Fazer Lançamento Expresso
+                    </button>
+                  )}
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filtrados.map((pagador) => {
+                  const placa = pagador.veiculoPlacaInteresse || pagador.veiculoPlaca;
+                  const veicMatch = placa ? veiculos.find(v => v.placa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === placa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()) : undefined;
+
+                  return (
+                    <div
+                      key={pagador.id}
+                      className="p-5 rounded-2xl bg-[#111116] border border-white/5 hover:border-teal-500/30 transition flex flex-col justify-between space-y-4 shadow-lg group"
+                    >
+                      <div className="space-y-3">
+                        {/* Header card */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <h4 className="font-extrabold text-base text-white group-hover:text-teal-300 transition">
+                              {pagador.nome}
+                            </h4>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {pagador.app && (
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white/5 text-slate-300 border border-white/10">
+                                  {pagador.app}
+                                </span>
+                              )}
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-teal-500/10 text-teal-300 border border-teal-500/20">
+                                {pagador.status || 'Pré-cadastro'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleExcluirPagador(pagador.id, pagador.nome)}
+                            className="text-slate-400 hover:text-rose-400 p-1.5 rounded-lg hover:bg-rose-500/10 transition cursor-pointer"
+                            title="Excluir pré-cadastro"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+
+                        {/* Dados de Contato e CPF */}
+                        <div className="space-y-1.5 text-xs text-slate-300 bg-[#16171f] p-3 rounded-xl border border-white/5">
+                          {pagador.telefone && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400 flex items-center gap-1">
+                                <Phone size={12} /> Telefone:
+                              </span>
+                              <span className="font-mono font-medium text-white">{pagador.telefone}</span>
+                            </div>
+                          )}
+                          {pagador.cpf && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">CPF:</span>
+                              <span className="font-mono text-slate-300">{pagador.cpf}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400 flex items-center gap-1">
+                              <Car size={12} /> Placa de Interesse:
+                            </span>
+                            <span className="font-mono font-bold text-blue-400">
+                              {placa || 'Sem placa definida'}
+                            </span>
+                          </div>
+                          {veicMatch && (
+                            <div className="text-[11px] text-slate-400 pt-1 border-t border-white/5">
+                              Veículo no pátio: <strong className="text-white">{veicMatch.modelo}</strong> ({veicMatch.status})
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Métricas financeiras prévias */}
+                        <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-center">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Acumulado</span>
+                            <span className="text-xs font-black text-emerald-400 font-mono">
+                              {formatCurrency(pagador.totalPagoAcumulado || 0)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Último Pagamento</span>
+                            <span className="text-[11px] font-medium text-slate-300 block">
+                              {pagador.ultimoPagamento?.data ? formatDate(pagador.ultimoPagamento.data) : 'Nenhum'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Botões de Ação */}
+                      <div className="pt-2 border-t border-white/5 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCriarContratoParaPagador(pagador)}
+                          className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/20 cursor-pointer"
+                        >
+                          <FileText size={14} /> Criar Contrato Formal
+                        </button>
+
+                        {onOpenLancamentoExpresso && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenLancamentoExpresso({
+                              tipo: 'Entrada',
+                              destino: 'veiculo_locacao',
+                              pagador: pagador.nome,
+                              placa: placa
+                            })}
+                            className="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                            title="Lançar recebimento avulso deste motorista"
+                          >
+                            <Zap size={14} className="text-emerald-400" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1713,7 +2363,9 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
           isOpen={modalNovoChecklistOpen}
           onClose={() => setModalNovoChecklistOpen(false)}
           contratosAtivos={contratosAtivos}
+          checklistsExistentes={checklists}
           onSalvarChecklist={handleSalvarNovoChecklist}
+          onGerarDebito={onSalvarDebitoMotorista}
         />
       )}
 
@@ -1746,6 +2398,13 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
           veiculo={modalDebitoTarget.veiculo}
           contrato={modalDebitoTarget.contrato}
           onSalvarDebito={onSalvarDebitoMotorista}
+          onAbrirTermoMultaPdf={(deb) => {
+            setModalTermoMultaPdfTarget({
+              debito: deb,
+              veiculo: modalDebitoTarget.veiculo,
+              contrato: modalDebitoTarget.contrato,
+            });
+          }}
         />
       )}
 
@@ -1756,6 +2415,126 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
           veiculo={modalCaucaoTarget.veiculo}
           contrato={modalCaucaoTarget.contrato}
           onSalvarCaucao={onSalvarCaucaoMotorista}
+        />
+      )}
+
+      {modalLocacaoVeiculo && (
+        <ModalDetalhesLocacaoVeiculo
+          isOpen={!!modalLocacaoVeiculo}
+          onClose={() => setModalLocacaoVeiculo(null)}
+          veiculo={modalLocacaoVeiculo}
+          onUpdateVeiculo={onUpdateVeiculo}
+          onOpenNovaDespesa={onOpenCadastrarDespesaVeiculo}
+          todosVeiculos={veiculos}
+          onSalvarEdicaoContrato={onSalvarEdicaoContrato}
+        />
+      )}
+
+      {modalEditarContratoTarget && onSalvarEdicaoContrato && (
+        <ModalEditarContratoAtivo
+          isOpen={!!modalEditarContratoTarget}
+          onClose={() => setModalEditarContratoTarget(null)}
+          veiculo={modalEditarContratoTarget.veiculo}
+          contrato={modalEditarContratoTarget.contrato}
+          todosVeiculos={veiculos}
+          onSalvarEdicaoContrato={async (oldId, newId, updatedCt) => {
+            await onSalvarEdicaoContrato(oldId, newId, updatedCt);
+            setModalEditarContratoTarget(null);
+          }}
+          onExcluirContrato={onExcluirContrato}
+        />
+      )}
+
+      {/* Modal de Carência para Devolução (Aviso 30 dias para averiguação de multas) */}
+      {modalCarenciaTarget && (
+        <ModalCarenciaDevolucao
+          isOpen={!!modalCarenciaTarget}
+          onClose={() => setModalCarenciaTarget(null)}
+          veiculo={modalCarenciaTarget.veiculo}
+          contrato={modalCarenciaTarget.contrato}
+          onSalvarCarencia={async (carencia, devolverCarroParaPatio) => {
+            if (onSalvarCarencia) {
+              await onSalvarCarencia(
+                modalCarenciaTarget.veiculo.id,
+                modalCarenciaTarget.contrato.id,
+                carencia,
+                devolverCarroParaPatio
+              );
+            }
+            setModalCarenciaTarget(null);
+          }}
+        />
+      )}
+
+      {/* Modal de Impressão de Contrato de Locação (PDF) */}
+      {modalContratoPdfTarget && (
+        <ModalContratoLocacaoPdf
+          isOpen={!!modalContratoPdfTarget}
+          onClose={() => setModalContratoPdfTarget(null)}
+          contrato={modalContratoPdfTarget.contrato}
+          veiculo={modalContratoPdfTarget.veiculo}
+          configuracaoLoja={configuracaoLoja}
+          contasBancarias={contasBancarias}
+        />
+      )}
+
+      {/* Modal de Impressão de Notificação e Transferência de Pontos de Multa (PDF) */}
+      {modalTermoMultaPdfTarget && (
+        <ModalTermoResponsabilidadeMultaPdf
+          isOpen={!!modalTermoMultaPdfTarget}
+          onClose={() => setModalTermoMultaPdfTarget(null)}
+          debito={modalTermoMultaPdfTarget.debito}
+          veiculo={modalTermoMultaPdfTarget.veiculo}
+          contrato={modalTermoMultaPdfTarget.contrato}
+          configuracaoLoja={configuracaoLoja}
+        />
+      )}
+
+      {/* Modal de Impressão do Laudo de Vistoria / Checklist (PDF) */}
+      {modalTermoVistoriaPdfTarget && (
+        <ModalTermoVistoriaPdf
+          isOpen={!!modalTermoVistoriaPdfTarget}
+          onClose={() => setModalTermoVistoriaPdfTarget(null)}
+          checklist={modalTermoVistoriaPdfTarget}
+          veiculo={
+            veiculos.find((v) => v.id === modalTermoVistoriaPdfTarget.veiculoId) ||
+            veiculos[0] ||
+            ({
+              id: '',
+              marca: 'Geral',
+              modelo: 'Veículo da Frota',
+              ano: new Date().getFullYear(),
+              cor: 'Branco',
+              placa: modalTermoVistoriaPdfTarget.placa || 'PLACA',
+              kmAtual: modalTermoVistoriaPdfTarget.km || 0,
+              valorCompra: 0,
+              valorVenda: 0,
+              dataEntrada: '',
+              tipoEntrada: 'Compra',
+              status: 'Disponível',
+              fotos: [],
+            } as any)
+          }
+          contrato={
+            veiculos.find((v) => v.id === modalTermoVistoriaPdfTarget.veiculoId)?.contratoLocacao ||
+            ({
+              id: 'LOC-VISTORIA',
+              motoristaNome: modalTermoVistoriaPdfTarget.motoristaNome || 'Motorista Responsável',
+              motoristaCpf: '000.000.000-00',
+              motoristaTelefone: '',
+              motoristaApp: 'Uber / 99',
+              dataInicio: modalTermoVistoriaPdfTarget.dataHora.split('T')[0],
+              valorSemanal: 0,
+              diaCobranca: 'Segunda-feira',
+              caucao: 0,
+              caucaoPaga: 0,
+              formaPagamentoCaucao: 'A_VISTA',
+              statusCaucao: 'INTEGRAL',
+              status: 'ATIVO',
+              kmInicial: modalTermoVistoriaPdfTarget.km || 0,
+            } as any)
+          }
+          configuracaoLoja={configuracaoLoja}
         />
       )}
     </div>

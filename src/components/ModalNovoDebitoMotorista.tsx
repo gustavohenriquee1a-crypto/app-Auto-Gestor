@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, ShieldAlert, DollarSign, Calendar, FileText, Split, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { X, ShieldAlert, DollarSign, Calendar, FileText, Split, AlertTriangle, CheckCircle2, Clock, MapPin, Award } from 'lucide-react';
 import { Veiculo, ContratoLocacao, DebitoMotorista, TipoDebitoMotorista } from '../types';
 import { formatCurrency, calcularResumoCaucao } from '../utils/formatters';
 
@@ -8,6 +8,12 @@ interface ModalNovoDebitoMotoristaProps {
   onClose: () => void;
   veiculo: Veiculo;
   contrato: ContratoLocacao;
+  initialData?: {
+    tipo?: TipoDebitoMotorista;
+    descricao?: string;
+    valorTotal?: number;
+    formaQuitacao?: 'Caução' | 'Parcelamento Semanal' | 'PIX / À Vista';
+  } | null;
   onSalvarDebito: (
     veiculoId: string,
     contratoId: string,
@@ -15,6 +21,7 @@ interface ModalNovoDebitoMotoristaProps {
     descontarCaucao: boolean,
     valorDescontarCaucao: number
   ) => void;
+  onAbrirTermoMultaPdf?: (debito: DebitoMotorista) => void;
 }
 
 export const ModalNovoDebitoMotorista: React.FC<ModalNovoDebitoMotoristaProps> = ({
@@ -22,21 +29,49 @@ export const ModalNovoDebitoMotorista: React.FC<ModalNovoDebitoMotoristaProps> =
   onClose,
   veiculo,
   contrato,
+  initialData,
   onSalvarDebito,
+  onAbrirTermoMultaPdf,
 }) => {
   const resumoCaucao = calcularResumoCaucao(contrato);
 
-  const [tipo, setTipo] = useState<TipoDebitoMotorista>('Multa de Trânsito');
-  const [descricao, setDescricao] = useState('');
-  const [valorTotal, setValorTotal] = useState<number>(293.47);
+  const [tipo, setTipo] = useState<TipoDebitoMotorista>(initialData?.tipo || 'Multa de Trânsito');
+  const [descricao, setDescricao] = useState(initialData?.descricao || '');
+  const [valorTotal, setValorTotal] = useState<number>(initialData?.valorTotal !== undefined ? initialData.valorTotal : 195.23);
   const [dataOcorrencia, setDataOcorrencia] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Dados de Notificação de Autuação de Multa
   const [autoInfracao, setAutoInfracao] = useState('');
+  const [codigoInfracao, setCodigoInfracao] = useState('7455-0');
   const [orgaoEmissor, setOrgaoEmissor] = useState('DETRAN');
+  const [dataHoraInfracao, setDataHoraInfracao] = useState(`${new Date().toISOString().split('T')[0]}T14:30`);
+  const [localInfracao, setLocalInfracao] = useState('');
+  const [pontosCnh, setPontosCnh] = useState<number>(4);
+  const [dataLimiteIndicacao, setDataLimiteIndicacao] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [statusNotificacao, setStatusNotificacao] = useState<'Aguardando Assinatura na Loja' | 'Assinado / Protocolado' | 'Pontos Transferidos' | 'Recurso' | 'Finalizado'>(
+    'Aguardando Assinatura na Loja'
+  );
   
   // Forma de Quitação
-  const [formaQuitacao, setFormaQuitacao] = useState<'Caução' | 'Parcelamento Semanal' | 'PIX / À Vista'>('Caução');
+  const [formaQuitacao, setFormaQuitacao] = useState<'Caução' | 'Parcelamento Semanal' | 'PIX / À Vista'>(
+    initialData?.formaQuitacao || 'Caução'
+  );
   const [quantidadeParcelas, setQuantidadeParcelas] = useState<number>(4);
   const [observacoes, setObservacoes] = useState('');
+
+  // Atualizar quando initialData mudar
+  React.useEffect(() => {
+    if (initialData) {
+      if (initialData.tipo) setTipo(initialData.tipo);
+      if (initialData.descricao) setDescricao(initialData.descricao);
+      if (initialData.valorTotal !== undefined) setValorTotal(initialData.valorTotal);
+      if (initialData.formaQuitacao) setFormaQuitacao(initialData.formaQuitacao);
+    }
+  }, [initialData]);
 
   if (!isOpen) return null;
 
@@ -61,7 +96,14 @@ export const ModalNovoDebitoMotorista: React.FC<ModalNovoDebitoMotoristaProps> =
       valorTotal: Number(valorTotal),
       dataOcorrencia,
       autoInfracao: autoInfracao.trim() || undefined,
+      codigoInfracao: tipo === 'Multa de Trânsito' ? codigoInfracao.trim() : undefined,
       orgaoEmissor: orgaoEmissor.trim() || undefined,
+      dataHoraInfracao: tipo === 'Multa de Trânsito' ? dataHoraInfracao : undefined,
+      localInfracao: tipo === 'Multa de Trânsito' ? localInfracao.trim() : undefined,
+      pontosCnh: tipo === 'Multa de Trânsito' ? pontosCnh : undefined,
+      dataLimiteIndicacao: tipo === 'Multa de Trânsito' ? dataLimiteIndicacao : undefined,
+      statusNotificacao: tipo === 'Multa de Trânsito' ? statusNotificacao : undefined,
+      motoristaNotificado: true,
       status: descontarDoCaucao
         ? 'Descontado do Caução'
         : formaQuitacao === 'Parcelamento Semanal'
@@ -83,6 +125,10 @@ export const ModalNovoDebitoMotorista: React.FC<ModalNovoDebitoMotoristaProps> =
       descontarDoCaucao,
       descontarDoCaucao ? Number(valorTotal) : 0
     );
+
+    if (tipo === 'Multa de Trânsito' && onAbrirTermoMultaPdf && window.confirm('Débito registrado com sucesso! Deseja abrir e imprimir o Termo de Indicação do Condutor Infrator (PDF) agora?')) {
+      onAbrirTermoMultaPdf(novoDebito);
+    }
 
     onClose();
   };
@@ -165,26 +211,119 @@ export const ModalNovoDebitoMotorista: React.FC<ModalNovoDebitoMotoristaProps> =
 
           {/* Dados Específicos se for Multa */}
           {tipo === 'Multa de Trânsito' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3.5 rounded-2xl bg-white/5 border border-white/10">
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Auto de Infração / Código</label>
-                <input
-                  type="text"
-                  value={autoInfracao}
-                  onChange={(e) => setAutoInfracao(e.target.value)}
-                  placeholder="Ex: R482938-1"
-                  className="w-full p-2 rounded-xl border border-white/10 bg-[#16171f] text-white font-mono text-xs outline-none focus:border-rose-500"
-                />
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 space-y-4">
+              <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
+                <span className="font-bold text-xs text-amber-300 flex items-center gap-1.5">
+                  <Award size={15} className="text-amber-400" /> Notificação de Autuação & Transferência de Pontos
+                </span>
+                <span className="text-[10px] text-amber-200/80">Procedimento CTB Art. 257</span>
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[10px] text-slate-300 font-bold mb-1">Auto de Infração (AIT) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={autoInfracao}
+                    onChange={(e) => setAutoInfracao(e.target.value)}
+                    placeholder="Ex: R482938-1 / T109283"
+                    className="w-full p-2 rounded-xl border border-white/10 bg-[#16171f] text-white font-mono text-xs outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-slate-300 font-bold mb-1">Cód. Enquadramento</label>
+                  <input
+                    type="text"
+                    value={codigoInfracao}
+                    onChange={(e) => setCodigoInfracao(e.target.value)}
+                    placeholder="Ex: 7455-0 (Velocidade)"
+                    className="w-full p-2 rounded-xl border border-white/10 bg-[#16171f] text-white font-mono text-xs outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-slate-300 font-bold mb-1">Órgão Autuador</label>
+                  <input
+                    type="text"
+                    value={orgaoEmissor}
+                    onChange={(e) => setOrgaoEmissor(e.target.value)}
+                    placeholder="DETRAN / PRF / CET / DER"
+                    className="w-full p-2 rounded-xl border border-white/10 bg-[#16171f] text-white text-xs outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[10px] text-slate-300 font-bold mb-1">Data e Hora da Infração</label>
+                  <input
+                    type="datetime-local"
+                    value={dataHoraInfracao}
+                    onChange={(e) => setDataHoraInfracao(e.target.value)}
+                    className="w-full p-2 rounded-xl border border-white/10 bg-[#16171f] text-white text-xs outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-slate-300 font-bold mb-1">Gravidade & Pontos na CNH</label>
+                  <select
+                    value={pontosCnh}
+                    onChange={(e) => {
+                      const p = Number(e.target.value);
+                      setPontosCnh(p);
+                      if (p === 3) setValorTotal(88.38);
+                      else if (p === 4) setValorTotal(130.16);
+                      else if (p === 5) setValorTotal(195.23);
+                      else if (p === 7) setValorTotal(293.47);
+                    }}
+                    className="w-full p-2 rounded-xl border border-white/10 bg-[#16171f] text-white font-bold text-xs outline-none focus:border-amber-500"
+                  >
+                    <option value={3}>Leve - 3 Pontos (R$ 88,38)</option>
+                    <option value={4}>Média - 4 Pontos (R$ 130,16)</option>
+                    <option value={5}>Grave - 5 Pontos (R$ 195,23)</option>
+                    <option value={7}>Gravíssima - 7 Pontos (R$ 293,47)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-rose-300 font-bold mb-1">Prazo Limite Indicação</label>
+                  <input
+                    type="date"
+                    value={dataLimiteIndicacao}
+                    onChange={(e) => setDataLimiteIndicacao(e.target.value)}
+                    className="w-full p-2 rounded-xl border border-rose-500/30 bg-[#16171f] text-white text-xs outline-none focus:border-rose-500"
+                  />
+                </div>
+              </div>
+
               <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Órgão Emissor</label>
-                <input
-                  type="text"
-                  value={orgaoEmissor}
-                  onChange={(e) => setOrgaoEmissor(e.target.value)}
-                  placeholder="DETRAN / PRF / CET / DER"
-                  className="w-full p-2 rounded-xl border border-white/10 bg-[#16171f] text-white text-xs outline-none focus:border-rose-500"
-                />
+                <label className="block text-[10px] text-slate-300 font-bold mb-1">Local / Endereço da Infração</label>
+                <div className="relative">
+                  <MapPin size={13} className="absolute left-3 top-2.5 text-slate-500" />
+                  <input
+                    type="text"
+                    value={localInfracao}
+                    onChange={(e) => setLocalInfracao(e.target.value)}
+                    placeholder="Ex: Av. dos Bandeirantes, próx. ao nº 2500 / Rod. Castelo Branco KM 28"
+                    className="w-full pl-8 pr-3 py-2 rounded-xl border border-white/10 bg-[#16171f] text-white text-xs outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-slate-300 font-bold mb-1">Status da Transferência para o Motorista</label>
+                <select
+                  value={statusNotificacao}
+                  onChange={(e) => setStatusNotificacao(e.target.value as any)}
+                  className="w-full p-2 rounded-xl border border-white/10 bg-[#16171f] text-white text-xs outline-none focus:border-amber-500"
+                >
+                  <option value="Aguardando Assinatura na Loja">1. Aguardando Motorista Assinar Formulário na Loja</option>
+                  <option value="Assinado / Protocolado">2. Termo Assinado e Protocolado no Órgão</option>
+                  <option value="Pontos Transferidos">3. Pontos Transferidos com Sucesso para CNH</option>
+                  <option value="Recurso">4. Em Recurso / Defesa Prévia</option>
+                </select>
               </div>
             </div>
           )}

@@ -95,6 +95,8 @@ export function getDefaultPermissionsForRole(role: RoleUsuario): PermissoesUsuar
         // Administração
         gerenciarUsuarios: true,
         verBackupSeguranca: true,
+        verComissoesGerenciais: true,
+        gerenciarComissoesGerenciais: true,
 
         // Operações & Sigilo
         venderCarro: true,
@@ -136,6 +138,8 @@ export function getDefaultPermissionsForRole(role: RoleUsuario): PermissoesUsuar
 
         gerenciarUsuarios: false,
         verBackupSeguranca: false,
+        verComissoesGerenciais: true,
+        gerenciarComissoesGerenciais: true,
 
         venderCarro: true,
         verCustosAquisicao: true,
@@ -175,6 +179,8 @@ export function getDefaultPermissionsForRole(role: RoleUsuario): PermissoesUsuar
 
         gerenciarUsuarios: false,
         verBackupSeguranca: false,
+        verComissoesGerenciais: false,
+        gerenciarComissoesGerenciais: false,
 
         venderCarro: true,
         verCustosAquisicao: false,
@@ -215,6 +221,8 @@ export function getDefaultPermissionsForRole(role: RoleUsuario): PermissoesUsuar
 
         gerenciarUsuarios: false,
         verBackupSeguranca: false,
+        verComissoesGerenciais: false,
+        gerenciarComissoesGerenciais: false,
 
         venderCarro: false,
         verCustosAquisicao: false,

@@ -27,7 +27,8 @@ import {
   Truck,
   Navigation,
   MapPin,
-  Megaphone
+  Megaphone,
+  Key
 } from 'lucide-react';
 import { 
   Veiculo, 
@@ -39,7 +40,7 @@ import {
   TipoCambioVeiculo,
   FornecedorPrestador 
 } from '../types';
-import { formatCurrency } from '../utils/formatters';
+import { formatCurrency, isVeiculoLocacao } from '../utils/formatters';
 import { CreatableSelect } from './CreatableSelect';
 import {
   subscribeMarcas,
@@ -161,6 +162,7 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
   const [proprietarioDocumento, setProprietarioDocumento] = useState('');
   const [proprietarioTelefone, setProprietarioTelefone] = useState('');
   const [combustivel, setCombustivel] = useState<'Flex' | 'Gasolina' | 'Etanol' | 'Diesel' | 'Híbrido' | 'Elétrico'>('Flex');
+  const [tipoOperacao, setTipoOperacao] = useState<'Venda' | 'Locacao'>('Venda');
   const [tipoPropriedade, setTipoPropriedade] = useState<TipoPropriedadeVeiculo>('proprio');
   const [cambio, setCambio] = useState<TipoCambioVeiculo>('Manual');
   const [motorizacao, setMotorizacao] = useState('1.0 Flex');
@@ -240,6 +242,7 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
       setProprietarioDocumento(veiculoToEdit.proprietarioAnterior?.documento || '');
       setProprietarioTelefone(veiculoToEdit.proprietarioAnterior?.telefone || '');
       setCombustivel(veiculoToEdit.combustivel || 'Flex');
+      setTipoOperacao(veiculoToEdit.tipoOperacao === 'Locacao' || isVeiculoLocacao(veiculoToEdit) ? 'Locacao' : 'Venda');
       setTipoPropriedade(veiculoToEdit.tipoPropriedade || 'proprio');
       setCambio(veiculoToEdit.cambio || 'Manual');
       setMotorizacao(veiculoToEdit.motorizacao || '1.0 Flex');
@@ -314,6 +317,7 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
       setProprietarioDocumento('');
       setProprietarioTelefone('');
       setCombustivel('Flex');
+      setTipoOperacao('Venda');
       setTipoPropriedade('proprio');
       setCambio('Manual');
       setMotorizacao('1.0 Flex');
@@ -423,6 +427,7 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
       anoFabricacao: fabYear,
       anoModelo: modYear,
       tipoPropriedade,
+      tipoOperacao,
       cambio,
       motorizacao: motorizacao.trim(),
       potencia: potencia.trim(),
@@ -571,6 +576,66 @@ export const ModalNovoVeiculo: React.FC<ModalNovoVeiculoProps> = ({
           {/* Scrollable Content Body */}
           <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5 text-xs bg-[#0a0a0c]">
           
+          {/* SEÇÃO 0: Finalidade do Veículo: Venda vs Locação */}
+          <div className="p-4 bg-[#16171f] rounded-2xl border border-white/5 space-y-3">
+            <label className="block text-slate-200 font-bold text-xs uppercase tracking-wide flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Compass size={16} className="text-emerald-400" />
+                Finalidade do Veículo / Destinação Operacional *
+              </span>
+              <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                Separação Showroom vs Frota
+              </span>
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setTipoOperacao('Venda')}
+                className={`p-3.5 rounded-xl border text-left transition flex items-center gap-3 cursor-pointer ${
+                  tipoOperacao === 'Venda'
+                    ? 'bg-emerald-600/20 border-emerald-500 text-white shadow-sm ring-1 ring-emerald-500/30'
+                    : 'bg-black/40 border-white/10 text-slate-400 hover:border-white/20'
+                }`}
+              >
+                <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold shrink-0 ${
+                  tipoOperacao === 'Venda' ? 'bg-emerald-600 text-white' : 'bg-white/10 text-slate-400'
+                }`}>
+                  <Tag size={18} />
+                </div>
+                <div>
+                  <div className="font-bold text-xs text-white flex items-center gap-1.5">
+                    <span>Venda</span>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded font-semibold">Showroom / Catálogo</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">Carro destinado à comercialização e vitrine de vendas da loja.</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTipoOperacao('Locacao')}
+                className={`p-3.5 rounded-xl border text-left transition flex items-center gap-3 cursor-pointer ${
+                  tipoOperacao === 'Locacao'
+                    ? 'bg-blue-600/20 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/30'
+                    : 'bg-black/40 border-white/10 text-slate-400 hover:border-white/20'
+                }`}
+              >
+                <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold shrink-0 ${
+                  tipoOperacao === 'Locacao' ? 'bg-blue-600 text-white' : 'bg-white/10 text-slate-400'
+                }`}>
+                  <Key size={18} />
+                </div>
+                <div>
+                  <div className="font-bold text-xs text-white flex items-center gap-1.5">
+                    <span>Locação</span>
+                    <span className="text-[10px] bg-blue-500/20 text-blue-300 px-1.5 py-0.2 rounded font-semibold">Frota / Mini-ERP</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">Carro da frota de aluguel (excluído do Showroom comercial).</div>
+                </div>
+              </button>
+            </div>
+          </div>
+
           {/* SEÇÃO 1: Tipo de Propriedade do Veículo */}
           <div className="p-4 bg-[#16171f] rounded-2xl border border-white/5 space-y-3">
             <label className="block text-slate-300 font-bold text-xs uppercase tracking-wide flex items-center gap-2">

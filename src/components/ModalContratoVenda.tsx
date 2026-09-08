@@ -18,7 +18,7 @@ import {
   PlusCircle,
   FileSpreadsheet
 } from 'lucide-react';
-import { Veiculo, VendaVeiculo, Usuario } from '../types';
+import { Veiculo, VendaVeiculo, Usuario, ConfiguracaoLoja } from '../types';
 import { formatCurrency, formatDate, formatKm } from '../utils/formatters';
 import { imprimirElemento, baixarElementoComoPdf } from '../utils/printPdfUtils';
 import { subscribeConfiguracoesLoja, getConfiguracaoLojaFirestore, saveConfiguracaoLojaFirestore } from '../services/firestoreService';
@@ -74,18 +74,26 @@ export const ModalContratoVenda: React.FC<ModalContratoVendaProps> = ({
     }
   };
 
+  const [configLoja, setConfigLoja] = useState<ConfiguracaoLoja | null>(null);
+
   useEffect(() => {
     // Busca inicial imediata no Firestore (coleção 'configuracoes_loja', documento 'geral')
     getConfiguracaoLojaFirestore().then((cfg) => {
-      if (cfg?.logoUrl) {
-        setContractLogo(cfg.logoUrl);
+      if (cfg) {
+        setConfigLoja(cfg);
+        if (cfg.logoUrl) {
+          setContractLogo(cfg.logoUrl);
+        }
       }
     });
 
-    // Escuta em tempo real atualizações feitas pelo Admin
+    // Escuta em tempo real atualizações feitas pelo Admin ou na tela de dados da empresa
     const unsub = subscribeConfiguracoesLoja((config) => {
-      if (config && config.logoUrl !== undefined) {
-        setContractLogo(config.logoUrl || '');
+      if (config) {
+        setConfigLoja(config);
+        if (config.logoUrl !== undefined) {
+          setContractLogo(config.logoUrl || '');
+        }
       }
     });
     return () => unsub();
@@ -99,12 +107,17 @@ export const ModalContratoVenda: React.FC<ModalContratoVendaProps> = ({
     year: 'numeric'
   });
 
-  // 1. Dados da Loja Fixos
+  // 1. Dados da Loja Dinâmicos (Integrados com os dados da empresa configurados no sistema)
   const DADOS_LOJA = {
-    razaoSocial: 'TROCA FÁCIL COMÉRCIO DE VEÍCULOS LTDA',
-    cnpj: '47.271.452/0001-71',
-    endereco: 'RUA NICOLAU CACCIATORI, 477, JD DOS PIONEIROS, CEP: 19.050-340, PRESIDENTE PRUDENTE-SP',
-    cidadeUf: 'Presidente Prudente - SP',
+    nomeLoja: configLoja?.nomeLoja || 'Troca Fácil Veículos',
+    razaoSocial: configLoja?.razaoSocial || 'TROCA FÁCIL COMÉRCIO DE VEÍCULOS LTDA',
+    cnpj: configLoja?.cnpj || '47.271.452/0001-71',
+    inscricaoEstadual: configLoja?.inscricaoEstadual || 'ISENTO',
+    endereco: configLoja?.endereco || 'RUA NICOLAU CACCIATORI, 477, JD DOS PIONEIROS, CEP: 19.050-340, PRESIDENTE PRUDENTE-SP',
+    cidadeUf: configLoja?.cidadeUf || 'Presidente Prudente - SP',
+    telefone: configLoja?.telefone || '(18) 3222-0000',
+    email: configLoja?.email || '',
+    chavePix: configLoja?.chavePixPadrao || configLoja?.cnpj || '47.271.452/0001-71',
   };
 
   // 2. Lógica de Titularidade (Se houver Financiamento em Terceiro, o terceiro substitui o comprador como único titular)
@@ -158,11 +171,11 @@ export const ModalContratoVenda: React.FC<ModalContratoVendaProps> = ({
   // 3. Propriedade Original do Veículo Vendido
   const [proprietarioOriginalNome, setProprietarioOriginalNome] = useState(
     veiculo.proprietarioAnterior?.nome || 
-    (veiculo.tipoPropriedade === 'consignado' ? 'PROPRIETÁRIO CONSIGNANTE' : 'TROCA FÁCIL COMÉRCIO DE VEÍCULOS LTDA')
+    (veiculo.tipoPropriedade === 'consignado' ? 'PROPRIETÁRIO CONSIGNANTE' : (configLoja?.razaoSocial || 'TROCA FÁCIL COMÉRCIO DE VEÍCULOS LTDA'))
   );
   const [proprietarioOriginalDoc, setProprietarioOriginalDoc] = useState(
     veiculo.proprietarioAnterior?.documento || 
-    (veiculo.tipoPropriedade === 'consignado' ? '000.000.000-00' : '47.271.452/0001-71')
+    (veiculo.tipoPropriedade === 'consignado' ? '000.000.000-00' : (configLoja?.cnpj || '47.271.452/0001-71'))
   );
 
   // 4. Veículo Recebido na Troca (Cláusula / Tabela Adicional)

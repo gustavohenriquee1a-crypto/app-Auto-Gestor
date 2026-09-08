@@ -56,9 +56,11 @@ import {
   BancoParceiro,
   ContaBancariaCaixa,
   RegraRemuneracao,
-  ComissaoDetalhadaVenda
+  ComissaoDetalhadaVenda,
+  ConfiguracaoLoja
 } from '../types';
-import { subscribeContasBancarias } from '../services/firestoreService';
+import { subscribeContasBancarias, subscribeConfiguracoesLoja } from '../services/firestoreService';
+import { calcularComissaoGerencial } from '../utils/comissaoGerencialUtils';
 import { 
   formatCurrency, 
   calculateTotalDespesas, 
@@ -202,6 +204,18 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
   const [comissaoValorFinal, setComissaoValorFinal] = useState<number>(0);
   const [comissaoAjustadaManualmente, setComissaoAjustadaManualmente] = useState(false);
 
+  // Configurações Globais da Loja e Comissão Gerencial (Overriding)
+  const [configLoja, setConfigLoja] = useState<ConfiguracaoLoja | null>(null);
+  const [comissaoGerencialAtiva, setComissaoGerencialAtiva] = useState<boolean>(true);
+  const [comissaoGerencialTipo, setComissaoGerencialTipo] = useState<'porcentagem_venda' | 'porcentagem_lucro' | 'fixo' | 'manual'>('porcentagem_venda');
+  const [comissaoGerencialTaxa, setComissaoGerencialTaxa] = useState<number>(1.0);
+  const [comissaoGerencialValor, setComissaoGerencialValor] = useState<number>(0);
+  const [comissaoGerencialBeneficiarioId, setComissaoGerencialBeneficiarioId] = useState<string>('');
+  const [comissaoGerencialBeneficiarioNome, setComissaoGerencialBeneficiarioNome] = useState<string>('');
+  const [comissaoGerencialBeneficiarioEmail, setComissaoGerencialBeneficiarioEmail] = useState<string>('');
+  const [comissaoGerencialObservacoes, setComissaoGerencialObservacoes] = useState<string>('');
+  const [comissaoGerencialAjustadaManualmente, setComissaoGerencialAjustadaManualmente] = useState<boolean>(false);
+
   // Modo de Pagamento: 'simples' ou 'hibrido'
   const [modoPagamento, setModoPagamento] = useState<'simples' | 'hibrido'>('simples');
   const [formaSimples, setFormaSimples] = useState<'À Vista PIX' | 'Financiamento' | 'Troca + Volta' | 'Cartão' | 'Dinheiro'>('À Vista PIX');
@@ -275,6 +289,39 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
       }
     }
   }, [veiculo, currentUser]);
+
+  // Carregar Configurações Globais da Loja para Comissão Gerencial (Overriding)
+  useEffect(() => {
+    const unsub = subscribeConfiguracoesLoja((cfg) => {
+      if (cfg) {
+        setConfigLoja(cfg);
+        if (cfg.comissaoGerenteAtiva !== undefined) {
+          setComissaoGerencialAtiva(cfg.comissaoGerenteAtiva);
+        }
+        if (cfg.comissaoGerenteTipo && cfg.comissaoGerenteTipo !== 'desativada') {
+          setComissaoGerencialTipo(cfg.comissaoGerenteTipo as any);
+        }
+        if (cfg.comissaoGerenteTaxa !== undefined) {
+          setComissaoGerencialTaxa(cfg.comissaoGerenteTaxa);
+        }
+        if (cfg.comissaoGerenteBeneficiarioId) {
+          setComissaoGerencialBeneficiarioId(cfg.comissaoGerenteBeneficiarioId);
+        }
+        if (cfg.comissaoGerenteBeneficiarioNome) {
+          setComissaoGerencialBeneficiarioNome(cfg.comissaoGerenteBeneficiarioNome);
+        }
+        if (cfg.comissaoGerenteBeneficiarioEmail) {
+          setComissaoGerencialBeneficiarioEmail(cfg.comissaoGerenteBeneficiarioEmail);
+        }
+        if (cfg.comissaoGerenteObservacoes) {
+          setComissaoGerencialObservacoes(cfg.comissaoGerenteObservacoes);
+        }
+      }
+    });
+    return () => {
+      unsub();
+    };
+  }, []);
 
   // Detectar se financiamento ou troca estão ativos no pagamento
   const isFinanciamentoAtivo = useMemo(() => {
@@ -372,6 +419,32 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
     totalRetornoTacBancos,
     lucroBrutoSemTac,
     comissaoAjustadaManualmente
+  ]);
+
+  // Recalcular comissão administrativa global (Overriding) do Gestor/Admin
+  useEffect(() => {
+    if (!comissaoGerencialAjustadaManualmente) {
+      if (!comissaoGerencialAtiva) {
+        setComissaoGerencialValor(0);
+        return;
+      }
+      let val = 0;
+      if (comissaoGerencialTipo === 'porcentagem_venda') {
+        val = (Math.max(0, valorVenda) * Number(comissaoGerencialTaxa || 0)) / 100;
+      } else if (comissaoGerencialTipo === 'porcentagem_lucro') {
+        val = (Math.max(0, lucroBrutoSemTac) * Number(comissaoGerencialTaxa || 0)) / 100;
+      } else if (comissaoGerencialTipo === 'fixo') {
+        val = Number(comissaoGerencialTaxa || 0);
+      }
+      setComissaoGerencialValor(Number(val.toFixed(2)));
+    }
+  }, [
+    comissaoGerencialAtiva,
+    comissaoGerencialTipo,
+    comissaoGerencialTaxa,
+    comissaoGerencialAjustadaManualmente,
+    valorVenda,
+    lucroBrutoSemTac,
   ]);
 
   // Lista de usuários candidatos ao cálculo de comissão
@@ -956,6 +1029,19 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
       comissaoAjustadaManualmente,
       comissaoStatus: 'Pendente',
       comissoesDetalhadas: comissoesDetalhadasParaVenda,
+
+      // Comissão Gerencial / Overriding (Admin / Gestor)
+      comissaoGerencialAtiva: comissaoGerencialAtiva && Number(comissaoGerencialValor) > 0,
+      comissaoGerencialTipo: comissaoGerencialTipo,
+      comissaoGerencialTaxa: Number(comissaoGerencialTaxa),
+      comissaoGerencialValor: comissaoGerencialAtiva ? Number(comissaoGerencialValor) : 0,
+      comissaoGerencialStatus: 'Pendente',
+      comissaoGerencialBeneficiarioId: comissaoGerencialBeneficiarioId || undefined,
+      comissaoGerencialBeneficiarioNome: comissaoGerencialBeneficiarioNome || 'Diretoria / Gestor Geral',
+      comissaoGerencialBeneficiarioEmail: comissaoGerencialBeneficiarioEmail || undefined,
+      comissaoGerencialObservacoes: comissaoGerencialObservacoes || undefined,
+      comissaoGerencialAjustadaManualmente: comissaoGerencialAjustadaManualmente,
+
       observacoesVenda,
     };
 
@@ -2611,6 +2697,178 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
               </div>
             )}
           </div>
+
+          {/* 6.1 Comissão Administrativa Global (Overriding Gestor/Admin) */}
+          {(isAdmin || currentUser?.role === 'gestor' || currentUser?.permissoes?.gerenciarComissoesGerenciais === true) && (
+            <div className="p-4 rounded-2xl bg-[#16171f] border border-amber-500/30 space-y-3 animate-fadeIn">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                    <Award size={16} />
+                  </div>
+                  <div>
+                    <span className="font-extrabold text-white text-xs uppercase tracking-wider block">
+                      Comissão de Gestão / Overriding
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Remuneração da Diretoria/Gestor apurada sobre esta venda
+                    </span>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <span className="text-xs font-semibold text-amber-300">
+                    {comissaoGerencialAtiva ? 'Vínculo Ativo' : 'Desvinculada'}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={comissaoGerencialAtiva}
+                    onChange={(e) => {
+                      setComissaoGerencialAtiva(e.target.checked);
+                      setComissaoGerencialAjustadaManualmente(true);
+                    }}
+                    className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                  />
+                </label>
+              </div>
+
+              {comissaoGerencialAtiva && (
+                <div className="space-y-3 pt-2 border-t border-white/5 text-xs">
+                  {/* Modelos de Cálculo */}
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                      Modelo de Cálculo
+                    </label>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setComissaoGerencialTipo('porcentagem_venda');
+                          setComissaoGerencialAjustadaManualmente(false);
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-center text-[11px] font-bold transition cursor-pointer ${
+                          comissaoGerencialTipo === 'porcentagem_venda'
+                            ? 'bg-amber-500 text-slate-950 shadow'
+                            : 'bg-black/40 text-slate-400 border border-white/10 hover:text-white'
+                        }`}
+                      >
+                        % Venda
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setComissaoGerencialTipo('porcentagem_lucro');
+                          setComissaoGerencialAjustadaManualmente(false);
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-center text-[11px] font-bold transition cursor-pointer ${
+                          comissaoGerencialTipo === 'porcentagem_lucro'
+                            ? 'bg-amber-500 text-slate-950 shadow'
+                            : 'bg-black/40 text-slate-400 border border-white/10 hover:text-white'
+                        }`}
+                      >
+                        % Lucro
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setComissaoGerencialTipo('fixo');
+                          setComissaoGerencialAjustadaManualmente(false);
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-center text-[11px] font-bold transition cursor-pointer ${
+                          comissaoGerencialTipo === 'fixo'
+                            ? 'bg-amber-500 text-slate-950 shadow'
+                            : 'bg-black/40 text-slate-400 border border-white/10 hover:text-white'
+                        }`}
+                      >
+                        Fixo R$
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setComissaoGerencialTipo('manual');
+                          setComissaoGerencialAjustadaManualmente(true);
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-center text-[11px] font-bold transition cursor-pointer ${
+                          comissaoGerencialTipo === 'manual'
+                            ? 'bg-amber-500 text-slate-950 shadow'
+                            : 'bg-black/40 text-slate-400 border border-white/10 hover:text-white'
+                        }`}
+                      >
+                        Livre
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Alíquota e Valor Final */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {comissaoGerencialTipo !== 'manual' && (
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                          {comissaoGerencialTipo === 'fixo' ? 'Valor Fixo (R$)' : 'Alíquota de Comissão (%)'}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={comissaoGerencialTaxa}
+                          onChange={(e) => {
+                            setComissaoGerencialTaxa(Number(e.target.value));
+                            setComissaoGerencialAjustadaManualmente(false);
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-amber-500/30 bg-black/40 text-amber-300 font-mono font-bold text-xs outline-none"
+                        />
+                      </div>
+                    )}
+
+                    <div className={comissaoGerencialTipo === 'manual' ? 'sm:col-span-2' : ''}>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                        Valor da Comissão Administrativa {comissaoGerencialAjustadaManualmente ? '(Ajustado Manual)' : '(Calculado)'}
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={comissaoGerencialValor}
+                        onChange={(e) => {
+                          setComissaoGerencialValor(Number(e.target.value));
+                          setComissaoGerencialAjustadaManualmente(true);
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-amber-500/50 bg-black/40 text-amber-300 font-mono font-black text-sm outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Beneficiário */}
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                      Beneficiário (Gestor / Administrador)
+                    </label>
+                    <select
+                      value={comissaoGerencialBeneficiarioId}
+                      onChange={(e) => {
+                        const bId = e.target.value;
+                        setComissaoGerencialBeneficiarioId(bId);
+                        const sel = usuariosCandidatos.find((u) => u.uid === bId);
+                        if (sel) {
+                          setComissaoGerencialBeneficiarioNome(sel.displayName || sel.email || 'Gestor');
+                          setComissaoGerencialBeneficiarioEmail(sel.email || '');
+                        } else {
+                          setComissaoGerencialBeneficiarioNome('Diretoria / Gestor Geral');
+                        }
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-white/10 bg-black/40 text-white text-xs outline-none cursor-pointer"
+                    >
+                      <option value="">Diretoria Geral (Sem gestor específico vinculado)</option>
+                      {usuariosCandidatos
+                        .filter((u) => u.role === 'admin' || u.role === 'gestor' || u.recebeComissaoOverriding)
+                        .map((u) => (
+                          <option key={u.uid} value={u.uid}>
+                            {u.displayName || u.email} ({u.role})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* 7. Provisões Financeiras e DRE - EXCLUSIVO DO ADMIN */}
           {isAdmin && (

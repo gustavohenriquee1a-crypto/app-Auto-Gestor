@@ -127,6 +127,8 @@ export interface PagamentoAluguel {
   valorAluguelBase?: number;
   valorParcelaCaucao?: number;
   valorParcelaDebito?: number;
+  valorMultaAtraso?: number; // Valor calculado de multa por atraso
+  multaAplicada?: number; // Multa efetivamente cobrada/paga
   status: 'Pago' | 'Pendente' | 'Atrasado';
   dataPagamento?: string;
   metodoPagamento?: 'PIX' | 'Transferência' | 'Dinheiro' | 'Boleto';
@@ -161,6 +163,8 @@ export interface ItemManutencaoPreventiva {
 export type TipoDebitoMotorista = 
   | 'Multa de Trânsito'
   | 'Batida / Avaria'
+  | 'Excesso de KM'
+  | 'Taxa de Vistoria (Combustível/Limpeza)'
   | 'Acidente / Sinistro'
   | 'Franquia de Seguro'
   | 'Guincho / Reboque'
@@ -183,7 +187,16 @@ export interface DebitoMotorista {
   valorTotal: number;
   dataOcorrencia: string;
   autoInfracao?: string;
+  codigoInfracao?: string;
   orgaoEmissor?: string;
+  dataHoraInfracao?: string;
+  localInfracao?: string;
+  pontosCnh?: number;
+  dataLimiteIndicacao?: string;
+  statusNotificacao?: 'Aguardando Assinatura na Loja' | 'Assinado / Protocolado' | 'Pontos Transferidos' | 'Recurso' | 'Finalizado';
+  motoristaNotificado?: boolean;
+  dataAssinaturaIndicacao?: string;
+  termoIndicacaoGerado?: boolean;
   status: StatusDebitoMotorista;
   formaQuitacao?: 'Caução' | 'Parcelamento Semanal' | 'PIX / À Vista';
   valorPago: number;
@@ -246,6 +259,19 @@ export interface ContratoLocacao {
   modelo: string;
   motoristaNome: string;
   motoristaCpf: string;
+  motoristaRg?: string;
+  motoristaCnh?: string;
+  motoristaCnhCategoria?: string;
+  motoristaCnhValidade?: string;
+  motoristaEndereco?: {
+    logradouro: string;
+    numero: string;
+    complemento?: string;
+    bairro: string;
+    cep: string;
+    cidade: string;
+    uf: string;
+  };
   motoristaTelefone: string;
   motoristaApp: 'Uber' | '99' | 'Indrive' | 'Misto';
   motoristaFoto?: string;
@@ -253,18 +279,45 @@ export interface ContratoLocacao {
   dataFimPrevista?: string;
   valorSemanal: number;
   diaCobranca: 'Segunda-feira' | 'Terça-feira' | 'Quarta-feira' | 'Quinta-feira' | 'Sexta-feira' | 'Sábado' | 'Domingo';
-  // Caução
+  // Representante Legal da Locadora
+  representanteLocadoraNome?: string;
+  representanteLocadoraCpf?: string;
+  // Vistoria Vinculada
+  vistoriaRetiradaId?: string;
+  // Migração e Histórico Flexível
+  isMigracao?: boolean; // Contrato em Andamento (Migração de Histórico)
+  dataInicioMedicaoKm?: string; // Data de Referência/Corte para KM (leituras anteriores não geram cobrança/multa)
+  caucaoPendente?: boolean; // Se a caução não foi paga integralmente na migração
+  // Limites e Multas Parametrizáveis
+  limiteKmSemanal?: number; // Padrão: 1750 km
+  valorMultaPorKmExcedente?: number; // Padrão: 1.20 R$/km
+  percentualMultaAtraso?: number; // Padrão: 40 (%)
+  // Caução & Carência de Devolução (30 dias)
   caucao: number; // Caução total exigido
+  formaPagamentoCaucao?: 'A_VISTA' | 'PARCELADO_SEMANAL';
+  quantidadeParcelasCaucao?: number;
+  valorParcelaCaucao?: number;
   caucaoTotalPago?: number; // Quanto o motorista depositou
   caucaoUtilizado?: number; // Abatido em multas/avarias
   caucaoSaldoAtual?: number; // Saldo em garantia disponível
   reposicaoCaucao?: ReposicaoCaucaoParcelada;
+  dataDevolucao?: string; // Data da devolução do veículo (YYYY-MM-DD)
+  dataLiberacaoCaucao?: string; // dataDevolucao + 30 dias (Carência de liberação)
+  statusCaucao?: 'Pendente' | 'Em Carência' | 'Liberado' | 'Devolvido' | 'Retido';
+  // Controle de Carência (Aviso de 30 dias para devolução e multas tardias)
+  carenciaDevolucao?: {
+    emCarencia: boolean;
+    dataInicio: string;
+    dataFimPrevista: string;
+    diasCarencia: number;
+    motivo?: string;
+  };
   // Débitos, KM e Manutenções
   debitosMotorista?: DebitoMotorista[];
   registrosKmDiario?: RegistroKmDiario[];
   itensManutencao?: ItemManutencaoPreventiva[];
   proximoVencimento?: string;
-  status: 'Ativo' | 'Encerrado' | 'Inadimplente';
+  status: 'Ativo' | 'Em Carência' | 'Encerrado' | 'Inadimplente' | 'Finalizado';
   kmInicial: number;
   kmAtual: number;
   // Score e Risco do Motorista (PDD)
@@ -526,12 +579,22 @@ export interface VendaVeiculo {
   comissaoReciboAssinado?: boolean; // Se o vendedor assinou o recibo de quitação da comissão
   comissaoReciboDataAssinatura?: string; // Data em que o vendedor assinou o recibo
   comissaoObservacoesAdmin?: string; // Observações do administrador/financeiro sobre a comissão
-  // Comissão Gerencial Separada (Admin / Gerente)
+  // Comissão Gerencial / Overriding (Admin / Gerente)
+  comissaoGerencialAtiva?: boolean;
+  comissaoGerencialTipo?: 'porcentagem_venda' | 'porcentagem_lucro' | 'fixo' | 'manual' | 'nenhuma';
+  comissaoGerencialTaxa?: number; // % ou R$ fixo base
   comissaoGerencialValor?: number;
   comissaoGerencialPercentual?: number;
   comissaoGerencialStatus?: 'Pendente' | 'Paga';
+  comissaoGerencialDataPagamento?: string;
+  comissaoGerencialFormaPagamento?: string;
+  comissaoGerencialContaOrigemId?: string;
+  comissaoGerencialContaOrigemNome?: string;
   comissaoGerencialBeneficiarioId?: string;
   comissaoGerencialBeneficiarioNome?: string;
+  comissaoGerencialBeneficiarioEmail?: string;
+  comissaoGerencialObservacoes?: string;
+  comissaoGerencialAjustadaManualmente?: boolean;
   // Motor de Comissões Dinâmicas (Regras por Usuário & Exceções por Venda)
   comissoesDetalhadas?: ComissaoDetalhadaVenda[];
   observacoesVenda?: string;
@@ -637,6 +700,7 @@ export interface Veiculo {
   observacoes?: string;
   despesas: DespesaVeiculo[];
   contratoAtivo?: ContratoLocacao;
+  historicoContratos?: ContratoLocacao[];
   dataVenda?: string;
   venda?: VendaVeiculo;
   // Rastreamento de Divulgação & Performance de Marketing
@@ -795,13 +859,30 @@ export interface ConfiguracaoLoja {
   nomeLoja?: string;
   razaoSocial?: string;
   cnpj?: string;
+  inscricaoEstadual?: string;
   endereco?: string;
+  logradouro?: string;
+  numero?: string;
+  bairro?: string;
+  cep?: string;
   cidadeUf?: string;
   telefone?: string;
+  email?: string;
   chavePixPadrao?: string;
+  responsavelLegal?: string;
+  cpfResponsavel?: string;
   updatedAt?: string;
   updatedBy?: string;
   updatedByEmail?: string;
+
+  // Regra de Comissão Global / Overriding para Gerente/Admin
+  comissaoGerenteAtiva?: boolean;
+  comissaoGerenteTipo?: 'porcentagem_venda' | 'porcentagem_lucro' | 'fixo' | 'desativada';
+  comissaoGerenteTaxa?: number; // Ex: 1.0 (%) para venda, 10.0 (%) para lucro, ou 300 (R$) fixo
+  comissaoGerenteBeneficiarioId?: string; // UID do gerente/admin padrão
+  comissaoGerenteBeneficiarioNome?: string;
+  comissaoGerenteBeneficiarioEmail?: string;
+  comissaoGerenteObservacoes?: string;
 }
 
 export interface ContaBancariaCaixa {
@@ -856,6 +937,34 @@ export interface MovimentacaoConta {
   despesaVeiculoId?: string;
   tipoCusto?: 'Fixo' | 'Variável' | 'Neutro';
   categoriaCusto?: 'Custo Fixo' | 'Custo Variável' | 'Retirada Sócio' | 'Receita Venda' | 'Receita Locação' | 'Neutro';
+  // Suporte a múltiplos veículos, categorias e contrato de locação
+  veiculosMultiplosIds?: string[];
+  veiculosMultiplosPlacas?: string[];
+  categoriasMultiplas?: string[];
+  fornecedoresMultiplos?: string[];
+  contratoLocacaoId?: string;
+  pagadorSemContrato?: boolean;
+  periodicidadeRecebimento?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Diária' | 'Avulso';
+}
+
+export interface PagadorPreCadastro {
+  id: string;
+  nome: string;
+  cpf?: string;
+  telefone?: string;
+  tipo?: 'Motorista de App' | 'Locatário Particular' | 'Pessoa Jurídica' | 'Outro';
+  app?: string; // Ex: 'Uber' | '99' | 'Uber / 99' | 'Indrive' | 'Misto' | 'Particular'
+  status?: 'Sem Contrato' | 'Contrato Ativo' | 'Interessado' | 'Inativo' | 'Ativo';
+  veiculoInteresse?: string;
+  veiculoPlaca?: string;
+  veiculoPlacaInteresse?: string;
+  observacoes?: string;
+  dataCadastro?: string;
+  ultimoPagamento?: string;
+  totalPagoAcumulado?: number;
+  criadoPor?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface FechamentoCaixaDiario {
@@ -909,6 +1018,8 @@ export interface PermissoesUsuario {
   // 3. Telas de Administração & Segurança
   gerenciarUsuarios?: boolean;
   verBackupSeguranca?: boolean;
+  verComissoesGerenciais?: boolean; // Acesso exclusivo ao painel de comissões de gestão (overriding)
+  gerenciarComissoesGerenciais?: boolean; // Permissão para vincular, desvincular, editar e quitar comissões gerenciais
 
   // 4. Ações Operacionais & Sigilo Comercial
   venderCarro?: boolean;
@@ -943,6 +1054,10 @@ export interface Usuario {
   comissaoPadraoPercent?: number; // Ex: 1.5 (%) ou % sobre Lucro Bruto
   comissaoPadraoFixo?: number; // Ex: R$ 500,00 (Valor fixo em R$)
   comissaoBonusTacPercent?: number; // Ex: 20 (% de bônus sobre o retorno TAC do banco)
+  recebeComissaoOverriding?: boolean; // Se o perfil (Gerente/Admin) está habilitado a receber comissão de overriding global
+  comissaoOverridingPersonalizada?: boolean; // Se utiliza regra específica ao invés da regra global da loja
+  comissaoOverridingTipo?: 'porcentagem_venda' | 'porcentagem_lucro' | 'fixo';
+  comissaoOverridingTaxa?: number; // % ou valor fixo R$
   cargo?: string;
   telefone?: string;
   ativo: boolean;

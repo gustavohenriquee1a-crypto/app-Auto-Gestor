@@ -68,6 +68,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { AguardandoAprovacaoScreen } from './components/AguardandoAprovacaoScreen';
 import { CatalogoVendasView } from './components/CatalogoVendasView';
 import { ComissoesVendasView } from './components/ComissoesVendasView';
+import { ComissoesGerenciaisView } from './components/ComissoesGerenciaisView';
 import { DashboardVendedorView } from './components/DashboardVendedorView';
 import { FornecedoresView } from './components/FornecedoresView';
 import { BancosParceirosView } from './components/BancosParceirosView';
@@ -92,6 +93,7 @@ import { DossieModal } from './components/DossieModal';
 import { ModalNovoVeiculo } from './components/ModalNovoVeiculo';
 import { ModalNovaDespesa } from './components/ModalNovaDespesa';
 import { ModalNovoContrato } from './components/ModalNovoContrato';
+import { ModalLancamentoExpresso } from './components/ModalLancamentoExpresso';
 import { ModalVenderVeiculo } from './components/ModalVenderVeiculo';
 import { ModalRegistrarRevisao } from './components/ModalRegistrarRevisao';
 import { ModalNovaDespesaFixa } from './components/ModalNovaDespesaFixa';
@@ -103,6 +105,7 @@ import { ModalVistoria } from './components/ModalVistoria';
 import { ModalRegistrarAbastecimento, DadosAbastecimento } from './components/ModalRegistrarAbastecimento';
 import { ModalEnviarServico } from './components/ModalEnviarServico';
 import { ModalRetornoPatio } from './components/ModalRetornoPatio';
+import { ModalDetalhesLocacaoVeiculo } from './components/ModalDetalhesLocacaoVeiculo';
 import { FunilPreparacaoView } from './components/FunilPreparacaoView';
 import { 
   aplicarEnvioServico, 
@@ -253,6 +256,20 @@ export default function App() {
   const [despesaVinculadaOrigem, setDespesaVinculadaOrigem] = useState<DespesaVeiculo | undefined>(undefined);
   const [isNovoContratoOpen, setIsNovoContratoOpen] = useState(false);
   const [contratoTargetVeiculo, setContratoTargetVeiculo] = useState<Veiculo | null>(null);
+  const [contratoInitialMotorista, setContratoInitialMotorista] = useState<{
+    nome?: string;
+    cpf?: string;
+    telefone?: string;
+    app?: string;
+    placaInteresse?: string;
+  } | null>(null);
+  const [isLancamentoExpressoOpen, setIsLancamentoExpressoOpen] = useState(false);
+  const [lancamentoExpressoOptions, setLancamentoExpressoOptions] = useState<{
+    tipo?: 'Entrada' | 'Saída';
+    destino?: any;
+    pagador?: string;
+    placa?: string;
+  }>({});
   const [isVendaModalOpen, setIsVendaModalOpen] = useState(false);
   const [vendaTargetVeiculo, setVendaTargetVeiculo] = useState<Veiculo | null>(null);
   const [isRevisaoModalOpen, setIsRevisaoModalOpen] = useState(false);
@@ -276,6 +293,18 @@ export default function App() {
   const [veiculoParaEnviarServico, setVeiculoParaEnviarServico] = useState<Veiculo | null>(null);
   const [isModalRetornoPatioOpen, setIsModalRetornoPatioOpen] = useState(false);
   const [veiculoParaRetornoPatio, setVeiculoParaRetornoPatio] = useState<Veiculo | null>(null);
+  const [isModalLocacaoDetalhesOpen, setIsModalLocacaoDetalhesOpen] = useState(false);
+  const [veiculoLocacaoDetalhes, setVeiculoLocacaoDetalhes] = useState<Veiculo | null>(null);
+
+  const handleOpenDetalhesLocacao = (veiculo: Veiculo) => {
+    setVeiculoLocacaoDetalhes(veiculo);
+    setIsModalLocacaoDetalhesOpen(true);
+  };
+
+  const handleSaveVeiculoLocacao = async (updatedVeiculo: Veiculo) => {
+    await handleUpdateVeiculoDirect(updatedVeiculo);
+    setVeiculoLocacaoDetalhes(updatedVeiculo);
+  };
 
   // 1. Listen to Firebase Auth state
   useEffect(() => {
@@ -332,10 +361,45 @@ export default function App() {
     // Subscribe to Veículos
     const unsubscribeVeiculos = subscribeVeiculos((firestoreVeiculos) => {
       if (firestoreVeiculos) {
-        setVeiculos(firestoreVeiculos);
+        // Sanitize: verify if there are any duplicate active contracts across vehicles
+        const seenActiveContractIds = new Map<string, string>(); // contractId -> rightful vehicle id
+        // First pass: identify rightful owners
+        firestoreVeiculos.forEach((v) => {
+          if (v.contratoAtivo && v.contratoAtivo.status === 'Ativo') {
+            const cid = v.contratoAtivo.id;
+            if (v.contratoAtivo.veiculoId === v.id || !seenActiveContractIds.has(cid)) {
+              seenActiveContractIds.set(cid, v.id);
+            }
+          }
+        });
+
+        const sanitized = firestoreVeiculos.map((v) => {
+          if (v.contratoAtivo && v.contratoAtivo.status === 'Ativo') {
+            const cid = v.contratoAtivo.id;
+            const rightfulOwnerId = seenActiveContractIds.get(cid);
+            if (rightfulOwnerId && rightfulOwnerId !== v.id) {
+              // This vehicle is an orphaned duplicate of the active contract.
+              const cleaned: Veiculo = {
+                ...v,
+                status: v.status === 'Alugado' ? 'Disponível' : v.status,
+                contratoAtivo: undefined,
+                historicoContratos: [
+                  v.contratoAtivo,
+                  ...(v.historicoContratos || []).filter((h) => h.id !== cid),
+                ],
+              };
+              // Persist self-healing correction to Firestore in background
+              saveVeiculoFirestore(cleaned).catch(console.error);
+              return cleaned;
+            }
+          }
+          return v;
+        });
+
+        setVeiculos(sanitized);
         setDossieVeiculo((prevDossie) => {
           if (!prevDossie) return null;
-          const fresh = firestoreVeiculos.find((v) => v.id === prevDossie.id);
+          const fresh = sanitized.find((v) => v.id === prevDossie.id);
           return fresh || prevDossie;
         });
       }
@@ -515,10 +579,14 @@ export default function App() {
 
     const pendentesAprovacao = allUsersList.filter((u) => u.statusAprovacao === 'pendente').length;
     let comissoesPendentes = 0;
+    let comissoesGerenciaisPendentes = 0;
     let recebiveisPendentes = 0;
     vendas.forEach((v) => {
       if ((v.comissaoValor || 0) > 0 && (v.comissaoStatus === 'Pendente' || !v.comissaoStatus)) {
         comissoesPendentes++;
+      }
+      if (v.comissaoGerencialAtiva && (v.comissaoGerencialValor || 0) > 0 && v.comissaoGerencialStatus !== 'Paga') {
+        comissoesGerenciaisPendentes++;
       }
       const fin = v.financiamentoDetalhes;
       if ((Number(fin?.valorFinanciado || 0) > 0 || v.formaPagamento === 'Financiamento') && fin?.statusLiquidacaoFinanciamento !== 'Recebido') {
@@ -550,6 +618,7 @@ export default function App() {
       totalBancos: bancos.length,
       pendentesAprovacao,
       comissoesPendentes,
+      comissoesGerenciaisPendentes,
       despesasPendentes,
       recebiveisPendentes,
     };
@@ -893,59 +962,113 @@ export default function App() {
     }
   };
 
-  // 3. Locação Contrato
+  // 3. Locação Contrato (Criação e Edição Flexível sem afetar o passado)
   const handleSaveContrato = async (
     veiculoId: string,
-    contratoData: Omit<ContratoLocacao, 'id' | 'pagamentos'>
+    contratoData: Omit<ContratoLocacao, 'id' | 'pagamentos'>,
+    contratoIdExistente?: string
   ) => {
-    const contratoId = `ct-${Date.now()}`;
-    const novoContrato: ContratoLocacao = {
-      ...contratoData,
-      id: contratoId,
-      pagamentos: [
-        {
-          id: `pag-caucao-${Date.now()}`,
-          contratoId,
-          veiculoId,
-          motoristaNome: contratoData.motoristaNome,
-          semanaReferencia: 'Caução Inicial',
-          dataVencimento: contratoData.dataInicio,
-          dataPagamento: contratoData.dataInicio,
-          metodoPagamento: 'PIX',
-          valor: contratoData.caucao,
-          status: 'Pago',
-          observacao: 'Caução de garantia na retirada do veículo',
-        },
-      ],
-    };
-
-    const eventoLocacao: EventoHistoricoVeiculo = {
-      id: `hs-loc-${Date.now()}`,
-      data: contratoData.dataInicio,
-      tipo: 'Locação Iniciada',
-      titulo: `Contrato de Locação Iniciado (${contratoData.motoristaApp})`,
-      descricao: `Início de contrato com o motorista ${contratoData.motoristaNome}. R$ ${contratoData.valorSemanal}/semana. Caução depositado: R$ ${contratoData.caucao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.`,
-      statusResultante: 'Alugado',
-      km: contratoData.kmInicial,
-      motoristaNome: contratoData.motoristaNome,
-      motoristaCpf: contratoData.motoristaCpf,
-      valor: contratoData.valorSemanal,
-      usuarioRegistro: currentUserProfile?.displayName || 'Gestor',
-    };
-
     let targetVeiculoUpdated: Veiculo | null = null;
 
     setVeiculos((prev) =>
       prev.map((v) => {
         if (v.id === veiculoId) {
-          const updated: Veiculo = {
-            ...v,
-            status: 'Alugado',
-            contratoAtivo: novoContrato,
-            historicoStatus: [eventoLocacao, ...(v.historicoStatus || [])],
-          };
-          targetVeiculoUpdated = updated;
-          return updated;
+          const isEdicao = Boolean(
+            contratoIdExistente || (v.contratoAtivo && (contratoData as any).id === v.contratoAtivo.id)
+          );
+
+          if (isEdicao && v.contratoAtivo) {
+            // Edição: Preserva histórico de pagamentos, débitos, vistorias e km já medido
+            const updatedContrato: ContratoLocacao = {
+              ...v.contratoAtivo,
+              ...contratoData,
+              id: v.contratoAtivo.id,
+              pagamentos: v.contratoAtivo.pagamentos || [],
+              debitosMotorista: v.contratoAtivo.debitosMotorista || [],
+              registrosKmDiario: v.contratoAtivo.registrosKmDiario || [],
+              checklists: v.contratoAtivo.checklists || [],
+              vistoriaRetirada: v.contratoAtivo.vistoriaRetirada,
+              fechamentoCaucao: v.contratoAtivo.fechamentoCaucao,
+              contaCorrente: v.contratoAtivo.contaCorrente,
+            };
+
+            const eventoEdicao: EventoHistoricoVeiculo = {
+              id: `hs-edit-ct-${Date.now()}`,
+              data: new Date().toISOString().split('T')[0],
+              tipo: 'Mudança de Status',
+              titulo: 'Termos de Contrato Atualizados',
+              descricao: `Contrato de locação atualizado (limite km: ${updatedContrato.limiteKmSemanal || 1750}km/sem, multa: ${updatedContrato.percentualMultaAtraso || 40}%). Histórico passado preservado.`,
+              statusResultante: 'Alugado',
+              km: updatedContrato.kmAtual,
+              motoristaNome: updatedContrato.motoristaNome,
+              usuarioRegistro: currentUserProfile?.displayName || 'Gestor',
+            };
+
+            const updated: Veiculo = {
+              ...v,
+              contratoAtivo: updatedContrato,
+              historicoStatus: [eventoEdicao, ...(v.historicoStatus || [])],
+            };
+            targetVeiculoUpdated = updated;
+            return updated;
+          } else {
+            // Novo contrato (pode ser novo ou migração de ativo)
+            const contratoId = contratoIdExistente || `ct-${Date.now()}`;
+
+            const pagamentosIniciais: PagamentoAluguel[] = [];
+            if (contratoData.caucao > 0) {
+              pagamentosIniciais.push({
+                id: `pag-caucao-${Date.now()}`,
+                contratoId,
+                veiculoId,
+                motoristaNome: contratoData.motoristaNome,
+                semanaReferencia: 'Caução Inicial',
+                dataVencimento: contratoData.dataInicio,
+                dataPagamento: contratoData.caucaoPendente ? undefined : contratoData.dataInicio,
+                metodoPagamento: 'PIX',
+                valor: contratoData.caucao,
+                status: contratoData.caucaoPendente ? 'Pendente' : 'Pago',
+                observacao: contratoData.isMigracao
+                  ? 'Caução registrado via migração de contrato em andamento'
+                  : 'Caução de garantia na retirada do veículo',
+              });
+            }
+
+            const novoContrato: ContratoLocacao = {
+              ...contratoData,
+              id: contratoId,
+              pagamentos: pagamentosIniciais,
+            };
+
+            const eventoLocacao: EventoHistoricoVeiculo = {
+              id: `hs-loc-${Date.now()}`,
+              data: contratoData.dataInicio,
+              tipo: 'Locação Iniciada',
+              titulo: contratoData.isMigracao
+                ? `Contrato em Andamento Cadastrado (Migração)`
+                : `Contrato de Locação Iniciado (${contratoData.motoristaApp})`,
+              descricao: `Início de contrato com o motorista ${contratoData.motoristaNome}. R$ ${contratoData.valorSemanal}/semana. ${
+                contratoData.isMigracao
+                  ? 'Cadastrado como contrato legado/ativo.'
+                  : `Caução: R$ ${contratoData.caucao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.`
+              }`,
+              statusResultante: 'Alugado',
+              km: contratoData.kmInicial,
+              motoristaNome: contratoData.motoristaNome,
+              motoristaCpf: contratoData.motoristaCpf,
+              valor: contratoData.valorSemanal,
+              usuarioRegistro: currentUserProfile?.displayName || 'Gestor',
+            };
+
+            const updated: Veiculo = {
+              ...v,
+              status: 'Alugado',
+              contratoAtivo: novoContrato,
+              historicoStatus: [eventoLocacao, ...(v.historicoStatus || [])],
+            };
+            targetVeiculoUpdated = updated;
+            return updated;
+          }
         }
         return v;
       })
@@ -995,44 +1118,249 @@ export default function App() {
     }
   };
 
-  const handleEncerrarContrato = async (veiculoId: string) => {
-    if (window.confirm('Confirma o encerramento do contrato de locação e retorno do veículo para o pátio?')) {
-      let targetVeiculoUpdated: Veiculo | null = null;
+  const handleEncerrarContrato = async (veiculoIdOrContratoId: string) => {
+    let targetVeiculoUpdated: Veiculo | null = null;
+
+    setVeiculos((prev) =>
+      prev.map((v) => {
+        if (v.id === veiculoIdOrContratoId || v.contratoAtivo?.id === veiculoIdOrContratoId) {
+          const motoristaNome = v.contratoAtivo?.motoristaNome;
+          const eventoDevolucao: EventoHistoricoVeiculo = {
+            id: `hs-dev-${Date.now()}`,
+            data: new Date().toISOString().split('T')[0],
+            tipo: 'Devolução / Encerramento',
+            titulo: 'Devolução do Veículo & Retorno ao Pátio',
+            descricao: `Contrato de locação com ${motoristaNome || 'o motorista'} encerrado. Veículo vistoriado e retornado ao pátio disponível.`,
+            statusResultante: 'Disponível',
+            km: v.kmAtual,
+            motoristaNome: motoristaNome,
+            usuarioRegistro: currentUserProfile?.displayName || 'Gestor',
+          };
+
+          const updated: Veiculo = {
+            ...v,
+            status: 'Disponível',
+            contratoAtivo: undefined,
+            historicoStatus: [eventoDevolucao, ...(v.historicoStatus || [])],
+          };
+          targetVeiculoUpdated = updated;
+          return updated;
+        }
+        return v;
+      })
+    );
+
+    if (targetVeiculoUpdated) {
+      await saveVeiculoFirestore(targetVeiculoUpdated);
+      if (dossieVeiculo?.id === targetVeiculoUpdated.id) {
+        setDossieVeiculo(targetVeiculoUpdated);
+      }
+    }
+  };
+
+  const handleExcluirContrato = async (veiculoId: string, contratoId: string) => {
+    let targetVeiculoUpdated: Veiculo | null = null;
+
+    setVeiculos((prev) =>
+      prev.map((v) => {
+        if (v.id === veiculoId || v.contratoAtivo?.id === contratoId) {
+          const updated: Veiculo = {
+            ...v,
+            status: 'Disponível',
+            contratoAtivo: undefined,
+          };
+          targetVeiculoUpdated = updated;
+          return updated;
+        }
+        return v;
+      })
+    );
+
+    if (targetVeiculoUpdated) {
+      await saveVeiculoFirestore(targetVeiculoUpdated);
+      if (dossieVeiculo?.id === targetVeiculoUpdated.id) {
+        setDossieVeiculo(targetVeiculoUpdated);
+      }
+    }
+  };
+
+  const handleSalvarCarencia = async (
+    veiculoId: string,
+    contratoId: string,
+    carencia: {
+      emCarencia: boolean;
+      dataInicio: string;
+      dataFimPrevista: string;
+      diasCarencia: number;
+      motivo?: string;
+    },
+    devolverCarroParaPatio: boolean
+  ) => {
+    let targetVeiculoUpdated: Veiculo | null = null;
+
+    setVeiculos((prev) =>
+      prev.map((v) => {
+        if (v.id === veiculoId || v.contratoAtivo?.id === contratoId) {
+          if (!v.contratoAtivo) return v;
+
+          const contratoAtualizado: ContratoLocacao = {
+            ...v.contratoAtivo,
+            status: carencia.emCarencia ? 'Em Carência' : 'Ativo',
+            carenciaDevolucao: carencia,
+          };
+
+          const novoStatusVeiculo = carencia.emCarencia && devolverCarroParaPatio ? 'Disponível' : v.status;
+
+          const updated: Veiculo = {
+            ...v,
+            status: novoStatusVeiculo,
+            contratoAtivo: contratoAtualizado,
+          };
+          targetVeiculoUpdated = updated;
+          return updated;
+        }
+        return v;
+      })
+    );
+
+    if (targetVeiculoUpdated) {
+      await saveVeiculoFirestore(targetVeiculoUpdated);
+      if (dossieVeiculo?.id === targetVeiculoUpdated.id) {
+        setDossieVeiculo(targetVeiculoUpdated);
+      }
+    }
+  };
+
+  const handleSalvarEdicaoContrato = async (
+    veiculoAntigoId: string,
+    veiculoNovoId: string,
+    contratoAtualizado: ContratoLocacao
+  ) => {
+    if (veiculoAntigoId === veiculoNovoId) {
+      const v = veiculos.find((item) => item.id === veiculoAntigoId);
+      if (!v) return;
+
+      const eventoEdicao: EventoHistoricoVeiculo = {
+        id: `hs-edit-ct-${Date.now()}`,
+        data: new Date().toISOString().split('T')[0],
+        tipo: 'Mudança de Status',
+        titulo: 'Contrato Ativo Editado',
+        descricao: `Contrato de locação com ${contratoAtualizado.motoristaNome} atualizado. Valores, saldo pago e parcelas sincronizadas.`,
+        statusResultante: 'Alugado',
+        km: v.kmAtual,
+        motoristaNome: contratoAtualizado.motoristaNome,
+        usuarioRegistro: currentUserProfile?.displayName || 'Gestor',
+      };
+
+      const updated: Veiculo = {
+        ...v,
+        status: 'Alugado',
+        contratoAtivo: {
+          ...contratoAtualizado,
+          veiculoId: veiculoAntigoId,
+        },
+        historicoStatus: [eventoEdicao, ...(v.historicoStatus || [])],
+      };
 
       setVeiculos((prev) =>
-        prev.map((v) => {
-          if (v.id === veiculoId) {
-            const motoristaNome = v.contratoAtivo?.motoristaNome;
-            const eventoDevolucao: EventoHistoricoVeiculo = {
-              id: `hs-dev-${Date.now()}`,
-              data: new Date().toISOString().split('T')[0],
-              tipo: 'Devolução / Encerramento',
-              titulo: 'Devolução do Veículo & Retorno ao Pátio',
-              descricao: `Contrato de locação com ${motoristaNome || 'o motorista'} encerrado. Veículo vistoriado e retornado ao pátio disponível.`,
-              statusResultante: 'Disponível',
-              km: v.kmAtual,
-              motoristaNome: motoristaNome,
-              usuarioRegistro: currentUserProfile?.displayName || 'Gestor',
-            };
-
-            const updated: Veiculo = {
-              ...v,
-              status: 'Disponível',
+        prev.map((item) => {
+          if (item.id === veiculoAntigoId) return updated;
+          // Prevent any other vehicle from holding the same contract ID
+          if (item.contratoAtivo?.id === contratoAtualizado.id) {
+            return {
+              ...item,
+              status: item.status === 'Alugado' ? 'Disponível' : item.status,
               contratoAtivo: undefined,
-              historicoStatus: [eventoDevolucao, ...(v.historicoStatus || [])],
             };
-            targetVeiculoUpdated = updated;
-            return updated;
           }
-          return v;
+          return item;
         })
       );
 
-      if (targetVeiculoUpdated) {
-        await saveVeiculoFirestore(targetVeiculoUpdated);
-        if (dossieVeiculo?.id === veiculoId) {
-          setDossieVeiculo(targetVeiculoUpdated);
-        }
+      await saveVeiculoFirestore(updated);
+      if (dossieVeiculo?.id === veiculoAntigoId) {
+        setDossieVeiculo(updated);
+      }
+      if (veiculoLocacaoDetalhes?.id === veiculoAntigoId) {
+        setVeiculoLocacaoDetalhes(updated);
+      }
+    } else {
+      // Transferência de veículo vinculado ao contrato
+      const vAntigo = veiculos.find((item) => item.id === veiculoAntigoId);
+      const vNovo = veiculos.find((item) => item.id === veiculoNovoId);
+      if (!vAntigo || !vNovo) return;
+
+      const eventoLiberacao: EventoHistoricoVeiculo = {
+        id: `hs-transf-out-${Date.now()}`,
+        data: new Date().toISOString().split('T')[0],
+        tipo: 'Mudança de Status',
+        titulo: 'Contrato Transferido de Veículo',
+        descricao: `Contrato do motorista ${contratoAtualizado.motoristaNome} transferido para o veículo ${vNovo.modelo} (${vNovo.placa}).`,
+        statusResultante: 'Disponível',
+        km: vAntigo.kmAtual,
+        motoristaNome: contratoAtualizado.motoristaNome,
+        usuarioRegistro: currentUserProfile?.displayName || 'Gestor',
+      };
+
+      const updatedAntigo: Veiculo = {
+        ...vAntigo,
+        status: 'Disponível',
+        contratoAtivo: undefined,
+        historicoContratos: [
+          contratoAtualizado,
+          ...(vAntigo.historicoContratos || []).filter((h) => h.id !== contratoAtualizado.id),
+        ],
+        historicoStatus: [eventoLiberacao, ...(vAntigo.historicoStatus || [])],
+      };
+
+      const eventoVinculacao: EventoHistoricoVeiculo = {
+        id: `hs-transf-in-${Date.now()}`,
+        data: new Date().toISOString().split('T')[0],
+        tipo: 'Mudança de Status',
+        titulo: 'Veículo Vinculado a Contrato Ativo',
+        descricao: `Veículo vinculado ao contrato de locação de ${contratoAtualizado.motoristaNome} transferido de ${vAntigo.modelo} (${vAntigo.placa}).`,
+        statusResultante: 'Alugado',
+        km: vNovo.kmAtual,
+        motoristaNome: contratoAtualizado.motoristaNome,
+        usuarioRegistro: currentUserProfile?.displayName || 'Gestor',
+      };
+
+      const updatedNovo: Veiculo = {
+        ...vNovo,
+        status: 'Alugado',
+        contratoAtivo: {
+          ...contratoAtualizado,
+          veiculoId: veiculoNovoId,
+        },
+        historicoStatus: [eventoVinculacao, ...(vNovo.historicoStatus || [])],
+      };
+
+      setVeiculos((prev) =>
+        prev.map((item) => {
+          if (item.id === veiculoAntigoId) return updatedAntigo;
+          if (item.id === veiculoNovoId) return updatedNovo;
+          // Disassociate contract from any other stale vehicle
+          if (item.contratoAtivo?.id === contratoAtualizado.id) {
+            return {
+              ...item,
+              status: item.status === 'Alugado' ? 'Disponível' : item.status,
+              contratoAtivo: undefined,
+            };
+          }
+          return item;
+        })
+      );
+
+      await saveVeiculoFirestore(updatedAntigo);
+      await saveVeiculoFirestore(updatedNovo);
+
+      if (dossieVeiculo?.id === veiculoAntigoId) {
+        setDossieVeiculo(updatedAntigo);
+      } else if (dossieVeiculo?.id === veiculoNovoId) {
+        setDossieVeiculo(updatedNovo);
+      }
+      if (veiculoLocacaoDetalhes?.id === veiculoAntigoId || veiculoLocacaoDetalhes?.id === veiculoNovoId) {
+        setVeiculoLocacaoDetalhes(updatedNovo);
       }
     }
   };
@@ -1666,6 +1994,36 @@ export default function App() {
             }
           }
 
+          // Se houver comissão gerencial/overriding apurada na venda, vincular na auditoria e despesas do chassi
+          if (novaVenda.comissaoGerencialAtiva && novaVenda.comissaoGerencialValor !== undefined && novaVenda.comissaoGerencialValor > 0) {
+            const gerencialIndex = currentDespesas.findIndex(
+              (d) => d.tipoComissaoOrigem === 'automatica_gerencial' || d.descricao?.includes('Comissão Administrativa')
+            );
+
+            const gerencialDespesaData: DespesaVeiculo = {
+              id: gerencialIndex >= 0 ? currentDespesas[gerencialIndex].id : `desp-comissao-gerencial-${Date.now()}`,
+              veiculoId: novaVenda.veiculoId,
+              chassi: novaVenda.chassi,
+              placa: novaVenda.placa,
+              categoria: 'Comissão',
+              descricao: `Comissão Administrativa / Overriding Gestor (${novaVenda.comissaoGerencialBeneficiarioNome || 'Diretoria'})`,
+              valor: Number(novaVenda.comissaoGerencialValor),
+              data: novaVenda.dataVenda,
+              fornecedor: novaVenda.comissaoGerencialBeneficiarioNome || 'Gestor Geral',
+              statusPagamento: (novaVenda.comissaoGerencialStatus as any) || 'Pendente',
+              tipoComissaoOrigem: 'automatica_gerencial' as any,
+              beneficiarioUsuarioId: novaVenda.comissaoGerencialBeneficiarioId,
+              beneficiarioNome: novaVenda.comissaoGerencialBeneficiarioNome,
+              beneficiarioEmail: novaVenda.comissaoGerencialBeneficiarioEmail,
+            };
+
+            if (gerencialIndex >= 0) {
+              currentDespesas[gerencialIndex] = gerencialDespesaData;
+            } else {
+              currentDespesas = [gerencialDespesaData, ...currentDespesas];
+            }
+          }
+
           const updated: Veiculo = {
             ...v,
             status: 'Vendido',
@@ -2181,8 +2539,18 @@ export default function App() {
     setIsNovaDespesaOpen(true);
   };
 
-  const openNovoContrato = (veiculo?: Veiculo) => {
+  const openNovoContrato = (
+    veiculo?: Veiculo,
+    motoristaData?: {
+      nome?: string;
+      cpf?: string;
+      telefone?: string;
+      app?: string;
+      placaInteresse?: string;
+    }
+  ) => {
     setContratoTargetVeiculo(veiculo || null);
+    setContratoInitialMotorista(motoristaData || null);
     setIsNovoContratoOpen(true);
   };
 
@@ -2556,6 +2924,8 @@ export default function App() {
               ? 'Rastreie veículos comprados fora da loja, controle fretes/prazos de cegonha e confirme o recebimento'
               : activeTab === 'dashboard-executivo'
               ? 'DRE consolidado, margens líquidas por chassi e gráficos de evolução de custos'
+              : activeTab === 'comissoes-gerenciais'
+              ? 'Gestão Executiva de Overriding: comissões da Diretoria e Gerência isoladas das comissões de vendedores'
               : undefined
           }
           searchTerm={searchTerm}
@@ -2615,6 +2985,17 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'comissoes-gerenciais' && (
+            <ComissoesGerenciaisView
+              vendas={vendas}
+              veiculos={veiculos}
+              usuarios={allUsersList}
+              currentUser={currentUserProfile}
+              onOpenDossie={openDossie}
+              onUpdateVenda={handleUpdateVenda}
+            />
+          )}
+
           {activeTab === 'dash' && currentUserProfile?.role !== 'vendedor' && (
             <DashboardView
               veiculos={veiculos}
@@ -2671,6 +3052,7 @@ export default function App() {
               onEditVeiculo={handleEditVeiculo}
               onOpenTestDrive={openTestDrive}
               onOpenVistoria={openVistoria}
+              onOpenDetalhesLocacao={handleOpenDetalhesLocacao}
             />
           )}
 
@@ -2686,6 +3068,8 @@ export default function App() {
                   ? 'debitos'
                   : activeTab === 'locacao-caucao'
                   ? 'caucao'
+                  : activeTab === 'locacao-pagadores'
+                  ? 'pagadores'
                   : 'contratos'
               }
               onOpenNovoContrato={openNovoContrato}
@@ -2699,6 +3083,16 @@ export default function App() {
               onSalvarDebitoMotorista={handleSalvarDebitoMotorista}
               onSalvarCaucaoMotorista={handleSalvarCaucaoMotorista}
               onOpenCadastrarDespesaVeiculo={openNovaDespesa}
+              onOpenDetalhesLocacao={handleOpenDetalhesLocacao}
+              onUpdateVeiculo={handleSaveVeiculoLocacao}
+              onSalvarEdicaoContrato={handleSalvarEdicaoContrato}
+              onExcluirContrato={handleExcluirContrato}
+              onSalvarCarencia={handleSalvarCarencia}
+              onOpenLancamentoExpresso={(opts) => {
+                setLancamentoExpressoOptions(opts || {});
+                setIsLancamentoExpressoOpen(true);
+              }}
+              contasBancarias={contasBancarias}
             />
           )}
 
@@ -2941,9 +3335,13 @@ export default function App() {
       {isNovoContratoOpen && (
         <ModalNovoContrato
           isOpen={isNovoContratoOpen}
-          onClose={() => setIsNovoContratoOpen(false)}
+          onClose={() => {
+            setIsNovoContratoOpen(false);
+            setContratoInitialMotorista(null);
+          }}
           veiculosDisponiveis={veiculosDisponiveis}
           defaultVeiculo={contratoTargetVeiculo}
+          initialMotoristaData={contratoInitialMotorista}
           onSaveContrato={handleSaveContrato}
         />
       )}
@@ -3095,6 +3493,44 @@ export default function App() {
           contasBancarias={contasBancarias}
           currentUser={currentUserProfile}
           onConfirmarRetorno={handleConfirmarRetornoPatio}
+        />
+      )}
+
+      {isLancamentoExpressoOpen && (
+        <ModalLancamentoExpresso
+          isOpen={isLancamentoExpressoOpen}
+          onClose={() => {
+            setIsLancamentoExpressoOpen(false);
+            setLancamentoExpressoOptions({});
+          }}
+          contasBancarias={contasBancarias}
+          veiculos={veiculos}
+          fornecedores={fornecedores}
+          usuarios={allUsersList}
+          despesasFixas={despesasFixas}
+          vendas={vendas}
+          currentUser={currentUserProfile}
+          initialTipo={lancamentoExpressoOptions.tipo}
+          initialDestino={lancamentoExpressoOptions.destino}
+          initialPlaca={lancamentoExpressoOptions.placa}
+          initialPagador={lancamentoExpressoOptions.pagador}
+          onOpenNovoContrato={openNovoContrato}
+          onUpdateVeiculo={handleUpdateVeiculoDirect}
+        />
+      )}
+
+      {isModalLocacaoDetalhesOpen && veiculoLocacaoDetalhes && (
+        <ModalDetalhesLocacaoVeiculo
+          isOpen={isModalLocacaoDetalhesOpen}
+          onClose={() => {
+            setIsModalLocacaoDetalhesOpen(false);
+            setVeiculoLocacaoDetalhes(null);
+          }}
+          veiculo={veiculoLocacaoDetalhes}
+          onUpdateVeiculo={handleSaveVeiculoLocacao}
+          onOpenNovaDespesa={(v) => openNovaDespesa(v)}
+          todosVeiculos={veiculos}
+          onSalvarEdicaoContrato={handleSalvarEdicaoContrato}
         />
       )}
     </div>

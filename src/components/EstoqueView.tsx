@@ -28,7 +28,8 @@ import {
   Download,
   Compass,
   ClipboardCheck,
-  Palette
+  Palette,
+  TrendingUp
 } from 'lucide-react';
 import { Veiculo, StatusVeiculo, Usuario, VendaVeiculo } from '../types';
 import { 
@@ -38,7 +39,8 @@ import {
   calculateAging, 
   calculateTotalDespesas, 
   calculateCustoTotal,
-  checkIsVeiculoVendido
+  checkIsVeiculoVendido,
+  isVeiculoLocacao
 } from '../utils/formatters';
 import { CreatableSelect } from './CreatableSelect';
 import {
@@ -63,6 +65,7 @@ interface EstoqueViewProps {
   onEditVeiculo: (veiculo: Veiculo) => void;
   onOpenTestDrive?: (veiculo: Veiculo) => void;
   onOpenVistoria?: (veiculo: Veiculo) => void;
+  onOpenDetalhesLocacao?: (veiculo: Veiculo) => void;
 }
 
 export const EstoqueView: React.FC<EstoqueViewProps> = ({
@@ -78,8 +81,10 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
   onEditVeiculo,
   onOpenTestDrive,
   onOpenVistoria,
+  onOpenDetalhesLocacao,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [finalidadeFilter, setFinalidadeFilter] = useState<'todos' | 'venda' | 'locacao'>('todos');
   const [statusFilter, setStatusFilter] = useState<string>('Todos');
   const [marcaFilter, setMarcaFilter] = useState<string>('Todas');
   const [corFilter, setCorFilter] = useState<string>('Todas');
@@ -250,16 +255,22 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
     setTimeout(() => setExportToast(null), 3500);
   };
 
-  // Filtro de estoque ativo de pátio por chassi: lista apenas carros comerciais para venda
-  // 1. Veículos já vendidos (status === 'Vendido' ou com registro na aba de vendas) são estritamente excluídos do estoque ativo
-  // 2. Veículos dedicados à Frota de Locação/Alugados são tratados como unidade de negócio independente no módulo de Locação
+  // Filtro de estoque ativo de pátio por chassi: mantém todos os carros (venda e frota de locação)
+  // Veículos vendidos são excluídos do estoque ativo
   const veiculosEstoqueAtivo = useMemo(() => {
     return veiculos.filter((v) => {
       if (checkIsVeiculoVendido(v, vendas)) return false;
-      if (v.tipoOperacao === 'Locacao' || v.status === 'Alugado' || !!v.contratoAtivo) return false;
       return true;
     });
   }, [veiculos, vendas]);
+
+  const countVenda = useMemo(() => {
+    return veiculosEstoqueAtivo.filter((v) => !isVeiculoLocacao(v) && v.tipoOperacao !== 'Locacao').length;
+  }, [veiculosEstoqueAtivo]);
+
+  const countLocacao = useMemo(() => {
+    return veiculosEstoqueAtivo.filter((v) => isVeiculoLocacao(v) || v.tipoOperacao === 'Locacao').length;
+  }, [veiculosEstoqueAtivo]);
 
   // Dynamic Brand & Color options with stock counts
   const brandOptions = useMemo(() => {
@@ -394,6 +405,13 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
   const filteredVeiculos = useMemo(() => {
     return veiculosEstoqueAtivo
       .filter((v) => {
+        // Filtro rápido de finalidade: Venda vs Frota de Locação
+        if (finalidadeFilter === 'venda') {
+          if (isVeiculoLocacao(v) || v.tipoOperacao === 'Locacao') return false;
+        } else if (finalidadeFilter === 'locacao') {
+          if (!isVeiculoLocacao(v) && v.tipoOperacao !== 'Locacao') return false;
+        }
+
         const matchesSearch =
           v.modelo.toLowerCase().includes(searchTerm.toLowerCase()) ||
           v.marca.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -480,6 +498,7 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
       });
   }, [
     veiculosEstoqueAtivo,
+    finalidadeFilter,
     searchTerm,
     statusFilter,
     marcaFilter,
@@ -603,7 +622,69 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
       </div>
 
       {/* 2. Filter & Search Panel */}
-      <div className="bg-[#111116] p-4 rounded-2xl border border-white/5 space-y-3">
+      <div className="bg-[#111116] p-4 rounded-2xl border border-white/5 space-y-3.5">
+        {/* Quick Filter: Finalidade Operacional (Venda vs Frota de Locação) */}
+        <div className="p-1.5 bg-[#16171f] rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setFinalidadeFilter('todos')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                finalidadeFilter === 'todos'
+                  ? 'bg-white/15 text-white border border-white/20 shadow-sm'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Car size={14} />
+              <span>Estoque Completo</span>
+              <span className="px-2 py-0.5 rounded-full bg-white/10 text-white text-[10px] font-mono font-bold">
+                {veiculosEstoqueAtivo.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFinalidadeFilter('venda')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                finalidadeFilter === 'venda'
+                  ? 'bg-emerald-600 text-white border border-emerald-500 shadow-sm shadow-emerald-950/40'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Tag size={14} className={finalidadeFilter === 'venda' ? 'text-white' : 'text-emerald-400'} />
+              <span>Venda (Disponíveis / Preparação)</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                finalidadeFilter === 'venda' ? 'bg-emerald-700 text-white' : 'bg-emerald-500/10 text-emerald-400'
+              }`}>
+                {countVenda}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFinalidadeFilter('locacao')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                finalidadeFilter === 'locacao'
+                  ? 'bg-blue-600 text-white border border-blue-500 shadow-sm shadow-blue-950/40'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Key size={14} className={finalidadeFilter === 'locacao' ? 'text-white' : 'text-blue-400'} />
+              <span>Frota de Locação</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                finalidadeFilter === 'locacao' ? 'bg-blue-700 text-white' : 'bg-blue-500/10 text-blue-400'
+              }`}>
+                {countLocacao}
+              </span>
+            </button>
+          </div>
+
+          <div className="text-[11px] text-slate-400 px-2 py-1 bg-black/20 rounded-lg hidden lg:flex items-center gap-1.5 border border-white/5">
+            <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+            <span>Frota separada com métricas de ROI e Mini-ERP</span>
+          </div>
+        </div>
+
         {/* Quick Status Selection Bar */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           <button
@@ -961,6 +1042,15 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
                           <div>
                             <p className="font-bold text-slate-200 text-sm group-hover:text-blue-400 transition-colors flex items-center gap-1.5">
                               <span>{v.modelo}</span>
+                              {(isVeiculoLocacao(v) || v.tipoOperacao === 'Locacao') ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                  <Key size={10} /> Frota Locação
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  <Tag size={10} /> Venda
+                                </span>
+                              )}
                             </p>
                             <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium flex-wrap mt-0.5">
                               <span>{v.marca}</span>
@@ -1111,6 +1201,15 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
                         >
                           <FileText size={16} />
                         </button>
+                        {onOpenDetalhesLocacao && (isVeiculoLocacao(v) || v.tipoOperacao === 'Locacao') && (
+                          <button
+                            onClick={() => onOpenDetalhesLocacao(v)}
+                            className="p-1.5 text-cyan-400 hover:bg-cyan-500/20 rounded-lg transition cursor-pointer"
+                            title="Métricas de Locação & ROI (Mini-ERP)"
+                          >
+                            <TrendingUp size={16} />
+                          </button>
+                        )}
                         <button
                           onClick={() => onOpenNovaDespesa(v)}
                           className="p-1.5 text-amber-400 hover:bg-amber-500/20 rounded-lg transition cursor-pointer"
@@ -1236,6 +1335,16 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
                         {v.status === 'Vendido' ? '✓ Vendido (Baixa)' : v.status}
                       </span>
 
+                      {(isVeiculoLocacao(v) || v.tipoOperacao === 'Locacao') ? (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md bg-blue-950/90 text-blue-300 border-blue-500/40 flex items-center gap-1">
+                          <Key size={10} /> Frota Locação
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md bg-emerald-950/90 text-emerald-300 border-emerald-500/40 flex items-center gap-1">
+                          <Tag size={10} /> Venda
+                        </span>
+                      )}
+
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md ${
                         isNotaEmitida
                           ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/30'
@@ -1321,6 +1430,15 @@ export const EstoqueView: React.FC<EstoqueViewProps> = ({
                   </button>
 
                   <div className="flex items-center gap-1">
+                    {onOpenDetalhesLocacao && (isVeiculoLocacao(v) || v.tipoOperacao === 'Locacao') && (
+                      <button
+                        onClick={() => onOpenDetalhesLocacao(v)}
+                        className="p-1.5 text-cyan-400 hover:bg-cyan-500/20 rounded-lg text-xs transition cursor-pointer"
+                        title="Métricas de Locação & ROI (Mini-ERP)"
+                      >
+                        <TrendingUp size={15} />
+                      </button>
+                    )}
                     {onOpenTestDrive && currentUser?.permissoes?.podeRealizarTestDrive !== false && (
                       <button
                         onClick={() => onOpenTestDrive(v)}

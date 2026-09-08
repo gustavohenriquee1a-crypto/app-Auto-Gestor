@@ -17,7 +17,8 @@ import {
   ArrowDownLeft
 } from 'lucide-react';
 import { Veiculo, ContratoLocacao, ReposicaoCaucaoParcelada, FechamentoCaucaoResumo, LancamentoContaMotorista } from '../types';
-import { formatCurrency, calcularResumoCaucao, formatDate } from '../utils/formatters';
+import { formatCurrency, calcularResumoCaucao, formatDate, calcularCarenciaCaucao } from '../utils/formatters';
+import { Clock } from 'lucide-react';
 
 interface ModalGerenciarCaucaoProps {
   isOpen: boolean;
@@ -57,12 +58,18 @@ export const ModalGerenciarCaucao: React.FC<ModalGerenciarCaucaoProps> = ({
   const [valorDeposito, setValorDeposito] = useState<number>(resumo.deficit > 0 ? resumo.deficit : 500);
 
   // Fechamento de Caução
+  const [dataEncerramento, setDataEncerramento] = useState<string>(
+    contrato.fechamentoCaucao?.dataEncerramento || new Date().toISOString().split('T')[0]
+  );
   const [avariasDescontar, setAvariasDescontar] = useState<number>(0);
   const [multasDescontar, setMultasDescontar] = useState<number>(
     contrato.debitosMotorista?.filter(d => d.status === 'Pendente').reduce((acc, d) => acc + d.valor, 0) || 0
   );
   const [aluguelPendenteDescontar, setAluguelPendenteDescontar] = useState<number>(0);
   const [obsFechamento, setObsFechamento] = useState('');
+
+  // Carência de 30 dias para liberação da caução pós-devolução
+  const carencia = calcularCarenciaCaucao(contrato, dataEncerramento);
 
   // Score do Motorista
   const [motoristaScore, setMotoristaScore] = useState<'A' | 'B' | 'C' | 'D'>(contrato.scoreMotorista || 'A');
@@ -142,7 +149,7 @@ export const ModalGerenciarCaucao: React.FC<ModalGerenciarCaucaoProps> = ({
       avariasAbatidas: Number(avariasDescontar),
       aluguelPendenteAbatido: Number(aluguelPendenteDescontar),
       saldoFinalDevolver,
-      dataEncerramento: new Date().toISOString().split('T')[0],
+      dataEncerramento,
       observacoes: obsFechamento.trim() || undefined,
     };
 
@@ -393,8 +400,59 @@ export const ModalGerenciarCaucao: React.FC<ModalGerenciarCaucaoProps> = ({
                 </h4>
               </div>
 
-              <div className="space-y-2.5 text-xs">
-                <div className="flex justify-between items-center text-slate-300">
+              <div className="space-y-3 text-xs">
+                {/* Alerta de Carência de 30 Dias para Devolução da Caução */}
+                <div className={`p-3.5 rounded-xl border flex items-start gap-3 ${
+                  carencia.emCarencia 
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-200' 
+                    : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
+                }`}>
+                  <Clock size={18} className={`shrink-0 mt-0.5 ${carencia.emCarencia ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`} />
+                  <div className="space-y-1">
+                    <p className="font-bold text-xs">
+                      {carencia.emCarencia
+                        ? 'Carência Obrigatória de 30 Dias (Proteção Contra Multas DETRAN/PRF)'
+                        : 'Carência de 30 Dias Cumprida — Caução Liberada'}
+                    </p>
+                    <p className="text-[11px] leading-relaxed opacity-90">
+                      {carencia.emCarencia ? (
+                        <>
+                          <span className="font-semibold text-amber-300">
+                            Caução retido para conferência de multas: {carencia.diasRestantes} {carencia.diasRestantes === 1 ? 'dia restante' : 'dias restantes'}
+                          </span>{' '}
+                          (liberação em {formatDate(carencia.dataLiberacao)}). O botão de liberação financeira ficará desbloqueado automaticamente após esse prazo.
+                        </>
+                      ) : (
+                        `O prazo de 30 dias após a devolução foi superado com sucesso em ${formatDate(carencia.dataLiberacao)}. A caução pode ser devolvida ao motorista.`
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Data de Devolução do Veículo:
+                    </label>
+                    <input
+                      type="date"
+                      value={dataEncerramento}
+                      onChange={(e) => setDataEncerramento(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#16171f] border border-white/10 text-white font-mono text-xs outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Data Prevista de Liberação (30 dias):
+                    </label>
+                    <div className="px-2.5 py-1.5 rounded-lg bg-[#16171f] border border-white/10 text-amber-400 font-mono font-bold text-xs">
+                      {formatDate(carencia.dataLiberacao)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center text-slate-300 pt-1">
                   <span>(+) Caução Total Depositado:</span>
                   <span className="font-bold text-emerald-400">{formatCurrency(totalCaucaoDepositado)}</span>
                 </div>
@@ -440,26 +498,50 @@ export const ModalGerenciarCaucao: React.FC<ModalGerenciarCaucaoProps> = ({
                     type="text"
                     value={obsFechamento}
                     onChange={(e) => setObsFechamento(e.target.value)}
-                    placeholder="Ex: Vistoria ok, recibo assinado via PIX"
-                    className="w-full p-2 rounded-lg bg-[#16171f] border border-white/10 text-white text-xs outline-none"
+                    placeholder="Ex: Veículo devolvido em perfeito estado, aguardando carência de multas"
+                    className="w-full p-2 rounded-lg bg-[#16171f] border border-white/10 text-white text-xs outline-none focus:border-amber-500"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModo('extrato')}
-                  className="px-3 py-1.5 rounded-xl text-xs text-slate-400 hover:text-white"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-xs transition flex items-center gap-1.5 cursor-pointer shadow-lg shadow-amber-600/30"
-                >
-                  <CheckCircle2 size={15} /> Finalizar Fechamento de Caução
-                </button>
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                <div className="text-[11px] text-slate-400">
+                  {carencia.emCarencia ? (
+                    <span className="text-amber-400 font-semibold flex items-center gap-1">
+                      <Clock size={12} /> Bloqueado: restam {carencia.diasRestantes} dias de carência
+                    </span>
+                  ) : (
+                    <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                      <CheckCircle2 size={12} /> Carência de 30 dias expirada. Devolução liberada!
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setModo('extrato')}
+                    className="px-3 py-1.5 rounded-xl text-xs text-slate-400 hover:text-white"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={carencia.emCarencia}
+                    className={`px-4 py-2 rounded-xl font-black text-xs transition flex items-center gap-1.5 ${
+                      carencia.emCarencia
+                        ? 'bg-slate-800 text-slate-500 border border-white/10 cursor-not-allowed opacity-60'
+                        : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20 cursor-pointer'
+                    }`}
+                    title={
+                      carencia.emCarencia
+                        ? `Aguardando término da carência de 30 dias (${carencia.diasRestantes} dias restantes)`
+                        : 'Confirmar devolução do saldo da caução ao motorista'
+                    }
+                  >
+                    <CheckCircle2 size={15} /> Confirmar Devolução da Caução
+                  </button>
+                </div>
               </div>
             </form>
           )}

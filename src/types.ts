@@ -47,6 +47,43 @@ export type StatusVeiculo = 'Disponível' | 'Alugado' | 'Em Preparação' | 'Ven
 
 export type StatusEstoque = 'Em Trânsito' | 'Em Preparação' | 'No Pátio' | 'Vendido';
 
+// 0. Classificação Temporal & Conciliação
+export type NaturezaTemporalLancamento = 
+  | 'historico_importado'   // Ocorrido antes da implantação/conferência; não afeta saldo bancário atual
+  | 'previsao'              // Despesa/receita projetada no veículo; não afeta caixa até a liquidação
+  | 'operacao_atual'        // Movimentação em tempo real com débito/crédito bancário efetivo
+  | 'ajuste_conciliacao';   // Lançamento auditado de correção ou conciliação de saldo
+
+export type StatusConciliacaoRegistro = 
+  | 'pendente_analise'
+  | 'conciliado_saldo_conferido'
+  | 'movimentacao_bancaria_confirmada'
+  | 'pago_fora_contas_loja';
+
+// Trilha de Auditoria para Edição de Despesa sem sobrescrita destrutiva
+export interface TrilhaAuditoriaDespesa {
+  valorAnterior: number;
+  novoValor: number;
+  diferenca: number;
+  motivoAjuste: string;
+  dataHoraAjuste: string;
+  usuarioAjusteId?: string;
+  usuarioAjusteNome?: string;
+  movimentacaoAjusteId?: string;
+}
+
+// Informações de Rateio Centesimal entre Múltiplos Veículos
+export interface RateioDespesaInfo {
+  rateioGrupoId: string;
+  despesaPaiId?: string;
+  veiculosParticipantesIds: string[];
+  veiculosParticipantesPlacas?: string[];
+  valorTotalDespesaOriginal: number;
+  quantidadeVeiculos: number;
+  valorParcelaVeiculo: number;
+  houveCompensacaoCentavos?: boolean;
+}
+
 export type CategoriaDespesa = 
   | 'Anúncio Patrocinado (Meta/Google Ads)'
   | 'Combustível'
@@ -105,6 +142,14 @@ export interface DespesaVeiculo {
   formaPagamento?: string;
   observacaoPagamento?: string;
   observacoes?: string;
+  // Classificação Temporal & Conciliação Bancária
+  naturezaTemporal?: NaturezaTemporalLancamento;
+  afetaSaldoAtual?: boolean;
+  statusConciliacao?: StatusConciliacaoRegistro;
+  jaEstavaNoSaldoConferido?: boolean;
+  movimentacaoFinanceiraId?: string; // ID da movimentação determinística no extrato bancário
+  rateioInfo?: RateioDespesaInfo;
+  trilhaAuditoria?: TrilhaAuditoriaDespesa[];
   // Parcelamento e Vínculo entre Despesas ("Restante do Pagamento", Entrada, Parcelas)
   tipoCondicao?: 'a_vista' | 'entrada_restante' | 'parcelado' | 'restante_vinculado';
   tipoVinculo?: 'entrada' | 'restante' | 'parcela' | 'complemento';
@@ -208,7 +253,31 @@ export interface DebitoMotorista {
   observacoes?: string;
 }
 
-// 4. Reposição de Caução Parcelada
+// 4. Reposição de Caução (Avulsa e Parcelada)
+export interface ReposicaoCaucaoAvulsa {
+  id: string;
+  contratoId: string;
+  valor: number;
+  dataHora: string; // ISO format
+  formaPagamento: 'PIX' | 'Dinheiro' | 'Cartão' | 'Transferência';
+  contaBancariaId: string;
+  contaBancariaNome?: string;
+  movimentacaoId?: string;
+  usuarioResponsavelId?: string;
+  usuarioResponsavelNome?: string;
+  comprovanteUrl?: string;
+  observacoes?: string;
+}
+
+export interface ParcelaReposicaoCaucao {
+  numero: number;
+  valor: number;
+  vencimento: string; // YYYY-MM-DD
+  status: 'Pendente' | 'Paga' | 'Atrasada';
+  dataPagamento?: string;
+  movimentacaoId?: string;
+}
+
 export interface ReposicaoCaucaoParcelada {
   ativa: boolean;
   valorTotalRepor: number;
@@ -217,6 +286,30 @@ export interface ReposicaoCaucaoParcelada {
   parcelasPagas: number;
   parcelasRestantes: number;
   motivoRepor?: string;
+  // Extensões de controle do ledger
+  id?: string;
+  contratoId?: string;
+  frequencia?: 'Semanal' | 'Mensal';
+  parcelasDetalhe?: ParcelaReposicaoCaucao[];
+  statusGeral?: 'Em Andamento' | 'Concluída' | 'Cancelada';
+  createdAt?: string;
+}
+
+// Evento do Ledger de Caução (Garantia Locação)
+export interface EventoCaucaoGarantia {
+  id: string;
+  contratoId: string;
+  dataHora: string; // ISO
+  tipoEvento: 'DepositoInicial' | 'DescontoMulta' | 'DescontoAvaria' | 'DescontoAluguel' | 'ReposicaoAvulsa' | 'ReposicaoParcela' | 'DevolucaoFinal';
+  valor: number; // Positivo para entrada/reposição, negativo para abatimento/devolução
+  saldoAnterior: number;
+  saldoApos: number;
+  descricao: string;
+  debitoMotoristaId?: string;
+  reposicaoId?: string;
+  movimentacaoBancariaId?: string;
+  usuarioId?: string;
+  usuarioNome?: string;
 }
 
 // 5. Histórico e Cronograma de Mudanças de Status do Veículo
@@ -327,6 +420,8 @@ export interface ContratoLocacao {
   contaCorrenteMotorista?: LancamentoContaMotorista[];
   checklistRetiradaId?: string;
   checklistDevolucaoId?: string;
+  reposicoesCaucaoAvulsas?: ReposicaoCaucaoAvulsa[];
+  eventosGarantiaCaucao?: EventoCaucaoGarantia[];
   fechamentoCaucao?: FechamentoCaucaoResumo;
   pagamentos: PagamentoAluguel[];
 }
@@ -482,6 +577,15 @@ export interface ProfissaoCadastrada {
   criadoEm?: string;
 }
 
+export interface AuditoriaLucroVenda {
+  lucroHistoricoOriginal: number;      // Gravado no ato original da venda
+  lucroRecalculado: number;            // Sem dupla dedução de comissão ou despesa
+  diferencaRecalculada: number;        // lucroRecalculado - lucroHistoricoOriginal
+  motivoRecalculo: string;
+  dataHoraRecalculo: string;
+  usuarioRecalculoId?: string;
+}
+
 export interface VendaVeiculo {
   id: string;
   veiculoId: string;
@@ -493,6 +597,8 @@ export interface VendaVeiculo {
   custoTotal: number;
   valorVenda: number;
   lucroLiquido: number;
+  lucroHistoricoOriginal?: number; // Preservado intacto para auditoria histórica
+  auditoriaLucro?: AuditoriaLucroVenda;
   margemLucroPercent: number;
   dataEntrada: string;
   dataVenda: string;
@@ -600,23 +706,73 @@ export interface VendaVeiculo {
   observacoesVenda?: string;
 }
 
+export interface SnapshotConfirmacaoTacComissao {
+  tacBruto: number;
+  descontoIla: number;
+  tacLiquidoEfetivo: number;
+  percentualOuValorRegra: number;
+  valorComissaoCalculado: number;
+  dataHoraConfirmacao: string;
+  usuarioConfirmouId: string;
+  usuarioConfirmouNome: string;
+  regraIdOriginal: string;
+}
+
 export interface ComissaoDetalhadaVenda {
-  id: string;
+  // 1. IDENTIFICADORES DETERMINÍSTICOS ÚNICOS
+  id: string; // ${vendaId}_${usuarioId}_regra_${regraId} | prev_${previsaoDespesaId} | manual_${itemManualId}
+  vendaId?: string;
+  veiculoId?: string;
+  placa?: string;
+  regraId?: string;
+  itemManualId?: string; // ID imutável para comissões manuais avulsas (impede colisão)
+  previsaoDespesaId?: string; // Vínculo da DespesaVeiculo do chassi vinculada (evita 2ª despesa)
+
+  // 2. BENEFICIÁRIO
   usuarioId: string;
   usuarioNome: string;
   usuarioEmail?: string;
   usuarioCargo?: string;
   usuarioRole?: string;
-  regraId: string;
+  beneficiarioPapel?: 'Vendedor' | 'Gerente' | 'Responsavel_Financiamento' | 'Intermediador' | 'Outro';
+
+  // 3. MOTOR DE REGRAS E CÁLCULO
+  regraOrigem?: string;
   tipoBase: 'Venda Bruta' | 'Lucro do Veículo' | 'Retorno TAC' | 'Fixo por Carro';
   formato: 'Percentual' | 'Valor Fixo';
   valorOrPercentual: number;
   condicaoGatilho: 'Sempre' | 'Apenas se houver TAC' | 'Apenas se for Financiado';
+  baseCalculo?: number;
   valorCalculado: number;
   isento?: boolean; // Se foi isentado/removido nesta venda específica
   motivoIsencao?: string;
-  status?: 'Pendente' | 'Paga';
+
+  // 4. SEPARAÇÃO SEMÂNTICA DE STATUS (Liberação vs. Pagamento)
+  aguardaLiquidacaoTac?: boolean;
+  statusLiberacao?: 'Aguardando_Condicao' | 'Liberada_Para_Pagamento' | 'Bloqueada_Auditoria';
+  statusPagamento?: 'Pendente' | 'Pago' | 'Cancelado';
+  status?: 'Pendente' | 'Paga'; // Retrocompatibilidade
+
+  // 5. SNAPSHOT IMUTÁVEL DE TAC CONFIRMADO
+  snapshotConfirmacaoTac?: SnapshotConfirmacaoTacComissao;
+
+  // 6. PAGAMENTO E LIQUIDAÇÃO BANCÁRIA
   dataPagamento?: string;
+  formaPagamento?: string;
+  contaBancariaId?: string;
+  contaBancariaNome?: string;
+  movimentacaoFinanceiraId?: string; // ID determinístico do extrato
+  afetaSaldoAtual?: boolean;
+  usuarioPagadorId?: string;
+
+  // 7. TRILHA DE AUDITORIA PARA AJUSTES
+  ajustadaManualmente?: boolean;
+  valorOriginalCalculado?: number;
+  diferencaAjuste?: number;
+  motivoAjuste?: string;
+  dataHoraAjuste?: string;
+  usuarioAjusteId?: string;
+  observacoes?: string;
 }
 
 export interface RegraRemuneracao {
@@ -684,6 +840,10 @@ export interface Veiculo {
   telefone_transportadora?: string; // Telefone / WhatsApp do transportador
   rastreamento_transporte?: string; // Código ou link de rastreamento / observação
   localizacaoPatio?: string;
+  // Desacoplamento entre Localização Física, Status Operacional e Status Comercial
+  localizacaoFisica?: LocalizacaoFisicaVeiculo;
+  statusOperacional?: StatusOperacionalVeiculo;
+  statusComercial?: StatusComercialVeiculo;
   // Rastreamento de Fornecedor de Origem / Compra
   fornecedorOrigemId?: string;
   fornecedorOrigemNome?: string;
@@ -713,10 +873,72 @@ export interface Veiculo {
   historicoTestDrives?: RegistroTestDrive[];
   vistorias?: LaudoVistoriaEntrada[];
   laudosVistoria?: LaudoVistoriaEntrada[];
+  vistoriasInternasPatio?: VistoriaInternaPatio[];
+  laudosCautelaresOficiais?: LaudoCautelarOficial[];
   etapaKanban?: EtapaKanbanPreparacao;
 }
 
 export type EtapaKanbanPreparacao = 'Oficina' | 'Funilaria' | 'Estética' | 'Pronto para Pátio';
+
+// Desacoplamento entre Localização Física, Status Operacional e Status Comercial
+export type LocalizacaoFisicaVeiculo = 
+  | 'Pátio / Showroom'
+  | 'Em Trânsito / Guincho'
+  | 'Em Parceiro / Fornecedor'
+  | 'Com Cliente / Locatário'
+  | 'Outro';
+
+export type StatusOperacionalVeiculo = 
+  | 'Disponível'
+  | 'Em Preparação'
+  | 'Em Manutenção'
+  | 'Aguardando Peça'
+  | 'Alugado'
+  | 'Entregue';
+
+export type StatusComercialVeiculo = 
+  | 'Disponível para Venda'
+  | 'Pré-Venda Autorizada'
+  | 'Reservado'
+  | 'Vendido'
+  | 'Indisponível para Venda';
+
+// Vistoria Interna Operacional de Pátio (Check-in/Check-out da Loja)
+export interface VistoriaInternaPatio {
+  id: string;
+  veiculoId: string;
+  placa: string;
+  tipoVistoria: 'Check-in Entrada' | 'Check-out Saída' | 'Rotina Pátio' | 'Retorno Oficina';
+  dataHora: string;
+  km: number;
+  nivelCombustivel: 'Reserva' | '1/4' | '1/2' | '3/4' | 'Cheio';
+  estadoPneus: string;
+  itensConferidos: { item: string; status: 'Conforme' | 'Não Conforme' | 'Ausente'; observacao?: string }[];
+  fotosUrls?: string[];
+  responsavelNome: string;
+  responsavelId?: string;
+  observacoes?: string;
+  createdAt: string;
+}
+
+// Laudo Cautelar Oficial Terceirizado (Perícia Veicular)
+export interface LaudoCautelarOficial {
+  id: string;
+  veiculoId: string;
+  placa: string;
+  chassi: string;
+  empresaPericialNome: string;
+  empresaCnpj?: string;
+  numeroLaudo: string;
+  dataPericia: string;
+  resultadoPericia: 'Aprovado' | 'Aprovado com Apontamentos' | 'Reprovado';
+  apontamentosDescricao?: string;
+  pdfLaudoUrl?: string;
+  custoLaudo?: number;
+  despesaVinculadaId?: string;
+  cadastradoPorId?: string;
+  createdAt: string;
+}
 
 // 6. Controle de Test Drive
 export interface RegistroTestDrive {
@@ -885,6 +1107,20 @@ export interface ConfiguracaoLoja {
   comissaoGerenteObservacoes?: string;
 }
 
+export interface ConferenciaSaldoBancario {
+  id: string;
+  contaId: string;
+  contaNome: string;
+  dataHoraConferencia: string; // ISO
+  saldoConferido: number;
+  saldoAnterior: number;
+  diferencaAjuste?: number;
+  motivoAjuste?: string;
+  usuarioId: string;
+  usuarioNome: string;
+  createdAt: string;
+}
+
 export interface ContaBancariaCaixa {
   id: string;
   nome: string;
@@ -895,7 +1131,13 @@ export interface ContaBancariaCaixa {
   chavePix?: string;
   tipoChavePix?: 'CNPJ' | 'CPF' | 'E-mail' | 'Telefone' | 'Aleatória';
   titular?: string;
-  saldo: number;
+  // Gestão de Saldos Segregados e Compatibilidade
+  saldoConferido?: number;            // Saldo real conferido pelo administrador no internet banking
+  dataHoraUltimaConferencia?: string; // Ponto de corte temporal da última conferência
+  saldoAtualOperacional?: number;     // Saldo conferido + movimentações posteriores que afetam o saldo
+  saldo: number;                      // Espelho persistido de compatibilidade de leitura e escrita
+  saldoAtual?: number;                 // Espelho persistido de compatibilidade de leitura e escrita
+  historicoConferencias?: ConferenciaSaldoBancario[];
   corTag?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -905,6 +1147,7 @@ export type TipoMovimentacaoConta = 'Receita' | 'Despesa' | 'Transferência';
 
 export interface MovimentacaoConta {
   id: string;
+  idempotencyKey?: string; // Chave determinística de prevenção de duplicidade concorrente
   contaId: string;
   contaNome: string;
   tipo: TipoMovimentacaoConta;
@@ -919,6 +1162,20 @@ export interface MovimentacaoConta {
   formaPagamento?: string;
   criadoPor?: string;
   createdAt: string;
+  // Impacto Bancário Real e Conciliação
+  afetaSaldoAtual?: boolean; // Se false (ex: histórico anterior à conferência), não movimenta saldo
+  naturezaTemporal?: NaturezaTemporalLancamento;
+  statusConciliacao?: StatusConciliacaoRegistro;
+  // Gestão de Estornos Auditados
+  isEstorno?: boolean;
+  movimentacaoOriginalId?: string;
+  motivoEstorno?: string;
+  dataHoraEstorno?: string;
+  usuarioEstornoId?: string;
+  // Neutralidade de Transferências Internas
+  isTransferenciaInterna?: boolean;
+  isMovimentacaoNeutra?: boolean;
+  tipoAjuste?: 'Diferenca_Valor_Despesa' | 'Ajuste_Conciliacao' | 'Estorno' | 'Normal';
   // Campos específicos de transferências entre contas e terceiros
   transferenciaId?: string;
   contaOrigemId?: string;

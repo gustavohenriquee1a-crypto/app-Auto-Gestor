@@ -3399,7 +3399,7 @@ export async function excluirMovimentacaoComEstornoFirestore(
 
     const mov = movSnap.data() as MovimentacaoConta;
 
-    // 2. Impedir estorno duplo ou estorno de estorno
+    // 2. Validar se já é estorno ou se já possui movimentacaoEstornoId/isEstornado
     if (mov.isEstorno) {
       throw new Error('Não é permitido estornar uma movimentação que já é um estorno.');
     }
@@ -3407,41 +3407,53 @@ export async function excluirMovimentacaoComEstornoFirestore(
       throw new Error('Esta movimentação já foi estornada anteriormente.');
     }
 
+    // 3. Gerar estornoId determinístico
+    const estornoId = `mov_estorno_${mov.id}`;
+    const estornoDocRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, estornoId);
+
+    // 4. Consultar o documento de estorno
+    const estornoSnap = await transaction.get(estornoDocRef);
+
+    // 5. Se o estorno já existir, não alterar saldo e retornar resultado idempotente/erro controlado
+    if (estornoSnap.exists()) {
+      const estornoExistente = estornoSnap.data() as MovimentacaoConta;
+      return {
+        saldoRestaurado: 0,
+        contaId: mov.contaId,
+        movimentacaoOriginal: mov,
+        movimentacaoEstorno: estornoExistente,
+      };
+    }
+
+    // 6. Somente depois ler e atualizar a conta (com todas as leituras prévias à escrita)
     const contaId = mov.contaId;
     const valor = Number(mov.valor || 0);
     const isSaida = (mov.tipo as string) === 'Despesa' || (mov.tipo as string) === 'Saída';
 
     let saldoRestaurado = 0;
+    const contaDocRef = contaId ? doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaId) : null;
+    const cSnap = contaDocRef ? await transaction.get(contaDocRef) : null;
 
-    // 3. Ler e atualizar a conta bancária
-    if (contaId) {
-      const contaDocRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaId);
-      const cSnap = await transaction.get(contaDocRef);
-      if (cSnap.exists()) {
-        const cData = cSnap.data() as ContaBancariaCaixa;
-        const saldoAtual = Number(cData.saldoAtualOperacional ?? cData.saldo ?? 0);
-        // Se era saída/despesa, estornar soma de volta. Se era entrada/receita, subtrai.
-        const novoSaldo = isSaida ? saldoAtual + valor : saldoAtual - valor;
-        saldoRestaurado = novoSaldo;
+    // Leitura antecipada de entidades vinculadas antes de iniciar escritas
+    const dfRef = mov.despesaFixaId ? doc(db, COLLECTIONS.DESPESAS_FIXAS, mov.despesaFixaId) : null;
+    const dfSnap = dfRef ? await transaction.get(dfRef) : null;
 
-        transaction.update(contaDocRef, {
-          saldoAtualOperacional: novoSaldo,
-          saldo: novoSaldo,
-          saldoAtual: novoSaldo,
-          updatedAt: nowIso,
-        });
-      }
+    if (contaDocRef && cSnap && cSnap.exists()) {
+      const cData = cSnap.data() as ContaBancariaCaixa;
+      const saldoAtual = Number(cData.saldoAtualOperacional ?? cData.saldo ?? 0);
+      // Se era saída/despesa, estornar soma de volta. Se era entrada/receita, subtrai.
+      const novoSaldo = isSaida ? saldoAtual + valor : saldoAtual - valor;
+      saldoRestaurado = novoSaldo;
+
+      transaction.update(contaDocRef, {
+        saldoAtualOperacional: novoSaldo,
+        saldo: novoSaldo,
+        saldoAtual: novoSaldo,
+        updatedAt: nowIso,
+      });
     }
 
-    // 4. Verificar se a movimentação de estorno já existe (idempotência determinística)
-    const estornoId = `mov_estorno_${mov.id}`;
-    const estornoDocRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, estornoId);
-    const estornoSnap = await transaction.get(estornoDocRef);
-    if (estornoSnap.exists()) {
-      throw new Error('O estorno desta movimentação já foi processado anteriormente no extrato.');
-    }
-
-    // 5. Criar nova movimentação de estorno com sinal contrário (SEM deletar a original!)
+    // 7. Criar a movimentação de estorno
     const movimentacaoEstorno: MovimentacaoConta = {
       id: estornoId,
       idempotencyKey: `idemp_estorno_${mov.id}`,
@@ -3454,6 +3466,7 @@ export async function excluirMovimentacaoComEstornoFirestore(
       descricao: `Estorno de lançamento: ${mov.descricao || ''} - Motivo: ${motivo}`,
       criadoPor: usuarioNome,
       createdAt: nowIso,
+      updatedAt: nowIso,
       afetaSaldoAtual: true,
       naturezaTemporal: 'operacao_atual',
       statusConciliacao: 'movimentacao_bancaria_confirmada',
@@ -3473,7 +3486,7 @@ export async function excluirMovimentacaoComEstornoFirestore(
     };
     transaction.set(estornoDocRef, movimentacaoEstorno);
 
-    // 6. Atualizar a movimentação original vinculando o estorno (mantém intacta no extrato para auditoria)
+    // 8. Atualizar o movimento original
     const movimentacaoOriginalAtualizada: MovimentacaoConta = {
       ...mov,
       movimentacaoEstornoId: estornoId,
@@ -3496,17 +3509,13 @@ export async function excluirMovimentacaoComEstornoFirestore(
       updatedAt: nowIso,
     });
 
-    // 7. Se estiver vinculada a uma despesa fixa, desmarcar pagamento na mesma transação atômica
-    if (mov.despesaFixaId) {
-      const dfRef = doc(db, COLLECTIONS.DESPESAS_FIXAS, mov.despesaFixaId);
-      const dfSnap = await transaction.get(dfRef);
-      if (dfSnap.exists()) {
-        transaction.update(dfRef, {
-          status: 'Pendente',
-          dataPagamento: null,
-          updatedAt: nowIso,
-        });
-      }
+    // 9. Atualizar entidades vinculadas
+    if (dfRef && dfSnap && dfSnap.exists()) {
+      transaction.update(dfRef, {
+        status: 'Pendente',
+        dataPagamento: null,
+        updatedAt: nowIso,
+      });
     }
 
     return {

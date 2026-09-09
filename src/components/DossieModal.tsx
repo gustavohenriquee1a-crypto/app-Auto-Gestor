@@ -43,7 +43,8 @@ import {
   Link2,
   Megaphone,
   Shield,
-  Info
+  Info,
+  Scale
 } from 'lucide-react';
 import { 
   Veiculo, 
@@ -66,7 +67,10 @@ import {
   calculateAging, 
   calculateTotalDespesas, 
   calculateCustoTotal,
-  isCategoriaRepasseDistribuicao 
+  isCategoriaRepasseDistribuicao,
+  calcularLucroPorChassi,
+  calculateComissoesVeiculo,
+  DemonstrativoLucroChassi
 } from '../utils/formatters';
 import { 
   registrarMudancaStatusEstoque, 
@@ -244,6 +248,51 @@ export const DossieModal: React.FC<DossieModalProps> = ({
   const vendaCorrespondente = useMemo(() => {
     return veiculo.venda || (vendas ? vendas.find(v => v.veiculoId === veiculo.id || (v.placa && veiculo.placa && v.placa === veiculo.placa)) : undefined);
   }, [veiculo.venda, veiculo.id, veiculo.placa, vendas]);
+
+  // Motor Canônico de DRE e Lucro por Chassi (com segregação e eliminação de dupla dedução)
+  const dreChassi: DemonstrativoLucroChassi = useMemo(() => {
+    return calcularLucroPorChassi(veiculo, vendaCorrespondente, precoVendaAtual);
+  }, [veiculo, vendaCorrespondente, precoVendaAtual]);
+
+  const [isSavingRecalculo, setIsSavingRecalculo] = useState(false);
+  const [recalculoFeedbackMsg, setRecalculoFeedbackMsg] = useState<string | null>(null);
+
+  const handleSincronizarLucroRecalculado = async () => {
+    if (!vendaCorrespondente || !onUpdateVenda) return;
+    try {
+      setIsSavingRecalculo(true);
+      const dre = calcularLucroPorChassi(veiculo, vendaCorrespondente, precoVendaAtual);
+      const vendaAtualizada: VendaVeiculo = {
+        ...vendaCorrespondente,
+        lucroHistoricoOriginal: dre.lucroHistoricoOriginal,
+        lucroLiquido: dre.lucroLiquidoRecalculado,
+        auditoriaLucro: {
+          lucroHistoricoOriginal: dre.lucroHistoricoOriginal,
+          lucroRecalculado: dre.lucroLiquidoRecalculado,
+          diferencaRecalculada: dre.diferencaRecalculada,
+          motivoRecalculo: 'Segregação entre despesas operacionais e comissões da venda para eliminação de dupla dedução',
+          dataHoraRecalculo: new Date().toISOString(),
+          usuarioRecalculoId: currentUser?.id,
+          usuarioRecalculoNome: currentUser?.nome,
+        },
+      };
+
+      await onUpdateVenda(vendaAtualizada);
+      if (onUpdateVeiculo) {
+        onUpdateVeiculo({
+          ...veiculo,
+          venda: vendaAtualizada,
+        });
+      }
+      setRecalculoFeedbackMsg('Lucro recalculado e auditado fixado na venda com sucesso!');
+      setTimeout(() => setRecalculoFeedbackMsg(null), 4000);
+    } catch (err: any) {
+      console.error('Erro ao sincronizar lucro recalculado:', err);
+      setRecalculoFeedbackMsg('Erro ao sincronizar recalculo contábil.');
+    } finally {
+      setIsSavingRecalculo(false);
+    }
+  };
 
   // Marketing & Tráfego Pós-Venda Modal State
   const [modalMarketingAberto, setModalMarketingAberto] = useState(false);
@@ -2047,21 +2096,15 @@ export const DossieModal: React.FC<DossieModalProps> = ({
 
           {/* ================= ABA 4: DRE INDIVIDUAL POR CHASSI ================= */}
           {activeTab === 'dre_chassi' && (() => {
-            const isVendidoOperacao = veiculo.status === 'Vendido' || !!vendaCorrespondente;
-            const receitaRealOuPrevista = vendaCorrespondente?.valorVenda || precoVendaAtual;
-            const custoCompraEfetivo = vendaCorrespondente?.valorCompra || veiculo.custoAquisicao;
-            const custosOficinaEfetivo = vendaCorrespondente?.totalDespesas ?? totalDespesas;
-            const mktPosVenda = vendaCorrespondente?.despesaMarketingAplicadaPosVenda || 0;
-            const comissaoEfetiva = vendaCorrespondente?.comissaoValor || 0;
-
-            const lucroBrutoRealizado = receitaRealOuPrevista - custoCompraEfetivo - custosOficinaEfetivo;
-            const lucroLiquidoRealizado = vendaCorrespondente?.lucroLiquido !== undefined
-              ? vendaCorrespondente.lucroLiquido
-              : (lucroBrutoRealizado - mktPosVenda - comissaoEfetiva);
-
-            const margemLiquidaRealizada = (custoCompraEfetivo + custosOficinaEfetivo) > 0
-              ? (lucroLiquidoRealizado / (custoCompraEfetivo + custosOficinaEfetivo)) * 100
-              : 0;
+            const isVendidoOperacao = dreChassi.isVendido;
+            const receitaRealOuPrevista = dreChassi.receitaLiquidaVenda;
+            const custoCompraEfetivo = dreChassi.custoCompra;
+            const custosOficinaEfetivo = dreChassi.despesasOperacionais;
+            const mktPosVenda = dreChassi.despesasMarketingPosVenda;
+            const comissaoEfetiva = dreChassi.comissoesVenda;
+            const lucroBrutoRealizado = dreChassi.lucroBruto;
+            const lucroLiquidoRealizado = dreChassi.lucroLiquidoRecalculado;
+            const margemLiquidaRealizada = dreChassi.margemLiquidaRecalculadaPercent;
 
             return (
               <div className="space-y-6 animate-fadeIn">
@@ -2074,7 +2117,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                       </h3>
                       <p className="text-xs text-slate-400">
                         {isVendidoOperacao 
-                          ? 'DRE definitivo com apuração pós-venda, custos diretos, tráfego pago e comissão protegida.'
+                          ? 'DRE definitivo com segregação entre despesas operacionais e comissões, eliminação de dupla dedução e tráfego pago.'
                           : 'Extrato contábil projetado com apuração de receitas, custos diretos e margem de contribuição.'}
                       </p>
                     </div>
@@ -2095,8 +2138,8 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                   <div className="space-y-2.5 text-xs">
                     <div className="flex justify-between py-2 border-b border-white/5 font-semibold">
                       <span className="text-slate-300 flex items-center gap-1.5">
-                        <span>Receita Bruta {isVendidoOperacao ? 'Realizada' : 'Projetada'}</span>
-                        {isVendidoOperacao && <span className="text-[10px] text-emerald-400 font-mono">(Venda)</span>}
+                        <span>Receita {isVendidoOperacao ? 'Realizada' : 'Projetada'}</span>
+                        {isVendidoOperacao && <span className="text-[10px] text-emerald-400 font-mono">(Venda + TAC Líquido)</span>}
                       </span>
                       <span className="font-mono text-emerald-400 font-bold">{formatCurrency(receitaRealOuPrevista)}</span>
                     </div>
@@ -2107,14 +2150,17 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                     </div>
 
                     <div className="flex justify-between py-2 border-b border-white/5 font-semibold text-slate-400">
-                      <span>(-) Custos de Preparação, Funilaria, Peças e Oficina</span>
+                      <div className="flex flex-col">
+                        <span>(-) Despesas Operacionais do Chassi (Oficina, Peças & Preparação)</span>
+                        <span className="text-[10px] text-slate-500">Exclui comissões e repasses de sócios (custo fabril direto)</span>
+                      </div>
                       <span className="font-mono text-rose-400">-{formatCurrency(custosOficinaEfetivo)}</span>
                     </div>
 
                     <div className="flex justify-between py-2.5 border-t border-b border-white/10 font-bold text-xs bg-white/5 px-3 rounded-lg">
                       <span className="text-slate-200">(=) Lucro Bruto do Veículo</span>
                       <span className={`font-mono ${lucroBrutoRealizado >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {formatCurrency(lucroBrutoRealizado)}
+                        {formatCurrency(lucroBrutoRealizado)} ({dreChassi.margemBrutaPercent.toFixed(1)}%)
                       </span>
                     </div>
 
@@ -2139,10 +2185,10 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                           <div className="flex flex-col">
                             <span className="flex items-center gap-1.5 text-amber-300">
                               <Shield size={13} className="text-amber-400" />
-                              (-) Comissões da Equipe de Vendas
+                              (-) Comissões da Equipe Comercial & Gestão
                             </span>
                             <span className="text-[10px] text-slate-400">
-                              Comissão contratual fixada no fechamento da venda • 100% protegida
+                              Deduzidas aqui de forma única e protegida • Zero sobreposição com despesas de oficina
                             </span>
                           </div>
                           <span className="font-mono font-bold text-amber-400">
@@ -2155,11 +2201,11 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                     <div className="flex justify-between py-3 border-t-2 border-white/10 font-bold text-sm bg-black/40 p-3 rounded-xl mt-2">
                       <div className="flex flex-col">
                         <span className="text-white">
-                          (=) Lucro Líquido Real da Operação
+                          (=) Lucro Líquido Real Recalculado da Operação
                         </span>
                         <span className="text-[10px] text-slate-400 font-normal">
                           {isVendidoOperacao
-                            ? 'Resultado contábil após dedução de marketing atribuído e comissões'
+                            ? 'Resultado contábil definitivo sem dupla dedução de comissões/repasses'
                             : 'Resultado preliminar projetado da venda'}
                         </span>
                       </div>
@@ -2168,6 +2214,89 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                       </span>
                     </div>
                   </div>
+
+                  {/* Quadro de Auditoria Contábil: Lucro Histórico vs. Lucro Recalculado */}
+                  {isVendidoOperacao && (
+                    <div className={`p-4 rounded-2xl border ${
+                      dreChassi.possuiDivergenciaDuplaDeducao 
+                        ? 'bg-amber-950/20 border-amber-500/40 shadow-lg shadow-amber-950/20' 
+                        : 'bg-[#16171f] border-white/10'
+                    } space-y-3`}>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/5 pb-2.5">
+                        <div className="flex items-center gap-2">
+                          <Scale size={16} className={dreChassi.possuiDivergenciaDuplaDeducao ? 'text-amber-400' : 'text-emerald-400'} />
+                          <h4 className="font-bold text-xs text-white">
+                            Auditoria Contábil: Lucro Histórico vs. Lucro Recalculado
+                          </h4>
+                        </div>
+                        {dreChassi.possuiDivergenciaDuplaDeducao ? (
+                          <span className="text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 self-start sm:self-center">
+                            <AlertTriangle size={11} />
+                            Divergência Detectada (Dupla Dedução Eliminada)
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 self-start sm:self-center">
+                            <CheckCircle2 size={11} />
+                            Apuração Conciliada
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                        <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                          <span className="text-[10px] text-slate-400 block mb-0.5">1. Lucro Histórico Gravado</span>
+                          <span className="font-mono font-bold text-slate-200 text-sm">
+                            {formatCurrency(dreChassi.lucroHistoricoOriginal)}
+                          </span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5">Registro original da venda</span>
+                        </div>
+
+                        <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                          <span className="text-[10px] text-emerald-400 block mb-0.5">2. Lucro Recalculado (Sem Dupla Dedução)</span>
+                          <span className="font-mono font-black text-emerald-400 text-sm">
+                            {formatCurrency(dreChassi.lucroLiquidoRecalculado)}
+                          </span>
+                          <span className="text-[9px] text-emerald-500/80 block mt-0.5">Segregação estrita de comissão e oficina</span>
+                        </div>
+
+                        <div className="p-3 bg-black/40 rounded-xl border border-white/5">
+                          <span className="text-[10px] text-amber-400 block mb-0.5">3. Ajuste de Conciliação</span>
+                          <span className={`font-mono font-bold text-sm ${dreChassi.diferencaRecalculada >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {dreChassi.diferencaRecalculada >= 0 ? `+${formatCurrency(dreChassi.diferencaRecalculada)}` : formatCurrency(dreChassi.diferencaRecalculada)}
+                          </span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5">Diferença apurada no chassi</span>
+                        </div>
+                      </div>
+
+                      {dreChassi.possuiDivergenciaDuplaDeducao && (
+                        <div className="p-3 bg-black/40 rounded-xl border border-amber-500/20 text-xs space-y-2">
+                          <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                            {dreChassi.motivoDivergencia}
+                          </p>
+
+                          {recalculoFeedbackMsg && (
+                            <p className="text-xs text-emerald-400 font-bold bg-emerald-950/40 p-2 rounded-lg border border-emerald-500/30">
+                              {recalculoFeedbackMsg}
+                            </p>
+                          )}
+
+                          {onUpdateVenda && vendaCorrespondente && (
+                            <div className="pt-1 flex justify-end">
+                              <button
+                                type="button"
+                                onClick={handleSincronizarLucroRecalculado}
+                                disabled={isSavingRecalculo}
+                                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+                              >
+                                <RotateCcw size={13} className={isSavingRecalculo ? 'animate-spin' : ''} />
+                                <span>{isSavingRecalculo ? 'Sincronizando...' : 'Fixar Lucro Recalculado na Venda'}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Informational Accounting Rule Box */}
                   {isVendidoOperacao && (

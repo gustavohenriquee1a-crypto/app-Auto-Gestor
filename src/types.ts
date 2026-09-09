@@ -144,7 +144,7 @@ export interface DespesaVeiculo {
   contaBancariaId?: string;
   contaBancariaNome?: string;
   // Gestão de Beneficiários e Comissões
-  tipoComissaoOrigem?: 'automatica_venda' | 'manual_usuario' | 'previsao_generica';
+  tipoComissaoOrigem?: 'automatica_venda' | 'manual_usuario' | 'previsao_generica' | 'automatica_gerencial' | 'manual_previsao';
   beneficiarioUsuarioId?: string;
   beneficiarioNome?: string;
   beneficiarioEmail?: string;

@@ -663,7 +663,12 @@ export default function App() {
         const diasEmPatio = Math.max(0, Math.round((new Date(dataVenda).getTime() - new Date(dataEntrada).getTime()) / (1000 * 60 * 60 * 24)));
         const totalDesp = calculateTotalDespesas(veiculoToEdit);
         const custoTotal = custoAquisicao + totalDesp;
-        const lucro = valorVenda - custoTotal;
+        const comissao = Number(vendaInfo.comissaoValor || 0);
+        const lucroBruto = valorVenda - custoTotal;
+        const lucroLiquido = lucroBruto - comissao;
+        const lucroHistoricoOriginal = veiculoToEdit.venda?.lucroHistoricoOriginal !== undefined
+          ? veiculoToEdit.venda.lucroHistoricoOriginal
+          : (veiculoToEdit.venda?.lucroLiquido !== undefined ? Number(veiculoToEdit.venda.lucroLiquido) : lucroLiquido);
 
         vendaGerada = {
           id: veiculoToEdit.venda?.id || `venda-${Date.now()}`,
@@ -675,8 +680,9 @@ export default function App() {
           totalDespesas: totalDesp,
           custoTotal,
           valorVenda,
-          lucroLiquido: lucro,
-          margemLucroPercent: custoTotal > 0 ? (lucro / custoTotal) * 100 : 0,
+          lucroLiquido,
+          lucroHistoricoOriginal,
+          margemLucroPercent: custoTotal > 0 ? (lucroLiquido / custoTotal) * 100 : 0,
           dataEntrada,
           dataVenda,
           diasEmPatio,

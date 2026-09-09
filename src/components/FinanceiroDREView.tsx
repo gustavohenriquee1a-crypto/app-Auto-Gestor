@@ -47,7 +47,9 @@ import {
   Target,
   Compass,
   ArrowLeftRight,
-  Search
+  Search,
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -84,7 +86,10 @@ import {
   calculateCustoTotal,
   calculateDRESummary,
   DRESummaryData,
-  DespesaCategoriaAgrupada
+  DespesaCategoriaAgrupada,
+  calcularLucroPorChassi,
+  DemonstrativoLucroChassi,
+  calculateComissoesVeiculo
 } from '../utils/formatters';
 import { 
   subscribeContasBancarias, 
@@ -642,6 +647,55 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
     };
   }, [vendas, veiculos, despesasFixas]);
 
+  // Auditoria de Lucro por Chassi (Histórico vs Recalculado e Eliminação de Dupla Dedução)
+  const demonstrativosChassi = useMemo(() => {
+    return vendas.map((v) => {
+      const veic = veiculos.find((x) => x.id === v.veiculoId || (x.chassi && v.chassi && x.chassi === v.chassi));
+      return {
+        venda: v,
+        veiculo: veic,
+        dre: calcularLucroPorChassi(veic, v),
+      };
+    });
+  }, [vendas, veiculos]);
+
+  const divergenciasDuplaDeducao = useMemo(() => {
+    return demonstrativosChassi.filter((item) => item.dre.possuiDivergenciaDuplaDeducao);
+  }, [demonstrativosChassi]);
+
+  const totalDivergenciaApurada = useMemo(() => {
+    return divergenciasDuplaDeducao.reduce((acc, item) => acc + item.dre.diferencaRecalculada, 0);
+  }, [divergenciasDuplaDeducao]);
+
+  const [filtroAuditoriaChassi, setFiltroAuditoriaChassi] = useState<'todos' | 'divergencias'>('todos');
+  const [sincronizandoVendaId, setSincronizandoVendaId] = useState<string | null>(null);
+
+  const handleSincronizarVendaAuditoria = async (item: typeof demonstrativosChassi[0]) => {
+    if (!onUpdateVenda) return;
+    try {
+      setSincronizandoVendaId(item.venda.id);
+      const vendaAtualizada: VendaVeiculo = {
+        ...item.venda,
+        lucroHistoricoOriginal: item.dre.lucroHistoricoOriginal,
+        lucroLiquido: item.dre.lucroLiquidoRecalculado,
+        auditoriaLucro: {
+          lucroHistoricoOriginal: item.dre.lucroHistoricoOriginal,
+          lucroRecalculado: item.dre.lucroLiquidoRecalculado,
+          diferencaRecalculada: item.dre.diferencaRecalculada,
+          motivoRecalculo: 'Segregação entre despesas operacionais e comissões da venda para eliminação de dupla dedução',
+          dataHoraRecalculo: new Date().toISOString(),
+          usuarioRecalculoId: currentUser?.id,
+          usuarioRecalculoNome: currentUser?.nome,
+        },
+      };
+      await onUpdateVenda(vendaAtualizada);
+    } catch (err) {
+      console.error('Erro ao sincronizar auditoria de venda:', err);
+    } finally {
+      setSincronizandoVendaId(null);
+    }
+  };
+
   // Fechamento Cego de Caixa Submissão
   const handleExecutarFechamentoCego = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1180,8 +1234,13 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                                 <td className="py-2.5 px-3 text-right font-mono text-slate-400">
                                   {formatCurrency(v.custoTotal)}
                                 </td>
-                                <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">
-                                  {formatCurrency(v.lucroLiquido)}
+                                <td className="py-2.5 px-3 text-right font-mono">
+                                  <span className="font-bold text-emerald-400 block">{formatCurrency(v.lucroLiquido)}</span>
+                                  {v.lucroHistoricoOriginal !== undefined && Math.abs(v.lucroHistoricoOriginal - (v.lucroLiquido || 0)) > 0.01 && (
+                                    <span className="text-[9px] text-amber-400/80 block line-through" title="Lucro histórico original antes do recálculo">
+                                      Hist: {formatCurrency(v.lucroHistoricoOriginal)}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="py-2.5 px-3 text-right font-mono text-purple-300 font-semibold">
                                   {adsTotalCarro > 0 ? formatCurrency(adsTotalCarro) : '-'}
@@ -1955,6 +2014,185 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                 )}
               </div>
             )}
+          </div>
+
+          {/* AUDITORIA DE LUCRO POR CHASSI: HISTÓRICO VS. RECALCULADO E ELIMINAÇÃO DE DUPLA DEDUÇÃO */}
+          <div className="bg-[#111116] rounded-3xl border border-white/5 p-5 space-y-4 shadow-none">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-white/5 pb-3">
+              <div>
+                <h4 className="font-extrabold text-white text-base flex items-center gap-2">
+                  <Scale size={18} className="text-amber-400" />
+                  Auditoria de Lucro por Chassi & Eliminação de Dupla Dedução
+                </h4>
+                <p className="text-xs text-slate-400">
+                  Conciliação analítica entre o Lucro Histórico gravado no fechamento e o Lucro Recalculado (garantindo que comissões não sejam deduzidas duplamente nem somadas às despesas de oficina/preparação).
+                </p>
+              </div>
+
+              {/* Badges de Auditoria */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] px-2.5 py-1 rounded-xl bg-white/5 text-slate-300 border border-white/10 font-mono">
+                  {demonstrativosChassi.length} Vendas Auditadas
+                </span>
+                {divergenciasDuplaDeducao.length > 0 ? (
+                  <span className="text-[11px] px-2.5 py-1 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold flex items-center gap-1.5">
+                    <AlertTriangle size={13} />
+                    {divergenciasDuplaDeducao.length} com Dupla Dedução Detectada (+{formatCurrency(totalDivergenciaApurada)})
+                  </span>
+                ) : (
+                  <span className="text-[11px] px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold flex items-center gap-1.5">
+                    <CheckCircle2 size={13} />
+                    100% Conciliado e Sem Dupla Dedução
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Filtros da Tabela de Auditoria */}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/5">
+                <button
+                  type="button"
+                  onClick={() => setFiltroAuditoriaChassi('todos')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    filtroAuditoriaChassi === 'todos'
+                      ? 'bg-purple-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Todas as Vendas ({demonstrativosChassi.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroAuditoriaChassi('divergencias')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                    filtroAuditoriaChassi === 'divergencias'
+                      ? 'bg-amber-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <AlertTriangle size={12} />
+                  Divergências Encontradas ({divergenciasDuplaDeducao.length})
+                </button>
+              </div>
+
+              {divergenciasDuplaDeducao.length > 0 && (
+                <span className="text-xs text-amber-400/90 font-medium">
+                  Clique em "Fixar Lucro Recalculado" para atualizar o registro da venda e estornar o efeito da dupla dedução no histórico.
+                </span>
+              )}
+            </div>
+
+            {/* Tabela de Conciliação */}
+            <div className="overflow-x-auto rounded-2xl border border-white/5">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-[#16171f] text-slate-400 uppercase font-semibold border-b border-white/5">
+                    <th className="py-3 px-3.5">Veículo / Chassi</th>
+                    <th className="py-3 px-3.5">Data Venda</th>
+                    <th className="py-3 px-3.5 text-right">Receita Líquida</th>
+                    <th className="py-3 px-3.5 text-right">Custo Chassi (CMV)</th>
+                    <th className="py-3 px-3.5 text-right">Comissões Venda</th>
+                    <th className="py-3 px-3.5 text-right">Lucro Histórico</th>
+                    <th className="py-3 px-3.5 text-right">Lucro Recalculado</th>
+                    <th className="py-3 px-3.5 text-center">Status / Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {(filtroAuditoriaChassi === 'divergencias' ? divergenciasDuplaDeducao : demonstrativosChassi).map((item) => {
+                    const { dre, venda } = item;
+                    const temDivergencia = dre.possuiDivergenciaDuplaDeducao;
+                    const isSincronizando = sincronizandoVendaId === venda.id;
+
+                    return (
+                      <tr key={venda.id} className="hover:bg-white/5 transition">
+                        <td className="py-3 px-3.5">
+                          <span className="font-bold text-white block">{venda.modelo}</span>
+                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
+                            <span>{venda.placa}</span>
+                            <span>•</span>
+                            <span className="truncate max-w-[120px]" title={venda.chassi || ''}>Chassi: {venda.chassi ? `...${venda.chassi.slice(-8)}` : 'N/A'}</span>
+                          </div>
+                        </td>
+
+                        <td className="py-3 px-3.5 text-slate-400 font-mono whitespace-nowrap">
+                          {formatDate(venda.dataVenda)}
+                        </td>
+
+                        <td className="py-3 px-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
+                          {formatCurrency(dre.receitaLiquidaVenda)}
+                        </td>
+
+                        <td className="py-3 px-3.5 text-right font-mono text-rose-300 whitespace-nowrap">
+                          <div>{formatCurrency(dre.custoTotalChassi)}</div>
+                          <div className="text-[10px] text-slate-500">
+                            Compra: {formatCurrency(dre.custoCompra)} | Ofic: {formatCurrency(dre.despesasOperacionais)}
+                          </div>
+                        </td>
+
+                        <td className="py-3 px-3.5 text-right font-mono text-purple-300 whitespace-nowrap">
+                          <div>{formatCurrency(dre.comissoesVenda)}</div>
+                          {dre.detalhesComissoes.length > 0 && (
+                            <div className="text-[10px] text-slate-500 truncate max-w-[140px]" title={dre.detalhesComissoes.map(c => `${c.nome}: ${formatCurrency(c.valor)}`).join(', ')}>
+                              {dre.detalhesComissoes.map(c => c.nome).join(', ')}
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="py-3 px-3.5 text-right font-mono whitespace-nowrap">
+                          <span className="text-slate-300 block font-semibold">{formatCurrency(dre.lucroHistoricoOriginal)}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {formatPercent(dre.valorVenda > 0 ? (dre.lucroHistoricoOriginal / dre.valorVenda) * 100 : 0)}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-3.5 text-right font-mono whitespace-nowrap">
+                          <span className={`font-bold block ${dre.lucroLiquidoRecalculado >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {formatCurrency(dre.lucroLiquidoRecalculado)}
+                          </span>
+                          <span className="text-[10px] text-emerald-400/80 font-mono">
+                            {formatPercent(dre.margemLiquidaRecalculadaPercent)}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-3.5 text-center whitespace-nowrap">
+                          {temDivergencia ? (
+                            <div className="flex flex-col items-center gap-1">
+                              <span className="px-2 py-0.5 rounded-md text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold flex items-center gap-1">
+                                <AlertTriangle size={10} /> +{formatCurrency(dre.diferencaRecalculada)}
+                              </span>
+                              {onUpdateVenda && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSincronizarVendaAuditoria(item)}
+                                  disabled={isSincronizando}
+                                  className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-[10px] flex items-center gap-1 transition shadow cursor-pointer"
+                                  title="Atualiza o registro da venda para eliminar a dupla dedução e documentar o recálculo"
+                                >
+                                  <RotateCcw size={10} className={isSincronizando ? 'animate-spin' : ''} />
+                                  {isSincronizando ? 'Gravando...' : 'Fixar Lucro'}
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold inline-flex items-center gap-1">
+                              <CheckCircle2 size={11} /> Conciliado
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {demonstrativosChassi.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="py-6 text-center text-slate-500">
+                        Nenhuma venda registrada para auditoria contábil.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {/* 3. TEXTOS EXPLICATIVOS E ORIENTAÇÃO GERENCIAL PARA O DIRETOR / GESTOR */}

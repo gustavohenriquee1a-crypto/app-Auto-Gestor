@@ -1,4 +1,4 @@
-import { Veiculo, AgingSummary, ContratoLocacao, PagamentoAluguel, ItemManutencaoPreventiva, DebitoMotorista, VendaVeiculo, DespesaFixa, CategoriaDespesa } from '../types';
+import { Veiculo, AgingSummary, ContratoLocacao, PagamentoAluguel, ItemManutencaoPreventiva, DebitoMotorista, VendaVeiculo, DespesaFixa, CategoriaDespesa, DespesaVeiculo } from '../types';
 
 /**
  * Categorias de Repasse de Lucro e Distribuições.
@@ -211,17 +211,274 @@ export const calculateAging = (veiculoOrData?: string | Partial<Veiculo>): Aging
 
 /**
  * Calcula apenas os custos genuínos de oficina, peças, recondicionamento e preparação do chassi.
- * Garante que NENHUMA despesa de repasse, sócios, pró-labore ou bônus seja somada ao custo do veículo.
+ * Garante que:
+ * 1. Despesas canceladas ou estornadas sejam desconsideradas.
+ * 2. Nenhuma despesa de repasse, sócios, pró-labore ou bônus de sócios seja somada ao custo do veículo.
+ * 3. Comissões de venda / gerenciais sejam segregadas e NUNCA somadas aqui, eliminando a dupla dedução no DRE e lucro por chassi.
  */
-export const calculateTotalDespesas = (veiculo: Veiculo): number => {
-  if (!veiculo.despesas || veiculo.despesas.length === 0) return 0;
-  return veiculo.despesas
-    .filter((curr) => !isCategoriaRepasseDistribuicao(curr.categoria))
-    .reduce((acc, curr) => acc + (curr.valor || 0), 0);
+export const calculateTotalDespesas = (
+  input: Veiculo | DespesaVeiculo[] | { despesas?: DespesaVeiculo[] } | undefined | null
+): number => {
+  if (!input) return 0;
+  const despesas = Array.isArray(input) ? input : (input.despesas || []);
+  if (!despesas || despesas.length === 0) return 0;
+  return despesas
+    .filter((curr) => {
+      if (!curr) return false;
+      // Excluir despesas canceladas ou estornadas
+      if (
+        curr.statusPagamento === 'Cancelada' ||
+        curr.statusPagamento === 'Estornada' ||
+        curr.statusEstorno === 'Estornado'
+      ) {
+        return false;
+      }
+      // Excluir repasses e distribuições de sócios
+      if (isCategoriaRepasseDistribuicao(curr.categoria)) {
+        return false;
+      }
+      // Segregação estrita: comissões comerciais de venda/gestor não são custos operacionais de preparação do chassi
+      if (
+        curr.categoria === 'Comissão' ||
+        curr.tipoComissaoOrigem === 'manual_previsao' ||
+        curr.tipoComissaoOrigem === 'automatica_venda' ||
+        curr.tipoComissaoOrigem === 'automatica_gerencial' ||
+        curr.descricao?.toLowerCase().includes('comissão da venda') ||
+        curr.descricao?.toLowerCase().includes('comissão administrativa')
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .reduce((acc, curr) => acc + (Number(curr.valor) || 0), 0);
 };
 
 export const calculateCustoTotal = (veiculo: Veiculo): number => {
-  return (veiculo.custoAquisicao || 0) + calculateTotalDespesas(veiculo);
+  return (Number(veiculo.custoAquisicao) || 0) + calculateTotalDespesas(veiculo);
+};
+
+export interface ResumoComissoesVeiculo {
+  totalComissoes: number;
+  comissaoVendedor: number;
+  comissaoGerencial: number;
+  itensDetalhados: Array<{ nome: string; papel?: string; valor: number }>;
+}
+
+/**
+ * Totaliza as comissões comerciais de vendedores e gestores de um veículo/venda,
+ * mantendo a segregação estrita dos custos operacionais de preparação do chassi.
+ */
+export const calculateComissoesVeiculo = (
+  veiculo?: Veiculo | null,
+  venda?: VendaVeiculo | null
+): ResumoComissoesVeiculo => {
+  const v = venda || veiculo?.venda;
+  let totalComissoes = 0;
+  let comissaoVendedor = 0;
+  let comissaoGerencial = 0;
+  const itensDetalhados: Array<{ nome: string; papel?: string; valor: number }> = [];
+
+  if (v?.comissoesDetalhadas && v.comissoesDetalhadas.length > 0) {
+    v.comissoesDetalhadas.forEach((item) => {
+      if (!item.isento) {
+        const val = Number(item.valorCalculado) || 0;
+        totalComissoes += val;
+        if (item.beneficiarioPapel === 'Gerente' || item.usuarioCargo?.toLowerCase().includes('gerente')) {
+          comissaoGerencial += val;
+        } else {
+          comissaoVendedor += val;
+        }
+        itensDetalhados.push({
+          nome: item.usuarioNome || 'Beneficiário',
+          papel: item.beneficiarioPapel || item.usuarioCargo || 'Vendedor',
+          valor: val,
+        });
+      }
+    });
+  } else if (v) {
+    comissaoVendedor = Number(v.comissaoValor || 0);
+    comissaoGerencial = Number(v.comissaoGerencialValor || 0);
+    totalComissoes = comissaoVendedor + comissaoGerencial;
+    if (comissaoVendedor > 0) {
+      itensDetalhados.push({
+        nome: v.vendedorNome || 'Vendedor',
+        papel: 'Vendedor',
+        valor: comissaoVendedor,
+      });
+    }
+    if (comissaoGerencial > 0) {
+      itensDetalhados.push({
+        nome: v.comissaoGerencialBeneficiarioNome || 'Gestão / Overriding',
+        papel: 'Gerente',
+        valor: comissaoGerencial,
+      });
+    }
+  } else if (veiculo?.despesas && veiculo.despesas.length > 0) {
+    veiculo.despesas.forEach((d) => {
+      if (
+        d.statusPagamento !== 'Cancelada' &&
+        d.statusPagamento !== 'Estornada' &&
+        d.statusEstorno !== 'Estornado' &&
+        (d.categoria === 'Comissão' ||
+          d.tipoComissaoOrigem === 'manual_previsao' ||
+          d.tipoComissaoOrigem === 'automatica_venda' ||
+          d.tipoComissaoOrigem === 'automatica_gerencial')
+      ) {
+        const val = Number(d.valor) || 0;
+        totalComissoes += val;
+        if (d.tipoComissaoOrigem === 'automatica_gerencial') {
+          comissaoGerencial += val;
+        } else {
+          comissaoVendedor += val;
+        }
+        itensDetalhados.push({
+          nome: d.beneficiarioNome || d.fornecedor || 'Comissão Prevista',
+          papel: d.tipoComissaoOrigem === 'automatica_gerencial' ? 'Gerente' : 'Vendedor',
+          valor: val,
+        });
+      }
+    });
+  }
+
+  return {
+    totalComissoes: Number(totalComissoes.toFixed(2)),
+    comissaoVendedor: Number(comissaoVendedor.toFixed(2)),
+    comissaoGerencial: Number(comissaoGerencial.toFixed(2)),
+    itensDetalhados,
+  };
+};
+
+export interface DemonstrativoLucroChassi {
+  // Identificação
+  veiculoId: string;
+  chassi: string;
+  placa: string;
+  modelo: string;
+  statusVeiculo: string;
+  isVendido: boolean;
+
+  // 1. Receitas
+  valorVenda: number;
+  retornoTac: number;
+  taxasMaquininhas: number;
+  receitaLiquidaVenda: number;
+
+  // 2. Custos do Veículo (CMV)
+  custoCompra: number;
+  despesasOperacionais: number; // Apenas preparação, peças, oficina, laudos - SEM comissões, SEM repasses, SEM canceladas/estornadas
+  custoTotalChassi: number; // custoCompra + despesasOperacionais
+
+  // 3. Lucro Bruto
+  lucroBruto: number; // receitaLiquidaVenda - custoTotalChassi
+  margemBrutaPercent: number;
+
+  // 4. Deduções Comerciais e de Marketing Pós-Margem
+  comissoesVenda: number;
+  detalhesComissoes: Array<{ nome: string; papel?: string; valor: number }>;
+  despesasMarketingPosVenda: number;
+
+  // 5. Lucro Líquido Real Recalculado
+  lucroLiquidoRecalculado: number;
+  margemLiquidaRecalculadaPercent: number;
+
+  // 6. Auditoria de Lucro Histórico vs Recalculado
+  lucroHistoricoOriginal: number;
+  diferencaRecalculada: number;
+  possuiDivergenciaDuplaDeducao: boolean;
+  motivoDivergencia?: string;
+}
+
+/**
+ * Motor canônico de apuração de Lucro por Chassi (DRE Unitário).
+ * Segrega custos operacionais de preparação de comissões comerciais,
+ * eliminando duplicidade de dedução e permitindo conciliação entre lucro histórico original e recalculado.
+ */
+export const calcularLucroPorChassi = (
+  veiculo: Veiculo,
+  vendaOverride?: VendaVeiculo | null,
+  precoVendaAtualDefault?: number
+): DemonstrativoLucroChassi => {
+  const venda = vendaOverride || veiculo.venda;
+  const isVendido = veiculo.status === 'Vendido' || Boolean(venda);
+
+  const valorVenda = Number(venda?.valorVenda ?? (precoVendaAtualDefault || veiculo.valorVendaSugerido || 0));
+  const retornoTac = Number(
+    venda?.financiamentoDetalhes?.retornoComissaoBanco ??
+    venda?.retornoFinanciamentoTac ??
+    0
+  );
+  const taxasMaquininhas = Number(
+    venda?.taxasMaquininhaTotal ??
+    venda?.composicaoPagamento?.reduce((acc, p) => acc + (Number(p.taxaValor) || 0), 0) ??
+    0
+  );
+  const receitaLiquidaVenda = Number((valorVenda + retornoTac - taxasMaquininhas).toFixed(2));
+
+  const custoCompra = Number(venda?.valorCompra ?? veiculo.custoAquisicao ?? 0);
+  const despesasOperacionais = calculateTotalDespesas(veiculo);
+  const custoTotalChassi = Number((custoCompra + despesasOperacionais).toFixed(2));
+
+  const lucroBruto = Number((receitaLiquidaVenda - custoTotalChassi).toFixed(2));
+  const margemBrutaPercent = custoTotalChassi > 0 ? Number(((lucroBruto / custoTotalChassi) * 100).toFixed(2)) : 0;
+
+  const { totalComissoes, itensDetalhados } = calculateComissoesVeiculo(veiculo, venda);
+  const despesasMarketingPosVenda = Number(venda?.despesaMarketingAplicadaPosVenda || 0);
+
+  const lucroLiquidoRecalculado = Number(
+    (lucroBruto - totalComissoes - despesasMarketingPosVenda).toFixed(2)
+  );
+  const margemLiquidaRecalculadaPercent = custoTotalChassi > 0
+    ? Number(((lucroLiquidoRecalculado / custoTotalChassi) * 100).toFixed(2))
+    : 0;
+
+  // Apuração do Lucro Histórico Original vs Recalculado
+  let lucroHistoricoOriginal = lucroLiquidoRecalculado;
+  if (isVendido && venda) {
+    if (venda.lucroHistoricoOriginal !== undefined) {
+      lucroHistoricoOriginal = Number(venda.lucroHistoricoOriginal);
+    } else if (venda.lucroLiquido !== undefined) {
+      lucroHistoricoOriginal = Number(venda.lucroLiquido);
+    }
+  }
+
+  const diferencaRecalculada = Number((lucroLiquidoRecalculado - lucroHistoricoOriginal).toFixed(2));
+  const possuiDivergenciaDuplaDeducao = isVendido && Math.abs(diferencaRecalculada) >= 0.01;
+
+  let motivoDivergencia = '';
+  if (possuiDivergenciaDuplaDeducao) {
+    if (diferencaRecalculada > 0) {
+      motivoDivergencia = `Eliminação de dupla dedução: o lucro histórico anterior deduzia comissões duplicadamente dos custos de recondicionamento. Ajuste: +${formatCurrency(diferencaRecalculada)}.`;
+    } else {
+      motivoDivergencia = `Ajuste contábil de apuração: inclusão de custos operacionais ou comissões posteriores. Ajuste: ${formatCurrency(diferencaRecalculada)}.`;
+    }
+  }
+
+  return {
+    veiculoId: veiculo.id,
+    chassi: veiculo.chassi,
+    placa: veiculo.placa,
+    modelo: veiculo.modelo,
+    statusVeiculo: veiculo.status,
+    isVendido,
+    valorVenda,
+    retornoTac,
+    taxasMaquininhas,
+    receitaLiquidaVenda,
+    custoCompra,
+    despesasOperacionais,
+    custoTotalChassi,
+    lucroBruto,
+    margemBrutaPercent,
+    comissoesVenda: totalComissoes,
+    detalhesComissoes: itensDetalhados,
+    despesasMarketingPosVenda,
+    lucroLiquidoRecalculado,
+    margemLiquidaRecalculadaPercent,
+    lucroHistoricoOriginal,
+    diferencaRecalculada,
+    possuiDivergenciaDuplaDeducao,
+    motivoDivergencia,
+  };
 };
 
 export const checkRevisaoNecessaria = (veiculo: Veiculo) => {
@@ -559,7 +816,7 @@ export const calculateDRESummary = (
   // 4. CMV (Custo das Mercadorias Vendidas - Aquisição, Oficina/Peças e Comissões)
   const cmvCompraVendidos = vendasFiltradas.reduce((sum, v) => sum + (v.valorCompra || 0), 0);
   
-  // Recondicionamento: assegura que repasses/distribuições NÃO entrem no custo de oficina
+  // Recondicionamento: assegura que repasses/distribuições e comissões NÃO entrem no custo de oficina
   const cmvRecondicionamentoVendidos = vendasFiltradas.reduce((sum, v) => {
     const veic = veiculos.find((x) => x.id === v.veiculoId || (x.chassi && v.chassi && x.chassi === v.chassi));
     if (veic) {
@@ -568,7 +825,12 @@ export const calculateDRESummary = (
     return sum + (v.totalDespesas || 0);
   }, 0);
 
-  const cmvComissoesVendidos = vendasFiltradas.reduce((sum, v) => sum + (v.comissaoValor || 0), 0);
+  // Comissões: totaliza vendas e gerência de forma segregada, garantindo zero sobreposição com oficina
+  const cmvComissoesVendidos = vendasFiltradas.reduce((sum, v) => {
+    const veic = veiculos.find((x) => x.id === v.veiculoId || (x.chassi && v.chassi && x.chassi === v.chassi));
+    const { totalComissoes } = calculateComissoesVeiculo(veic, v);
+    return sum + totalComissoes;
+  }, 0);
   const cmvTotal = cmvCompraVendidos + cmvRecondicionamentoVendidos + cmvComissoesVendidos;
 
   // Lucro Bruto Operacional (Margem Bruta do Veículo)

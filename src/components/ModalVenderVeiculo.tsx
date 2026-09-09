@@ -596,22 +596,28 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
 
         let valorCalculado = 0;
         let detalheCalculo = '';
+        let baseCalculo = 0;
+        const aguardaLiquidacaoTac = r.tipoBase === 'Retorno TAC';
 
         if (!gatilhoAtendido) {
           valorCalculado = 0;
           detalheCalculo = `Inativo (${motivoNaoAtendido})`;
         } else {
           if (r.tipoBase === 'Fixo por Carro') {
+            baseCalculo = Number(r.valorOrPercentual);
             valorCalculado = r.formato === 'Valor Fixo' ? Number(r.valorOrPercentual) : Number(((valorVenda * r.valorOrPercentual) / 100).toFixed(2));
             detalheCalculo = r.formato === 'Valor Fixo' ? `${formatCurrency(r.valorOrPercentual)} fixo` : `${r.valorOrPercentual}% sobre venda (${formatCurrency(valorVenda)})`;
           } else if (r.tipoBase === 'Retorno TAC') {
+            baseCalculo = Number(totalRetornoTacBancos);
             valorCalculado = r.formato === 'Percentual' ? Number(((totalRetornoTacBancos * r.valorOrPercentual) / 100).toFixed(2)) : Number(r.valorOrPercentual);
             detalheCalculo = r.formato === 'Percentual' ? `${r.valorOrPercentual}% de ${formatCurrency(totalRetornoTacBancos)} TAC` : `${formatCurrency(r.valorOrPercentual)} fixo TAC`;
           } else if (r.tipoBase === 'Lucro do Veículo') {
             const baseLucro = Math.max(0, lucroBrutoSemTac);
+            baseCalculo = baseLucro;
             valorCalculado = r.formato === 'Percentual' ? Number(((baseLucro * r.valorOrPercentual) / 100).toFixed(2)) : Number(r.valorOrPercentual);
             detalheCalculo = r.formato === 'Percentual' ? `${r.valorOrPercentual}% s/ lucro (${formatCurrency(baseLucro)})` : `${formatCurrency(r.valorOrPercentual)} fixo`;
           } else if (r.tipoBase === 'Venda Bruta') {
+            baseCalculo = Number(valorVenda);
             valorCalculado = r.formato === 'Percentual' ? Number(((valorVenda * r.valorOrPercentual) / 100).toFixed(2)) : Number(r.valorOrPercentual);
             detalheCalculo = `${r.valorOrPercentual}% sobre venda (${formatCurrency(valorVenda)})`;
           }
@@ -625,6 +631,8 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
           condicaoGatilho: r.condicaoGatilho,
           descricao: r.descricao,
           gatilhoAtendido,
+          baseCalculo,
+          aguardaLiquidacaoTac,
           valorCalculado,
           detalheCalculo,
         };
@@ -689,27 +697,35 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
     const list: ComissaoDetalhadaVenda[] = [];
     comissoesUsuariosCalculadas.forEach((u) => {
       u.regrasAvaliadas.forEach((r) => {
+        const aguardaTac = r.aguardaLiquidacaoTac;
         list.push({
-          id: `com_${u.usuarioId}_${r.regraId}`,
+          id: `com_${veiculo.id}_${u.usuarioId}_${r.regraId}`,
+          veiculoId: veiculo.id,
+          placa: veiculo.placa,
           usuarioId: u.usuarioId,
           usuarioNome: u.usuarioNome,
           usuarioEmail: u.usuarioEmail,
           usuarioCargo: u.usuarioCargo,
           usuarioRole: u.usuarioRole,
+          beneficiarioPapel: u.isSeller ? 'Vendedor' : (u.usuarioRole === 'admin' ? 'Gerente' : 'Responsavel_Financiamento'),
           regraId: r.regraId,
           tipoBase: r.tipoBase,
           formato: r.formato,
           valorOrPercentual: r.valorOrPercentual,
           condicaoGatilho: r.condicaoGatilho,
+          baseCalculo: r.baseCalculo,
           valorCalculado: u.isento ? 0 : r.valorCalculado,
           isento: u.isento,
           motivoIsencao: u.isento ? 'Isentado nesta venda' : undefined,
+          aguardaLiquidacaoTac: aguardaTac,
+          statusLiberacao: aguardaTac ? 'Aguardando_Condicao' : 'Liberada_Para_Pagamento',
+          statusPagamento: 'Pendente',
           status: 'Pendente',
         });
       });
     });
     return list;
-  }, [comissoesUsuariosCalculadas]);
+  }, [comissoesUsuariosCalculadas, veiculo.id, veiculo.placa]);
 
   // Alternar isenção do usuário
   const handleToggleIsencao = (usuarioId: string) => {
@@ -924,8 +940,15 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
       observacoes: terceiroObservacoes.trim() || undefined,
     } : undefined;
 
+    const novaVendaId = `venda-${Date.now()}`;
+    const comissoesComVendaId = comissoesDetalhadasParaVenda.map((c) => ({
+      ...c,
+      id: `com_${novaVendaId}_${c.usuarioId}_${c.regraId || 'reg'}`,
+      vendaId: novaVendaId,
+    }));
+
     const novaVenda: VendaVeiculo = {
-      id: `venda-${Date.now()}`,
+      id: novaVendaId,
       veiculoId: veiculo.id,
       placa: veiculo.placa,
       modelo: veiculo.modelo,
@@ -1028,7 +1051,7 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
       comissaoValor: Number(totalComissoesAtivasValor),
       comissaoAjustadaManualmente,
       comissaoStatus: 'Pendente',
-      comissoesDetalhadas: comissoesDetalhadasParaVenda,
+      comissoesDetalhadas: comissoesComVendaId,
 
       // Comissão Gerencial / Overriding (Admin / Gestor)
       comissaoGerencialAtiva: comissaoGerencialAtiva && Number(comissaoGerencialValor) > 0,

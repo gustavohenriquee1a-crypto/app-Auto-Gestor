@@ -341,8 +341,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
     }
   };
 
-  const handleQuitarDespesaDirect = (despesaId: string) => {
-    if (!onUpdateVeiculo) return;
+  const handleQuitarDespesaDirect = async (despesaId: string) => {
     const updatedDespesas = (veiculo.despesas || []).map((d) => {
       if (d.id === despesaId) {
         return {
@@ -354,10 +353,16 @@ export const DossieModal: React.FC<DossieModalProps> = ({
       }
       return d;
     });
-    onUpdateVeiculo({
+
+    const veiculoAtualizado: Veiculo = {
       ...veiculo,
       despesas: updatedDespesas,
-    });
+    };
+
+    if (onUpdateVeiculo) {
+      onUpdateVeiculo(veiculoAtualizado);
+    }
+    await saveVeiculoFirestore(veiculoAtualizado);
   };
 
   // Group expenses by category for quick insights
@@ -2160,6 +2165,73 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                           Regra de Contabilidade & Atribuição de Tráfego:
                         </strong>
                         O valor de tráfego pago lançado neste chassi (<strong>{formatCurrency(mktPosVenda)}</strong>) é descontado unicamente do <strong>Lucro Líquido Real da Operação</strong> e entra no DRE geral da empresa. A comissão dos vendedores ({formatCurrency(comissaoEfetiva)}) foi mantida e fixada pelo fechamento da venda.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quadro Detalhado de Comissões por Regra / Usuário */}
+                  {isVendidoOperacao && vendaCorrespondente?.comissoesDetalhadas && vendaCorrespondente.comissoesDetalhadas.length > 0 && (
+                    <div className="mt-4 p-4 rounded-xl bg-[#16171f] border border-amber-500/20 space-y-3">
+                      <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                        <div className="flex items-center gap-2">
+                          <Shield size={15} className="text-amber-400" />
+                          <h4 className="font-bold text-xs text-white">Comissões Detalhadas da Venda por Beneficiário</h4>
+                        </div>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                          {vendaCorrespondente.comissoesDetalhadas.length} item(ns) auditados
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {vendaCorrespondente.comissoesDetalhadas.map((comItem) => (
+                          <div
+                            key={comItem.id}
+                            className="p-2.5 rounded-lg bg-black/40 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                          >
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-200">{comItem.usuarioNome}</span>
+                                {comItem.beneficiarioPapel && (
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/5 text-slate-400">
+                                    {comItem.beneficiarioPapel}
+                                  </span>
+                                )}
+                                {comItem.isento && (
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300">
+                                    Isento nesta venda
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-400 mt-0.5">
+                                Base: <strong className="text-slate-300">{comItem.tipoBase}</strong> • Regra: {comItem.formato === 'Percentual' ? `${comItem.valorOrPercentual}%` : formatCurrency(comItem.valorOrPercentual)}
+                                {comItem.baseCalculo !== undefined && comItem.baseCalculo > 0 && ` (Base: ${formatCurrency(comItem.baseCalculo)})`}
+                                {comItem.condicaoGatilho && comItem.condicaoGatilho !== 'Sempre' && ` • Gatilho: ${comItem.condicaoGatilho}`}
+                              </p>
+                            </div>
+
+                            <div className="flex sm:flex-col items-end justify-between sm:justify-center">
+                              <span className={`font-mono font-bold ${comItem.isento ? 'text-slate-500 line-through' : 'text-amber-400'}`}>
+                                {formatCurrency(comItem.valorCalculado)}
+                              </span>
+                              <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
+                                <span className={`px-1.5 py-0.2 rounded font-mono ${
+                                  comItem.statusLiberacao === 'Liberada_Para_Pagamento'
+                                    ? 'bg-emerald-500/10 text-emerald-400'
+                                    : 'bg-amber-500/10 text-amber-400'
+                                }`}>
+                                  {comItem.statusLiberacao === 'Liberada_Para_Pagamento' ? 'Liberada' : 'Aguardando'}
+                                </span>
+                                <span className={`px-1.5 py-0.2 rounded font-mono ${
+                                  comItem.statusPagamento === 'Pago'
+                                    ? 'bg-blue-500/10 text-blue-400'
+                                    : 'bg-slate-500/10 text-slate-400'
+                                }`}>
+                                  {comItem.statusPagamento || comItem.status || 'Pendente'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}

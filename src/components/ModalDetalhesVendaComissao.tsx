@@ -20,6 +20,7 @@ import {
   Layers,
   ArrowRight,
   Sparkles,
+  Shield,
   ShieldCheck,
   TrendingUp,
   Tag,
@@ -864,6 +865,74 @@ export const ModalDetalhesVendaComissao: React.FC<ModalDetalhesVendaComissaoProp
               <div className="p-3 bg-[#111116] rounded-xl border border-white/5 text-[11px]">
                 <strong className="text-slate-300 block mb-1">Observações da Venda / Fechamento:</strong>
                 <p className="text-slate-400 whitespace-pre-line">{venda.observacoesVenda}</p>
+              </div>
+            )}
+
+            {/* Quadro Detalhado de Comissões por Regra / Usuário da Venda */}
+            {venda.comissoesDetalhadas && venda.comissoesDetalhadas.length > 0 && (
+              <div className="p-4 bg-[#111116] rounded-xl border border-amber-500/20 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                  <div className="flex items-center gap-2">
+                    <Shield size={16} className="text-amber-400" />
+                    <h5 className="font-bold text-xs text-white">Comissões Detalhadas & Rastreabilidade de Regras</h5>
+                  </div>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                    {venda.comissoesDetalhadas.length} item(ns)
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {venda.comissoesDetalhadas.map((comItem) => (
+                    <div
+                      key={comItem.id}
+                      className="p-3 rounded-lg bg-black/40 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white text-xs">{comItem.usuarioNome}</span>
+                          {comItem.beneficiarioPapel && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-300">
+                              {comItem.beneficiarioPapel}
+                            </span>
+                          )}
+                          {comItem.isento && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
+                              Isento nesta venda
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Base: <strong className="text-slate-200">{comItem.tipoBase}</strong> • Regra: {comItem.formato === 'Percentual' ? `${comItem.valorOrPercentual}%` : formatCurrency(comItem.valorOrPercentual)}
+                          {comItem.baseCalculo !== undefined && comItem.baseCalculo > 0 && ` (Base: ${formatCurrency(comItem.baseCalculo)})`}
+                          {comItem.condicaoGatilho && comItem.condicaoGatilho !== 'Sempre' && ` • Gatilho: ${comItem.condicaoGatilho}`}
+                          {comItem.snapshotConfirmacaoTac && ` • TAC Confirmado (${formatCurrency(comItem.snapshotConfirmacaoTac.tacLiquidoEfetivo)})`}
+                        </p>
+                      </div>
+
+                      <div className="flex sm:flex-col items-end justify-between sm:justify-center">
+                        <span className={`font-mono text-sm font-bold ${comItem.isento ? 'text-slate-500 line-through' : 'text-amber-400'}`}>
+                          {formatCurrency(comItem.valorCalculado)}
+                        </span>
+                        <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
+                          <span className={`px-2 py-0.5 rounded font-mono font-bold ${
+                            comItem.statusLiberacao === 'Liberada_Para_Pagamento'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                          }`}>
+                            {comItem.statusLiberacao === 'Liberada_Para_Pagamento' ? 'Liberada' : 'Aguardando'}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded font-mono font-bold ${
+                            comItem.statusPagamento === 'Pago'
+                              ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                              : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'
+                          }`}>
+                            {comItem.statusPagamento || comItem.status || 'Pendente'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

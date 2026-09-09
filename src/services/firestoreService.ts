@@ -3,12 +3,14 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  updateDoc,
   onSnapshot,
   getDocs,
   getDoc,
   writeBatch,
   query,
   orderBy,
+  runTransaction,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import {
@@ -20,6 +22,7 @@ import {
   BancoParceiro,
   ConfiguracaoLoja,
   ContaBancariaCaixa,
+  ConferenciaSaldoBancario,
   MovimentacaoConta,
   DespesaVeiculo,
   CategoriaFornecedor,
@@ -28,6 +31,7 @@ import {
   PagamentoAluguel,
   ContratoLocacao,
   LancamentoContaMotorista,
+  ComissaoDetalhadaVenda,
 } from '../types';
 import { initialVeiculos, initialVendas, initialDespesasFixas } from '../data/initialData';
 
@@ -1372,6 +1376,30 @@ export const DEFAULT_CONTAS_BANCARIAS: ContaBancariaCaixa[] = [
 ];
 
 /**
+ * Normaliza um objeto de ContaBancariaCaixa do Firestore garantindo coerência entre
+ * saldoConferido, saldoAtualOperacional, saldo e saldoAtual sem sobrescrever dados do banco
+ */
+export function normalizeContaBancaria(data: any, docId?: string): ContaBancariaCaixa {
+  const id = docId || data.id || `conta_${Date.now()}`;
+  // O saldo numérico base de referência
+  const saldoBase = Number(data.saldoAtualOperacional ?? data.saldoAtual ?? data.saldo ?? 0);
+  const saldoConferido = data.saldoConferido !== undefined && data.saldoConferido !== null 
+    ? Number(data.saldoConferido) 
+    : undefined;
+
+  return {
+    ...data,
+    id,
+    saldoConferido,
+    dataHoraUltimaConferencia: data.dataHoraUltimaConferencia || undefined,
+    saldoAtualOperacional: saldoBase,
+    saldo: saldoBase,
+    saldoAtual: saldoBase,
+    historicoConferencias: Array.isArray(data.historicoConferencias) ? data.historicoConferencias : [],
+  };
+}
+
+/**
  * Escuta em tempo real a lista de Contas Bancárias & Caixas no Firestore
  */
 export function subscribeContasBancarias(
@@ -1385,30 +1413,24 @@ export function subscribeContasBancarias(
       if (!snapshot.empty) {
         const contas = snapshot.docs
           .filter((docSnap) => docSnap != null && docSnap.exists())
-          .map((docSnap) => {
-            const data = (docSnap.data() || {}) as any;
-            return {
-              ...data,
-              id: docSnap.id,
-              saldo: Number(data.saldo) || 0,
-            } as ContaBancariaCaixa;
-          });
+          .map((docSnap) => normalizeContaBancaria(docSnap.data() || {}, docSnap.id));
         onData(contas);
       } else {
-        // Se ainda não houver contas no Firestore, carrega do localStorage ou inicial padrão
+        // Se a coleção estiver vazia, apenas notifica array vazio ou cache local
         try {
           const localSaved = localStorage.getItem('autogestor_contas_bancarias');
           if (localSaved) {
             const parsed = JSON.parse(localSaved);
             if (Array.isArray(parsed) && parsed.length > 0) {
-              onData(parsed);
+              onData(parsed.map(c => normalizeContaBancaria(c)));
               return;
             }
           }
         } catch (e) {
           console.error(e);
         }
-        onData(DEFAULT_CONTAS_BANCARIAS);
+        // Não popula automaticamente com DEFAULT_CONTAS_BANCARIAS em produção para não gerar dados falsos
+        onData([]);
       }
     },
     (error) => {
@@ -1419,7 +1441,7 @@ export function subscribeContasBancarias(
 }
 
 /**
- * Salva ou atualiza uma Conta Bancária no Firestore
+ * Salva ou atualiza uma Conta Bancária no Firestore garantindo espelhos persistidos
  */
 export async function saveContaBancariaFirestore(
   conta: ContaBancariaCaixa
@@ -1427,9 +1449,14 @@ export async function saveContaBancariaFirestore(
   try {
     const id = conta.id || `conta_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     const docRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, id);
+    const saldoFinal = Number(conta.saldoAtualOperacional ?? conta.saldo ?? conta.saldoAtual ?? 0);
+
     const clean = JSON.parse(JSON.stringify({
       ...conta,
       id,
+      saldoAtualOperacional: saldoFinal,
+      saldo: saldoFinal,
+      saldoAtual: saldoFinal,
       updatedAt: new Date().toISOString(),
     }));
     await setDoc(docRef, clean, { merge: true });
@@ -1437,6 +1464,96 @@ export async function saveContaBancariaFirestore(
     console.error('Erro ao salvar conta bancária no Firestore:', error);
     throw error;
   }
+}
+
+/**
+ * Registra formalmente a Conferência de Saldo Bancário pelo Administrador
+ * Este é o ÚNICO fluxo que define/atualiza saldoConferido e dataHoraUltimaConferencia.
+ */
+export async function registrarConferenciaSaldoBancarioFirestore(params: {
+  contaId: string;
+  saldoConferidoReal: number;
+  dataHoraConferencia?: string;
+  motivoAjuste?: string;
+  usuarioId: string;
+  usuarioNome: string;
+}): Promise<ContaBancariaCaixa> {
+  const { contaId, saldoConferidoReal, dataHoraConferencia, motivoAjuste, usuarioId, usuarioNome } = params;
+  const docRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaId);
+  const nowIso = dataHoraConferencia || new Date().toISOString();
+
+  return await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(docRef);
+    if (!snap.exists()) {
+      throw new Error(`Conta bancária ${contaId} não encontrada para conferência de saldo.`);
+    }
+
+    const data = snap.data();
+    const saldoAnterior = Number(data.saldoAtualOperacional ?? data.saldo ?? 0);
+    const diferenca = saldoConferidoReal - saldoAnterior;
+
+    const novaConferencia: ConferenciaSaldoBancario = {
+      id: `conf_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      contaId,
+      contaNome: data.nome || 'Conta',
+      dataHoraConferencia: nowIso,
+      saldoConferido: saldoConferidoReal,
+      saldoAnterior,
+      diferencaAjuste: diferenca,
+      motivoAjuste: motivoAjuste || 'Conferência periódica de saldo real',
+      usuarioId,
+      usuarioNome,
+      createdAt: new Date().toISOString(),
+    };
+
+    const historicoAtual = Array.isArray(data.historicoConferencias) ? data.historicoConferencias : [];
+    const novoHistorico = [novaConferencia, ...historicoAtual];
+
+    // Atualiza a conta com o novo ponto de corte e espelhos explícitos
+    transaction.update(docRef, {
+      saldoConferido: saldoConferidoReal,
+      dataHoraUltimaConferencia: nowIso,
+      saldoAtualOperacional: saldoConferidoReal,
+      saldo: saldoConferidoReal,
+      saldoAtual: saldoConferidoReal,
+      historicoConferencias: novoHistorico,
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Se houve ajuste de saldo, registra a movimentação auditada de conciliação
+    if (diferenca !== 0) {
+      const movAjusteRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, `mov_ajuste_${novaConferencia.id}`);
+      const movAjuste: MovimentacaoConta = {
+        id: `mov_ajuste_${novaConferencia.id}`,
+        idempotencyKey: `idemp_ajuste_conf_${novaConferencia.id}`,
+        contaId,
+        contaNome: data.nome || 'Conta',
+        tipo: diferenca > 0 ? 'Receita' : 'Despesa',
+        categoria: 'Ajuste de Conciliação Bancária',
+        valor: Math.abs(diferenca),
+        data: nowIso.split('T')[0],
+        descricao: `[Ajuste de Conciliação] ${motivoAjuste || 'Conferência bancária'} (Dif: R$ ${diferenca.toFixed(2)})`,
+        formaPagamento: 'Ajuste Contábil',
+        criadoPor: usuarioNome,
+        createdAt: nowIso,
+        afetaSaldoAtual: false, // O saldo da conta já foi setado diretamente para saldoConferidoReal
+        naturezaTemporal: 'ajuste_conciliacao',
+        statusConciliacao: 'conciliado_saldo_conferido',
+        tipoAjuste: 'Ajuste_Conciliacao',
+      };
+      transaction.set(movAjusteRef, movAjuste);
+    }
+
+    return normalizeContaBancaria({
+      ...data,
+      saldoConferido: saldoConferidoReal,
+      dataHoraUltimaConferencia: nowIso,
+      saldoAtualOperacional: saldoConferidoReal,
+      saldo: saldoConferidoReal,
+      saldoAtual: saldoConferidoReal,
+      historicoConferencias: novoHistorico,
+    }, contaId);
+  });
 }
 
 /**
@@ -1588,178 +1705,149 @@ export async function executarTransferenciaEntreContasFirestore(
     throw new Error('Informe o nome ou instituição do terceiro favorecido.');
   }
 
-  // 1. Obter todas as contas bancárias atuais (Base Padrão + Cache Local + Firestore)
-  const contasMap = new Map<string, ContaBancariaCaixa>();
-  DEFAULT_CONTAS_BANCARIAS.forEach((c) => contasMap.set(c.id, { ...c }));
-
-  try {
-    const localSaved = localStorage.getItem('autogestor_contas_bancarias');
-    if (localSaved) {
-      const parsed = JSON.parse(localSaved);
-      if (Array.isArray(parsed)) {
-        parsed.forEach((c) => {
-          if (c && c.id) contasMap.set(c.id, { ...c });
-        });
-      }
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  try {
-    const contasSnap = await getDocs(collection(db, COLLECTIONS.CONTAS_BANCARIAS));
-    if (!contasSnap.empty) {
-      contasSnap.docs.forEach((d) => {
-        const raw = d.data() as any;
-        contasMap.set(d.id, { ...raw, id: d.id, saldo: Number(raw.saldo) || 0 } as ContaBancariaCaixa);
-      });
-    }
-  } catch (e) {
-    console.warn('Erro ao consultar contas bancárias do Firestore na transferência, usando cache:', e);
-  }
-
-  // Localizar Conta de Origem de forma resiliente
-  let contaOrigem =
-    contasMap.get(contaOrigemId) ||
-    Array.from(contasMap.values()).find(
-      (c) => c.id === contaOrigemId || c.nome?.trim().toLowerCase() === contaOrigemId?.trim().toLowerCase()
-    );
-
-  if (!contaOrigem) {
-    const fallbackOrigem = DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaOrigemId) || DEFAULT_CONTAS_BANCARIAS[0];
-    contaOrigem = {
-      ...fallbackOrigem,
-      id: contaOrigemId || fallbackOrigem.id,
-      nome: fallbackOrigem.nome || 'Conta Origem',
-    };
-  }
-
-  // 2. Processar débito na Conta de Origem
-  const saldoAnteriorOrigem = Number(contaOrigem.saldo || 0);
-  const novoSaldoOrigem = saldoAnteriorOrigem - valor;
-
-  const contaOrigemAtualizada: ContaBancariaCaixa = {
-    ...contaOrigem,
-    saldo: novoSaldoOrigem,
-    updatedAt: new Date().toISOString(),
-  };
-  try {
-    await saveContaBancariaFirestore(contaOrigemAtualizada);
-  } catch (err) {
-    console.warn('Não foi possível persistir conta de origem no Firestore imediatamente:', err);
-  }
-
-  // 3. Processar crédito na Conta de Destino (se interna)
-  let contaDestinoAtualizada: ContaBancariaCaixa | undefined;
-  let contaDestino: ContaBancariaCaixa | undefined;
-
-  if (!isTerceiro && contaDestinoId) {
-    contaDestino =
-      contasMap.get(contaDestinoId) ||
-      Array.from(contasMap.values()).find(
-        (c) => c.id === contaDestinoId || c.nome?.trim().toLowerCase() === contaDestinoId?.trim().toLowerCase()
-      );
-
-    if (!contaDestino) {
-      const fallbackDestino =
-        DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaDestinoId) ||
-        DEFAULT_CONTAS_BANCARIAS.find((c) => c.id !== contaOrigem?.id) ||
-        DEFAULT_CONTAS_BANCARIAS[1];
-
-      contaDestino = {
-        ...fallbackDestino,
-        id: contaDestinoId || fallbackDestino.id,
-        nome: fallbackDestino.nome || 'Conta Destino',
-      };
-    }
-
-    const saldoAnteriorDestino = Number(contaDestino.saldo || 0);
-    const novoSaldoDestino = saldoAnteriorDestino + valor;
-
-    contaDestinoAtualizada = {
-      ...contaDestino,
-      saldo: novoSaldoDestino,
-      updatedAt: new Date().toISOString(),
-    };
-    try {
-      await saveContaBancariaFirestore(contaDestinoAtualizada);
-    } catch (err) {
-      console.warn('Não foi possível persistir conta de destino no Firestore imediatamente:', err);
-    }
-  }
-
-  // 4. Gerar registros no Extrato (Movimentações de Contas)
   const idTransferencia = `transf_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
   const dataMov = data || new Date().toISOString().split('T')[0];
+  const nowIso = new Date().toISOString();
 
-  // A) Extrato Conta Origem (Débito / Saída)
-  const descricaoOrigem = isTerceiro
-    ? `Transferência para Terceiro: ${terceiroDestinoNome?.trim()} - Motivo: ${motivo.trim()}`
-    : `Transferência enviada para ${contaDestino?.nome || 'Conta Destino'} - Motivo: ${motivo.trim()}`;
+  const docOrigemRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaOrigemId);
+  const docDestinoRef = (!isTerceiro && contaDestinoId) ? doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaDestinoId) : null;
 
-  const movimentacaoOrigem: MovimentacaoConta = {
-    id: `mov_deb_${idTransferencia}`,
-    contaId: contaOrigem.id,
-    contaNome: contaOrigem.nome,
-    tipo: isTerceiro ? 'Despesa' : 'Transferência',
-    categoria: isTerceiro ? 'Transferência para Terceiros' : 'Transferência Enviada',
-    valor: valor,
-    data: dataMov,
-    descricao: descricaoOrigem,
-    pagadorRecebedor: isTerceiro ? terceiroDestinoNome?.trim() : contaDestino?.nome,
-    formaPagamento: 'Transferência Bancária / PIX',
-    criadoPor: usuarioNome,
-    createdAt: new Date().toISOString(),
-    transferenciaId: idTransferencia,
-    contaOrigemId: contaOrigem.id,
-    contaOrigemNome: contaOrigem.nome,
-    contaDestinoId: isTerceiro ? undefined : contaDestino?.id,
-    contaDestinoNome: isTerceiro ? undefined : contaDestino?.nome,
-    isTerceiro,
-    terceiroNome: isTerceiro ? terceiroDestinoNome?.trim() : undefined,
-    motivo: motivo.trim(),
-    tipoCusto: 'Neutro',
-    categoriaCusto: 'Neutro',
-  };
-  await saveMovimentacaoContaFirestore(movimentacaoOrigem);
+  return await runTransaction(db, async (transaction) => {
+    // 1. Leitura das contas na transação
+    const snapOrigem = await transaction.get(docOrigemRef);
+    if (!snapOrigem.exists()) {
+      throw new Error(`Conta bancária de origem ${contaOrigemId} não encontrada no Firestore.`);
+    }
 
-  // B) Extrato Conta Destino (Crédito / Entrada, se interna)
-  let movimentacaoDestino: MovimentacaoConta | undefined;
-  if (!isTerceiro && contaDestino) {
-    const descricaoDestino = `Transferência recebida de ${contaOrigem.nome} - Motivo: ${motivo.trim()}`;
+    let snapDestino = null;
+    if (docDestinoRef) {
+      snapDestino = await transaction.get(docDestinoRef);
+      if (!snapDestino.exists()) {
+        throw new Error(`Conta bancária de destino ${contaDestinoId} não encontrada no Firestore.`);
+      }
+    }
 
-    movimentacaoDestino = {
-      id: `mov_cred_${idTransferencia}`,
-      contaId: contaDestino.id,
-      contaNome: contaDestino.nome,
-      tipo: 'Transferência',
-      categoria: 'Transferência Recebida',
+    const dataOrigem = snapOrigem.data();
+    const saldoAnteriorOrigem = Number(dataOrigem.saldoAtualOperacional ?? dataOrigem.saldo ?? 0);
+    const novoSaldoOrigem = saldoAnteriorOrigem - valor;
+
+    // Atualiza conta de origem mantendo saldoConferido intacto e espelhos atualizados
+    transaction.update(docOrigemRef, {
+      saldoAtualOperacional: novoSaldoOrigem,
+      saldo: novoSaldoOrigem,
+      saldoAtual: novoSaldoOrigem,
+      updatedAt: nowIso,
+    });
+
+    const contaOrigemAtualizada = normalizeContaBancaria({
+      ...dataOrigem,
+      saldoAtualOperacional: novoSaldoOrigem,
+      saldo: novoSaldoOrigem,
+      saldoAtual: novoSaldoOrigem,
+    }, contaOrigemId);
+
+    let contaDestinoAtualizada: ContaBancariaCaixa | undefined;
+    if (docDestinoRef && snapDestino) {
+      const dataDestino = snapDestino.data();
+      const saldoAnteriorDestino = Number(dataDestino.saldoAtualOperacional ?? dataDestino.saldo ?? 0);
+      const novoSaldoDestino = saldoAnteriorDestino + valor;
+
+      transaction.update(docDestinoRef, {
+        saldoAtualOperacional: novoSaldoDestino,
+        saldo: novoSaldoDestino,
+        saldoAtual: novoSaldoDestino,
+        updatedAt: nowIso,
+      });
+
+      contaDestinoAtualizada = normalizeContaBancaria({
+        ...dataDestino,
+        saldoAtualOperacional: novoSaldoDestino,
+        saldo: novoSaldoDestino,
+        saldoAtual: novoSaldoDestino,
+      }, contaDestinoId!);
+    }
+
+    // 2. Extrato Conta Origem (Débito / Saída)
+    const descricaoOrigem = isTerceiro
+      ? `Transferência para Terceiro: ${terceiroDestinoNome?.trim()} - Motivo: ${motivo.trim()}`
+      : `Transferência enviada para ${contaDestinoAtualizada?.nome || 'Conta Destino'} - Motivo: ${motivo.trim()}`;
+
+    const movDebRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, `mov_deb_${idTransferencia}`);
+    const movimentacaoOrigem: MovimentacaoConta = {
+      id: `mov_deb_${idTransferencia}`,
+      idempotencyKey: `idemp_transf_deb_${idTransferencia}`,
+      contaId: contaOrigemAtualizada.id,
+      contaNome: contaOrigemAtualizada.nome,
+      tipo: isTerceiro ? 'Despesa' : 'Transferência',
+      categoria: isTerceiro ? 'Transferência para Terceiros' : 'Transferência Enviada',
       valor: valor,
       data: dataMov,
-      descricao: descricaoDestino,
-      pagadorRecebedor: contaOrigem.nome,
+      descricao: descricaoOrigem,
+      pagadorRecebedor: isTerceiro ? terceiroDestinoNome?.trim() : contaDestinoAtualizada?.nome,
       formaPagamento: 'Transferência Bancária / PIX',
       criadoPor: usuarioNome,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
       transferenciaId: idTransferencia,
-      contaOrigemId: contaOrigem.id,
-      contaOrigemNome: contaOrigem.nome,
-      contaDestinoId: contaDestino.id,
-      contaDestinoNome: contaDestino.nome,
-      isTerceiro: false,
+      contaOrigemId: contaOrigemAtualizada.id,
+      contaOrigemNome: contaOrigemAtualizada.nome,
+      contaDestinoId: isTerceiro ? undefined : contaDestinoAtualizada?.id,
+      contaDestinoNome: isTerceiro ? undefined : contaDestinoAtualizada?.nome,
+      isTerceiro,
+      terceiroNome: isTerceiro ? terceiroDestinoNome?.trim() : undefined,
       motivo: motivo.trim(),
       tipoCusto: 'Neutro',
       categoriaCusto: 'Neutro',
+      isTransferenciaInterna: !isTerceiro,
+      isMovimentacaoNeutra: !isTerceiro,
+      afetaSaldoAtual: true,
+      naturezaTemporal: 'operacao_atual',
     };
-    await saveMovimentacaoContaFirestore(movimentacaoDestino);
-  }
+    transaction.set(movDebRef, movimentacaoOrigem);
 
-  return {
-    contaOrigemAtualizada,
-    contaDestinoAtualizada,
-    movimentacaoOrigem,
-    movimentacaoDestino,
-  };
+    // 3. Extrato Conta Destino (Crédito / Entrada, se interna)
+    let movimentacaoDestino: MovimentacaoConta | undefined;
+    if (!isTerceiro && contaDestinoAtualizada) {
+      const descricaoDestino = `Transferência recebida de ${contaOrigemAtualizada.nome} - Motivo: ${motivo.trim()}`;
+      const movCredRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, `mov_cred_${idTransferencia}`);
+
+      movimentacaoDestino = {
+        id: `mov_cred_${idTransferencia}`,
+        idempotencyKey: `idemp_transf_cred_${idTransferencia}`,
+        contaId: contaDestinoAtualizada.id,
+        contaNome: contaDestinoAtualizada.nome,
+        tipo: 'Transferência',
+        categoria: 'Transferência Recebida',
+        valor: valor,
+        data: dataMov,
+        descricao: descricaoDestino,
+        pagadorRecebedor: contaOrigemAtualizada.nome,
+        formaPagamento: 'Transferência Bancária / PIX',
+        criadoPor: usuarioNome,
+        createdAt: nowIso,
+        transferenciaId: idTransferencia,
+        contaOrigemId: contaOrigemAtualizada.id,
+        contaOrigemNome: contaOrigemAtualizada.nome,
+        contaDestinoId: contaDestinoAtualizada.id,
+        contaDestinoNome: contaDestinoAtualizada.nome,
+        isTerceiro: false,
+        motivo: motivo.trim(),
+        tipoCusto: 'Neutro',
+        categoriaCusto: 'Neutro',
+        isTransferenciaInterna: true,
+        isMovimentacaoNeutra: true,
+        afetaSaldoAtual: true,
+        naturezaTemporal: 'operacao_atual',
+      };
+      transaction.set(movCredRef, movimentacaoDestino);
+    }
+
+    return {
+      contaOrigemAtualizada,
+      contaDestinoAtualizada,
+      movimentacaoOrigem,
+      movimentacaoDestino,
+    };
+  });
 }
 
 /**
@@ -1776,62 +1864,17 @@ export async function processarRecebimentoVendaFinanceiro(
   usuarioNome: string = 'Sistema / Vendedor'
 ): Promise<void> {
   try {
-    // 1. Obter todas as contas bancárias atuais para poder atualizar saldos
-    const contasSnap = await getDocs(collection(db, COLLECTIONS.CONTAS_BANCARIAS));
-    let contasMap = new Map<string, ContaBancariaCaixa>();
-
-    if (!contasSnap.empty) {
-      contasSnap.docs.forEach((d) => {
-        const c = { ...d.data(), id: d.id } as ContaBancariaCaixa;
-        contasMap.set(c.id, c);
-        // Também indexar pelo nome normalizado para match robusto
-        contasMap.set(c.nome.trim().toLowerCase(), c);
-      });
-    } else {
-      // Se Firestore ainda não tem contas persistidas, popula com default
-      DEFAULT_CONTAS_BANCARIAS.forEach((c) => {
-        contasMap.set(c.id, c);
-        contasMap.set(c.nome.trim().toLowerCase(), c);
-      });
-    }
-
-    // Helper para encontrar ou criar conta destino
-    const findOrCreateTargetAccount = (
-      contaIdOrName?: string
-    ): ContaBancariaCaixa => {
-      if (contaIdOrName) {
-        if (contasMap.has(contaIdOrName)) {
-          return contasMap.get(contaIdOrName)!;
-        }
-        const lower = contaIdOrName.trim().toLowerCase();
-        if (contasMap.has(lower)) {
-          return contasMap.get(lower)!;
-        }
-        // Busca parcial
-        for (const [key, val] of contasMap.entries()) {
-          if (typeof key === 'string' && (key.includes(lower) || lower.includes(key))) {
-            return val;
-          }
-        }
-      }
-      // Fallback: primeira conta ou Conta Itaú Principal
-      const itau = contasMap.get('conta_itau_pj');
-      if (itau) return itau;
-      return DEFAULT_CONTAS_BANCARIAS[0];
-    };
-
     const pagamentosAReceber: Array<{
+      idx: number;
       valor: number;
       forma: string;
-      contaNome: string;
       contaId: string;
       detalhes?: string;
     }> = [];
 
     // MODO HÍBRIDO
     if (venda.composicaoPagamento && venda.composicaoPagamento.length > 0) {
-      venda.composicaoPagamento.forEach((p) => {
-        // Filtra meios financeiros líquidos que entram na conta da loja (PIX, TED, Dinheiro, Cartão)
+      venda.composicaoPagamento.forEach((p, idx) => {
         if (
           p.tipo === 'PIX' ||
           p.tipo === 'TED/Transferência' ||
@@ -1840,13 +1883,13 @@ export async function processarRecebimentoVendaFinanceiro(
           p.tipo === 'Cartão de Débito'
         ) {
           const val = p.valorLiquido > 0 ? p.valorLiquido : p.valorBruto;
-          if (val > 0) {
-            const target = findOrCreateTargetAccount(p.bancoDestino || p.contaBancariaId || venda.contaBancariaDestinoNome);
+          const targetContaId = p.contaBancariaId || venda.contaBancariaDestinoId;
+          if (val > 0 && targetContaId) {
             pagamentosAReceber.push({
+              idx,
               valor: val,
               forma: p.tipo,
-              contaNome: target.nome,
-              contaId: target.id,
+              contaId: targetContaId,
               detalhes: p.detalhes,
             });
           }
@@ -1855,69 +1898,94 @@ export async function processarRecebimentoVendaFinanceiro(
     } else {
       // MODO SIMPLES
       if (venda.formaPagamento === 'À Vista PIX' || venda.formaPagamento === 'Dinheiro') {
-        const target = findOrCreateTargetAccount(venda.contaBancariaDestinoNome || venda.contaBancariaDestinoId);
-        pagamentosAReceber.push({
-          valor: venda.valorVenda,
-          forma: venda.formaPagamento,
-          contaNome: target.nome,
-          contaId: target.id,
-        });
-      } else if (venda.formaPagamento === 'Financiamento' || venda.formaPagamento === 'Troca + Volta') {
-        // Se houver valor de entrada em dinheiro/PIX registrado nos detalhes de financiamento
-        if (venda.financiamentoDetalhes && venda.financiamentoDetalhes.valorEntrada > 0) {
-          const target = findOrCreateTargetAccount(
-            venda.financiamentoDetalhes.contaDestinoEntrada || venda.contaBancariaDestinoNome
-          );
+        const targetContaId = venda.contaBancariaDestinoId;
+        if (targetContaId && venda.valorVenda > 0) {
           pagamentosAReceber.push({
-            valor: venda.financiamentoDetalhes.valorEntrada,
-            forma: 'Entrada Financiamento (PIX/Transferência)',
-            contaNome: target.nome,
-            contaId: target.id,
+            idx: 0,
+            valor: venda.valorVenda,
+            forma: venda.formaPagamento,
+            contaId: targetContaId,
           });
+        }
+      } else if (venda.formaPagamento === 'Financiamento' || venda.formaPagamento === 'Troca + Volta') {
+        if (venda.financiamentoDetalhes && venda.financiamentoDetalhes.valorEntrada > 0) {
+          const targetContaId = venda.financiamentoDetalhes.contaDestinoEntrada || venda.contaBancariaDestinoId;
+          if (targetContaId) {
+            pagamentosAReceber.push({
+              idx: 0,
+              valor: venda.financiamentoDetalhes.valorEntrada,
+              forma: 'Entrada Financiamento (PIX/Transferência)',
+              contaId: targetContaId,
+            });
+          }
         }
       }
     }
 
-    // Processar cada recebimento: creditar na conta e registrar no extrato
+    if (pagamentosAReceber.length === 0) return;
+
+    // Processar cada recebimento dentro de uma transação atômica e idempotente
     for (const pag of pagamentosAReceber) {
-      const targetConta = findOrCreateTargetAccount(pag.contaId);
-      const novoSaldo = (targetConta.saldo || 0) + pag.valor;
+      const idempotencyKey = `idemp_venda_${venda.id}_pag_${pag.idx}_${pag.forma.replace(/[^a-zA-Z0-9]/g, '')}`;
+      const movId = `mov_venda_${venda.id}_${pag.idx}`;
+      const docContaRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, pag.contaId);
+      const docMovRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movId);
 
-      // 1. Atualizar saldo da Conta Bancária no Firestore
-      const updatedConta: ContaBancariaCaixa = {
-        ...targetConta,
-        saldo: novoSaldo,
-        updatedAt: new Date().toISOString(),
-      };
-      await saveContaBancariaFirestore(updatedConta);
-      contasMap.set(targetConta.id, updatedConta);
+      await runTransaction(db, async (transaction) => {
+        // 1. Verificar idempotência determinística
+        const movSnap = await transaction.get(docMovRef);
+        if (movSnap.exists()) {
+          console.log(`[Idempotência] Recebimento de venda ${venda.id} parcela ${pag.idx} já processado anteriormente.`);
+          return;
+        }
 
-      // 2. Criar registro detalhado no Extrato / Movimentações de Contas
-      const movId = `mov_venda_${venda.id}_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
-      const novaMovimentacao: MovimentacaoConta = {
-        id: movId,
-        contaId: targetConta.id,
-        contaNome: targetConta.nome,
-        tipo: 'Receita',
-        categoria: 'Venda de Veículo',
-        valor: pag.valor,
-        data: venda.dataVenda || new Date().toISOString().split('T')[0],
-        descricao: `Recebimento de ${pag.forma} referente à venda do veículo ${veiculo.modelo || venda.modelo} - Placa: ${veiculo.placa || venda.placa} - Cliente: ${venda.compradorNome}`,
-        vinculoVendaId: venda.id,
-        veiculoId: veiculo.id || venda.veiculoId,
-        placa: veiculo.placa || venda.placa,
-        clienteNome: venda.compradorNome,
-        formaPagamento: pag.forma,
-        criadoPor: usuarioNome,
-        createdAt: new Date().toISOString(),
-      };
+        const contaSnap = await transaction.get(docContaRef);
+        if (!contaSnap.exists()) {
+          throw new Error(`Conta bancária ${pag.contaId} não encontrada para receber venda ${venda.id}.`);
+        }
 
-      await saveMovimentacaoContaFirestore(novaMovimentacao);
-      console.log(`Recebimento financeiro processado com sucesso: +R$ ${pag.valor} creditado em ${targetConta.nome}`);
+        const dataConta = contaSnap.data();
+        const saldoAnterior = Number(dataConta.saldoAtualOperacional ?? dataConta.saldo ?? 0);
+        const novoSaldo = saldoAnterior + pag.valor;
+        const nowIso = new Date().toISOString();
+
+        // 2. Atualizar conta preservando saldoConferido intacto
+        transaction.update(docContaRef, {
+          saldoAtualOperacional: novoSaldo,
+          saldo: novoSaldo,
+          saldoAtual: novoSaldo,
+          updatedAt: nowIso,
+        });
+
+        // 3. Criar a movimentação detalhada
+        const novaMovimentacao: MovimentacaoConta = {
+          id: movId,
+          idempotencyKey,
+          contaId: pag.contaId,
+          contaNome: dataConta.nome || 'Conta',
+          tipo: 'Receita',
+          categoria: 'Venda de Veículo',
+          valor: pag.valor,
+          data: venda.dataVenda || nowIso.split('T')[0],
+          descricao: `Recebimento de ${pag.forma} referente à venda do veículo ${veiculo.modelo || venda.modelo} - Placa: ${veiculo.placa || venda.placa} - Cliente: ${venda.compradorNome || 'Cliente'}`,
+          vinculoVendaId: venda.id,
+          veiculoId: veiculo.id || venda.veiculoId,
+          placa: veiculo.placa || venda.placa,
+          clienteNome: venda.compradorNome,
+          formaPagamento: pag.forma,
+          criadoPor: usuarioNome,
+          createdAt: nowIso,
+          afetaSaldoAtual: true,
+          naturezaTemporal: 'operacao_atual',
+          statusConciliacao: 'movimentacao_bancaria_confirmada',
+        };
+
+        transaction.set(docMovRef, novaMovimentacao);
+      });
     }
   } catch (error) {
-    console.error('Erro ao processar integração financeira da venda:', error);
-    // Não interrompe o fluxo de venda se houver erro não fatal
+    console.error('Erro ao processar integração financeira atômica da venda:', error);
+    throw error;
   }
 }
 
@@ -1941,75 +2009,82 @@ export async function processarPagamentoDespesaFinanceiro(
     return;
   }
 
+  // Se for classificado como histórico importado (anterior à conferência), não afeta saldo bancário atual
+  if (despesa.naturezaTemporal === 'historico_importado' || despesa.jaEstavaNoSaldoConferido) {
+    return;
+  }
+
+  const valorDespesa = Number(despesa.valor || 0);
+  if (valorDespesa <= 0) return;
+
+  const despId = despesa.id || `desp_${Date.now()}`;
+  const movId = despesa.movimentacaoFinanceiraId || `mov_desp_${despId}`;
+  const idempotencyKey = `idemp_desp_${despId}`;
+
+  const docContaRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, despesa.contaBancariaId);
+  const docMovRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movId);
+
   try {
-    const contasSnap = await getDocs(collection(db, COLLECTIONS.CONTAS_BANCARIAS));
-    let targetConta: ContaBancariaCaixa | null = null;
-
-    if (!contasSnap.empty) {
-      for (const d of contasSnap.docs) {
-        if (d.id === despesa.contaBancariaId) {
-          targetConta = { ...d.data(), id: d.id } as ContaBancariaCaixa;
-          break;
-        }
+    await runTransaction(db, async (transaction) => {
+      // 1. Validar idempotência determinística dentro da transação
+      const movSnap = await transaction.get(docMovRef);
+      if (movSnap.exists()) {
+        console.log(`[Idempotência] Pagamento da despesa ${despId} já processado anteriormente.`);
+        return;
       }
-    }
 
-    if (!targetConta) {
-      const defaultMatch = DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === despesa.contaBancariaId);
-      if (defaultMatch) {
-        targetConta = { ...defaultMatch };
+      // 2. Leitura da conta bancária
+      const contaSnap = await transaction.get(docContaRef);
+      if (!contaSnap.exists()) {
+        throw new Error(`Conta bancária ${despesa.contaBancariaId} não encontrada no Firestore para débito de despesa.`);
       }
-    }
 
-    if (!targetConta) {
-      console.warn(`Conta bancária ${despesa.contaBancariaId} não encontrada para processar débito de despesa.`);
-      return;
-    }
+      const dataConta = contaSnap.data();
+      const saldoAnterior = Number(dataConta.saldoAtualOperacional ?? dataConta.saldo ?? 0);
+      const novoSaldo = saldoAnterior - valorDespesa;
+      const nowIso = new Date().toISOString();
 
-    const valorDespesa = Number(despesa.valor || 0);
-    if (valorDespesa <= 0) return;
+      // 3. Atualizar saldo operacional preservando saldoConferido intacto
+      transaction.update(docContaRef, {
+        saldoAtualOperacional: novoSaldo,
+        saldo: novoSaldo,
+        saldoAtual: novoSaldo,
+        updatedAt: nowIso,
+      });
 
-    // 1. Descontar o valor do saldo principal da conta
-    const saldoAnterior = Number(targetConta.saldo || 0);
-    const novoSaldo = saldoAnterior - valorDespesa;
+      // 4. Gravar registro no extrato bancário
+      const placaStr = veiculo.placa || despesa.placa || 'Sem Placa';
+      const fornecedorStr = despesa.fornecedor || 'Fornecedor Parceiro';
+      const categoriaStr = despesa.categoria || 'Despesa';
+      const dataPagamentoStr = despesa.dataPagamento || despesa.data || nowIso.split('T')[0];
+      const historicoTexto = `Pagamento de Despesa: ${categoriaStr} - Fornecedor: ${fornecedorStr} - Veículo: ${placaStr}`;
 
-    const updatedConta: ContaBancariaCaixa = {
-      ...targetConta,
-      saldo: novoSaldo,
-      updatedAt: new Date().toISOString(),
-    };
-    await saveContaBancariaFirestore(updatedConta);
+      const novaMovimentacao: MovimentacaoConta = {
+        id: movId,
+        idempotencyKey,
+        contaId: despesa.contaBancariaId!,
+        contaNome: dataConta.nome || 'Conta',
+        tipo: 'Despesa',
+        categoria: categoriaStr,
+        valor: valorDespesa,
+        data: dataPagamentoStr,
+        descricao: historicoTexto,
+        veiculoId: veiculo.id || despesa.veiculoId,
+        placa: placaStr,
+        formaPagamento: despesa.formaPagamento || 'PIX',
+        criadoPor: usuarioNome,
+        createdAt: nowIso,
+        afetaSaldoAtual: true,
+        naturezaTemporal: 'operacao_atual',
+        statusConciliacao: 'movimentacao_bancaria_confirmada',
+      };
 
-    // 2. Gerar o registro no extrato bancário
-    const placaStr = veiculo.placa || despesa.placa || 'Sem Placa';
-    const fornecedorStr = despesa.fornecedor || 'Fornecedor Parceiro';
-    const categoriaStr = despesa.categoria || 'Despesa';
-    const dataPagamentoStr = despesa.dataPagamento || despesa.data || new Date().toISOString().split('T')[0];
-
-    // Histórico exato solicitado: "Pagamento de Despesa: [Categoria] - Fornecedor: [Nome] - Veículo: [Placa]"
-    const historicoTexto = `Pagamento de Despesa: ${categoriaStr} - Fornecedor: ${fornecedorStr} - Veículo: ${placaStr}`;
-
-    const movId = `mov_desp_${despesa.id || Date.now()}_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
-    const novaMovimentacao: MovimentacaoConta = {
-      id: movId,
-      contaId: targetConta.id,
-      contaNome: targetConta.nome,
-      tipo: 'Despesa',
-      categoria: categoriaStr,
-      valor: valorDespesa,
-      data: dataPagamentoStr,
-      descricao: historicoTexto,
-      veiculoId: veiculo.id || despesa.veiculoId,
-      placa: placaStr,
-      formaPagamento: despesa.formaPagamento || 'PIX',
-      criadoPor: usuarioNome,
-      createdAt: new Date().toISOString(),
-    };
-
-    await saveMovimentacaoContaFirestore(novaMovimentacao);
-    console.log(`Débito financeiro efetuado com sucesso: -R$ ${valorDespesa} em ${targetConta.nome} (${historicoTexto})`);
+      transaction.set(docMovRef, novaMovimentacao);
+      console.log(`Débito financeiro efetuado com sucesso: -R$ ${valorDespesa} em ${dataConta.nome} (${historicoTexto})`);
+    });
   } catch (error) {
     console.error('Erro ao processar débito financeiro da despesa:', error);
+    throw error;
   }
 }
 
@@ -2044,131 +2119,172 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
     usuarioNome = 'Sistema Financeiro',
   } = params;
 
-  // 1. Obter a conta bancária de destino
-  let targetConta: ContaBancariaCaixa | null = null;
-  const contasSnap = await getDocs(collection(db, COLLECTIONS.CONTAS_BANCARIAS));
-  if (!contasSnap.empty) {
-    for (const d of contasSnap.docs) {
-      if (d.id === contaBancariaId) {
-        targetConta = { ...d.data(), id: d.id } as ContaBancariaCaixa;
-        break;
+  if (!contaBancariaId) {
+    throw new Error('Conta bancária de destino é obrigatória para liquidação de recebível.');
+  }
+
+  const movId = `mov_rec_${venda.id}_${tipoTitulo}`;
+  const idempotencyKey = `idemp_rec_${venda.id}_${tipoTitulo}`;
+  const nowIso = new Date().toISOString();
+
+  const docContaRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaBancariaId);
+  const docVendaRef = doc(db, COLLECTIONS.VENDAS, venda.id);
+  const docMovRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movId);
+
+  return await runTransaction(db, async (transaction) => {
+    // 1. Validar idempotência determinística
+    const movSnap = await transaction.get(docMovRef);
+    if (movSnap.exists()) {
+      throw new Error(`Este recebível (${tipoTitulo}) já foi liquidado anteriormente.`);
+    }
+
+    // 2. Leitura da Conta Bancária
+    const contaSnap = await transaction.get(docContaRef);
+    if (!contaSnap.exists()) {
+      throw new Error(`Conta bancária ${contaBancariaId} não encontrada no Firestore.`);
+    }
+
+    // 3. Leitura da Venda
+    const vendaSnap = await transaction.get(docVendaRef);
+    const vendaAtual = (vendaSnap.exists() ? vendaSnap.data() : venda) as VendaVeiculo;
+
+    const dataConta = contaSnap.data();
+    const saldoAnterior = Number(dataConta.saldoAtualOperacional ?? dataConta.saldo ?? 0);
+    const novoSaldo = saldoAnterior + Number(valorLiquidado || 0);
+
+    // 4. Atualizar saldo da Conta Bancária preservando saldoConferido
+    transaction.update(docContaRef, {
+      saldoAtualOperacional: novoSaldo,
+      saldo: novoSaldo,
+      saldoAtual: novoSaldo,
+      updatedAt: nowIso,
+    });
+
+    const contaAtualizada = normalizeContaBancaria({
+      ...dataConta,
+      saldoAtualOperacional: novoSaldo,
+      saldo: novoSaldo,
+      saldoAtual: novoSaldo,
+    }, contaBancariaId);
+
+    // 5. Histórico e Descrição do Extrato
+    const bancoNome =
+      vendaAtual.financiamentoDetalhes?.bancoParceiroNome ||
+      vendaAtual.financiamentoDetalhes?.bancoParceiro ||
+      'Banco Financiador';
+    const placaVeiculo = vendaAtual.placa || 'Sem Placa';
+    const compradorNome = vendaAtual.compradorNome || 'Cliente Comprador';
+
+    let descricaoExtrato = '';
+    let categoriaExtrato = '';
+
+    if (tipoTitulo === 'financiamento') {
+      categoriaExtrato = 'Liquidação de Financiamento';
+      descricaoExtrato = `Liquidação de Financiamento: ${bancoNome} - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
+    } else if (tipoTitulo === 'tac') {
+      categoriaExtrato = 'Recebimento TAC / Retorno';
+      descricaoExtrato = `Recebimento de Retorno/TAC: ${bancoNome} - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
+    } else {
+      categoriaExtrato = 'Recebimento de Venda';
+      descricaoExtrato = `Liquidação de Recebível: ${formaLiquidacao} - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
+    }
+
+    if (observacoes.trim()) {
+      descricaoExtrato += ` (${observacoes.trim()})`;
+    }
+
+    // 6. Atualizar FinanciamentoDetalhes na Venda
+    const updatedFinanciamento = {
+      ...(vendaAtual.financiamentoDetalhes || {
+        bancoParceiro: 'BV',
+        valorEntrada: 0,
+        valorFinanciado: 0,
+        retornoComissaoBanco: 0,
+      }),
+    };
+
+    if (tipoTitulo === 'financiamento') {
+      updatedFinanciamento.statusLiquidacaoFinanciamento = 'Recebido';
+      updatedFinanciamento.dataLiquidacaoFinanciamento = dataLiquidacao;
+      updatedFinanciamento.contaBancariaLiquidacaoId = contaAtualizada.id;
+      updatedFinanciamento.contaBancariaLiquidacaoNome = contaAtualizada.nome;
+      updatedFinanciamento.formaLiquidacaoFinanciamento = formaLiquidacao;
+    } else if (tipoTitulo === 'tac') {
+      updatedFinanciamento.statusLiquidacaoTac = 'Recebido';
+      updatedFinanciamento.dataLiquidacaoTac = dataLiquidacao;
+      updatedFinanciamento.contaBancariaTacId = contaAtualizada.id;
+      updatedFinanciamento.contaBancariaTacNome = contaAtualizada.nome;
+      updatedFinanciamento.formaLiquidacaoTac = formaLiquidacao;
+
+      // Se houver comissão indexada ao retorno TAC da venda, atualizar snapshot auditável
+      if (Array.isArray(vendaAtual.comissoesDetalhadas)) {
+        vendaAtual.comissoesDetalhadas = vendaAtual.comissoesDetalhadas.map((c) => {
+          if (c.tipoBase === 'Retorno TAC' || c.aguardaLiquidacaoTac) {
+            return {
+              ...c,
+              statusLiberacao: 'Liberada_Para_Pagamento' as const,
+              snapshotConfirmacaoTac: {
+                tacBruto: vendaAtual.financiamentoDetalhes?.retornoComissaoBanco || valorLiquidado,
+                descontoIla: 0,
+                tacLiquidoEfetivo: valorLiquidado,
+                percentualOuValorRegra: c.valorOrPercentual || 0,
+                valorComissaoCalculado: c.valorCalculado,
+                dataHoraConfirmacao: nowIso,
+                usuarioConfirmouId: usuarioNome,
+                usuarioConfirmouNome: usuarioNome,
+                regraIdOriginal: c.regraId || '',
+              },
+            };
+          }
+          return c;
+        });
       }
     }
-  }
 
-  if (!targetConta) {
-    const defaultMatch = DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaBancariaId);
-    if (defaultMatch) {
-      targetConta = { ...defaultMatch };
+    if (observacoes.trim()) {
+      updatedFinanciamento.observacoesLiquidacao =
+        (updatedFinanciamento.observacoesLiquidacao ? updatedFinanciamento.observacoesLiquidacao + ' | ' : '') +
+        observacoes.trim();
     }
-  }
 
-  if (!targetConta) {
-    // Se não encontrou por ID, buscar a primeira conta disponível
-    targetConta = DEFAULT_CONTAS_BANCARIAS[0];
-  }
+    const vendaAtualizada: VendaVeiculo = {
+      ...vendaAtual,
+      financiamentoDetalhes: updatedFinanciamento,
+    };
 
-  // 2. Atualizar saldo da conta bancária (+ crédito)
-  const saldoAnterior = Number(targetConta.saldo || 0);
-  const novoSaldo = saldoAnterior + Number(valorLiquidado || 0);
+    transaction.set(docVendaRef, vendaAtualizada, { merge: true });
 
-  const contaAtualizada: ContaBancariaCaixa = {
-    ...targetConta,
-    saldo: novoSaldo,
-    updatedAt: new Date().toISOString(),
-  };
-  await saveContaBancariaFirestore(contaAtualizada);
+    // 7. Criar registro no Extrato Bancário
+    const novaMovimentacao: MovimentacaoConta = {
+      id: movId,
+      idempotencyKey,
+      contaId: contaAtualizada.id,
+      contaNome: contaAtualizada.nome,
+      tipo: 'Receita',
+      categoria: categoriaExtrato,
+      valor: Number(valorLiquidado || 0),
+      data: dataLiquidacao || nowIso.split('T')[0],
+      descricao: descricaoExtrato,
+      vinculoVendaId: venda.id,
+      veiculoId: venda.veiculoId,
+      placa: placaVeiculo,
+      clienteNome: compradorNome,
+      formaPagamento: formaLiquidacao,
+      criadoPor: usuarioNome,
+      createdAt: nowIso,
+      afetaSaldoAtual: true,
+      naturezaTemporal: 'operacao_atual',
+      statusConciliacao: 'movimentacao_bancaria_confirmada',
+    };
 
-  // 3. Montar Histórico e Descrição do Extrato
-  const bancoNome =
-    venda.financiamentoDetalhes?.bancoParceiroNome ||
-    venda.financiamentoDetalhes?.bancoParceiro ||
-    'Banco Financiador';
-  const placaVeiculo = venda.placa || 'Sem Placa';
-  const compradorNome = venda.compradorNome || 'Cliente Comprador';
+    transaction.set(docMovRef, novaMovimentacao);
 
-  let descricaoExtrato = '';
-  let categoriaExtrato = '';
-
-  if (tipoTitulo === 'financiamento') {
-    categoriaExtrato = 'Liquidação de Financiamento';
-    descricaoExtrato = `Liquidação de Financiamento: ${bancoNome} - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
-  } else if (tipoTitulo === 'tac') {
-    categoriaExtrato = 'Recebimento TAC / Retorno';
-    descricaoExtrato = `Recebimento de Retorno/TAC: ${bancoNome} - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
-  } else {
-    categoriaExtrato = 'Recebimento de Venda';
-    descricaoExtrato = `Liquidação de Recebível: ${formaLiquidacao} - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
-  }
-
-  if (observacoes.trim()) {
-    descricaoExtrato += ` (${observacoes.trim()})`;
-  }
-
-  // 4. Criar registro no Extrato Bancário (Entrada / Receita)
-  const movId = `mov_rec_${venda.id}_${tipoTitulo}_${Date.now()}`;
-  const novaMovimentacao: MovimentacaoConta = {
-    id: movId,
-    contaId: targetConta.id,
-    contaNome: targetConta.nome,
-    tipo: 'Receita',
-    categoria: categoriaExtrato,
-    valor: Number(valorLiquidado || 0),
-    data: dataLiquidacao || new Date().toISOString().split('T')[0],
-    descricao: descricaoExtrato,
-    vinculoVendaId: venda.id,
-    veiculoId: venda.veiculoId,
-    placa: placaVeiculo,
-    clienteNome: compradorNome,
-    formaPagamento: formaLiquidacao,
-    criadoPor: usuarioNome,
-    createdAt: new Date().toISOString(),
-  };
-  await saveMovimentacaoContaFirestore(novaMovimentacao);
-
-  // 5. Atualizar objeto Venda
-  const updatedFinanciamento = {
-    ...(venda.financiamentoDetalhes || {
-      bancoParceiro: 'BV',
-      valorEntrada: 0,
-      valorFinanciado: 0,
-      retornoComissaoBanco: 0,
-    }),
-  };
-
-  if (tipoTitulo === 'financiamento') {
-    updatedFinanciamento.statusLiquidacaoFinanciamento = 'Recebido';
-    updatedFinanciamento.dataLiquidacaoFinanciamento = dataLiquidacao;
-    updatedFinanciamento.contaBancariaLiquidacaoId = targetConta.id;
-    updatedFinanciamento.contaBancariaLiquidacaoNome = targetConta.nome;
-    updatedFinanciamento.formaLiquidacaoFinanciamento = formaLiquidacao;
-  } else if (tipoTitulo === 'tac') {
-    updatedFinanciamento.statusLiquidacaoTac = 'Recebido';
-    updatedFinanciamento.dataLiquidacaoTac = dataLiquidacao;
-    updatedFinanciamento.contaBancariaTacId = targetConta.id;
-    updatedFinanciamento.contaBancariaTacNome = targetConta.nome;
-    updatedFinanciamento.formaLiquidacaoTac = formaLiquidacao;
-  }
-
-  if (observacoes.trim()) {
-    updatedFinanciamento.observacoesLiquidacao =
-      (updatedFinanciamento.observacoesLiquidacao ? updatedFinanciamento.observacoesLiquidacao + ' | ' : '') +
-      observacoes.trim();
-  }
-
-  const vendaAtualizada: VendaVeiculo = {
-    ...venda,
-    financiamentoDetalhes: updatedFinanciamento,
-  };
-
-  await saveVendaFirestore(vendaAtualizada);
-  console.log(`Liquidação de ${tipoTitulo} processada com sucesso: +R$ ${valorLiquidado} creditado em ${targetConta.nome}`);
-
-  return {
-    vendaAtualizada,
-    contaAtualizada,
-    movimentacao: novaMovimentacao,
-  };
+    return {
+      vendaAtualizada,
+      contaAtualizada,
+      movimentacao: novaMovimentacao,
+    };
+  });
 }
 
 /**
@@ -2689,39 +2805,11 @@ export async function salvarLancamentoExpressoFirestore(
     }
   }
 
-  // 3. Atualizar saldo da Conta Bancária no Firestore
-  let contaAtualizada: ContaBancariaCaixa;
-  const contaSnap = await getDoc(doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaId));
-  if (contaSnap.exists()) {
-    const cData = { ...contaSnap.data(), id: contaSnap.id } as ContaBancariaCaixa;
-    const saldoAtual = Number(cData.saldo || 0);
-    const novoSaldo = isSaida ? saldoAtual - valor : saldoAtual + valor;
-    contaAtualizada = {
-      ...cData,
-      saldo: novoSaldo,
-      updatedAt: new Date().toISOString(),
-    };
-  } else {
-    // Fallback caso seja DEFAULT_CONTAS_BANCARIAS
-    const def = DEFAULT_CONTAS_BANCARIAS.find((c) => c.id === contaId) || {
-      id: contaId,
-      nome: contaNome,
-      tipo: 'Conta Corrente PJ',
-      saldo: 0,
-    };
-    const saldoAtual = Number(def.saldo || 0);
-    const novoSaldo = isSaida ? saldoAtual - valor : saldoAtual + valor;
-    contaAtualizada = {
-      ...def,
-      saldo: novoSaldo,
-      updatedAt: new Date().toISOString(),
-    };
-  }
-  await saveContaBancariaFirestore(contaAtualizada);
-
-  // 4. Salvar Movimentação no Extrato Global
+  // 3 e 4. Atualizar saldo da Conta Bancária no Firestore e Gravar Movimentação de forma atômica
   const movId = `mov_exp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-  
+  const idempotencyKey = `idemp_exp_${movId}`;
+  const nowIso = new Date().toISOString();
+
   // Determinar categoria contábil e de custos
   let catCustoFinal: 'Custo Fixo' | 'Custo Variável' | 'Retirada Sócio' | 'Receita Venda' | 'Receita Locação' | 'Neutro' | undefined;
   let tipoCustoFinal: 'Fixo' | 'Variável' | 'Neutro' | undefined = tipoCusto;
@@ -2752,40 +2840,77 @@ export async function salvarLancamentoExpressoFirestore(
      destinoRoteamento === 'receita_loja' ? 'Receita da Loja' :
      isSaida ? 'Despesa Operacional' : 'Receita da Loja');
 
-  const novaMovimentacao: MovimentacaoConta = {
-    id: movId,
-    contaId: contaAtualizada.id,
-    contaNome: contaAtualizada.nome,
-    tipo: isSaida ? 'Despesa' : 'Receita',
-    categoria: categoriaFinal,
-    valor: valor,
-    data: dataLancamento,
-    descricao: descricaoFinal,
-    pagadorRecebedor: pagadorRecebedor?.trim() || undefined,
-    destinoRoteamento: destinoRoteamento,
-    despesaFixaId: despesaFixaIdGerado,
-    despesaVeiculoId: despesaVeiculoIdGerado,
-    veiculoId: veiculoIdVinculado || veiculoEstoqueId,
-    placa: placaVinculada || veiculoLocacaoPlaca,
-    vinculoVendaId: vinculoVendaId,
-    clienteNome: clienteNome || (destinoRoteamento === 'venda_realizada' ? pagadorRecebedor : undefined),
-    tipoCusto: tipoCustoFinal,
-    categoriaCusto: catCustoFinal,
-    formaPagamento: formaPagamento,
-    comprovanteNumero: comprovanteNumero?.trim() || undefined,
-    observacoes: observacoes?.trim() || undefined,
-    criadoPor: usuarioNome,
-    createdAt: new Date().toISOString(),
-    veiculosMultiplosIds: veiculosMultiplos?.map((v) => v.id),
-    veiculosMultiplosPlacas: veiculosMultiplos?.map((v) => v.placa),
-    categoriasMultiplas: categoriasMultiplas,
-    fornecedoresMultiplos: fornecedoresMultiplos,
-    contratoLocacaoId: contratoLocacaoId,
-    pagadorSemContrato: !!salvarNovoPagadorSemContrato,
-    periodicidadeRecebimento: periodicidadeRecebimento,
-  };
+  const docContaRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaId);
+  const docMovRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movId);
 
-  await saveMovimentacaoContaFirestore(novaMovimentacao);
+  const { contaAtualizada, novaMovimentacao } = await runTransaction(db, async (transaction) => {
+    const contaSnap = await transaction.get(docContaRef);
+    if (!contaSnap.exists()) {
+      throw new Error(`Conta bancária ${contaId} não encontrada no Firestore.`);
+    }
+
+    const cData = contaSnap.data();
+    const saldoAtual = Number(cData.saldoAtualOperacional ?? cData.saldo ?? 0);
+    const novoSaldo = isSaida ? saldoAtual - valor : saldoAtual + valor;
+
+    transaction.update(docContaRef, {
+      saldoAtualOperacional: novoSaldo,
+      saldo: novoSaldo,
+      saldoAtual: novoSaldo,
+      updatedAt: nowIso,
+    });
+
+    const contaAtualizadaNorm = normalizeContaBancaria({
+      ...cData,
+      saldoAtualOperacional: novoSaldo,
+      saldo: novoSaldo,
+      saldoAtual: novoSaldo,
+    }, contaId);
+
+    const mov: MovimentacaoConta = {
+      id: movId,
+      idempotencyKey,
+      contaId: contaAtualizadaNorm.id,
+      contaNome: contaAtualizadaNorm.nome,
+      tipo: isSaida ? 'Despesa' : 'Receita',
+      categoria: categoriaFinal,
+      valor: valor,
+      data: dataLancamento,
+      descricao: descricaoFinal,
+      pagadorRecebedor: pagadorRecebedor?.trim() || undefined,
+      destinoRoteamento: destinoRoteamento,
+      despesaFixaId: despesaFixaIdGerado,
+      despesaVeiculoId: despesaVeiculoIdGerado,
+      veiculoId: veiculoIdVinculado || veiculoEstoqueId,
+      placa: placaVinculada || veiculoLocacaoPlaca,
+      vinculoVendaId: vinculoVendaId,
+      clienteNome: clienteNome || (destinoRoteamento === 'venda_realizada' ? pagadorRecebedor : undefined),
+      tipoCusto: tipoCustoFinal,
+      categoriaCusto: catCustoFinal,
+      formaPagamento: formaPagamento,
+      comprovanteNumero: comprovanteNumero?.trim() || undefined,
+      observacoes: observacoes?.trim() || undefined,
+      criadoPor: usuarioNome,
+      createdAt: nowIso,
+      veiculosMultiplosIds: veiculosMultiplos?.map((v) => v.id),
+      veiculosMultiplosPlacas: veiculosMultiplos?.map((v) => v.placa),
+      categoriasMultiplas: categoriasMultiplas,
+      fornecedoresMultiplos: fornecedoresMultiplos,
+      contratoLocacaoId: contratoLocacaoId,
+      pagadorSemContrato: !!salvarNovoPagadorSemContrato,
+      periodicidadeRecebimento: periodicidadeRecebimento,
+      afetaSaldoAtual: true,
+      naturezaTemporal: 'operacao_atual',
+      statusConciliacao: 'movimentacao_bancaria_confirmada',
+    };
+
+    transaction.set(docMovRef, mov);
+
+    return {
+      contaAtualizada: contaAtualizadaNorm,
+      novaMovimentacao: mov,
+    };
+  });
 
   return {
     movimentacao: novaMovimentacao,
@@ -2864,7 +2989,7 @@ export async function editarMovimentacaoContaFirestore(
     const contaSnap = await getDoc(doc(db, COLLECTIONS.CONTAS_BANCARIAS, antigaContaId));
     if (contaSnap.exists()) {
       const contaData = { ...contaSnap.data(), id: contaSnap.id } as ContaBancariaCaixa;
-      const saldoAtual = Number(contaData.saldo || 0);
+      const saldoAtual = Number(contaData.saldoAtualOperacional ?? contaData.saldo ?? 0);
 
       let novoSaldo = saldoAtual;
 
@@ -2883,11 +3008,13 @@ export async function editarMovimentacaoContaFirestore(
         novoSaldo = saldoAtual + delta;
       }
 
-      contaAtualizada = {
+      contaAtualizada = normalizeContaBancaria({
         ...contaData,
+        saldoAtualOperacional: novoSaldo,
         saldo: novoSaldo,
+        saldoAtual: novoSaldo,
         updatedAt: new Date().toISOString(),
-      };
+      }, antigaContaId);
       await saveContaBancariaFirestore(contaAtualizada);
     }
   }
@@ -2896,34 +3023,38 @@ export async function editarMovimentacaoContaFirestore(
     // 1. Estornar impacto da conta antiga
     const snapAntiga = await getDoc(doc(db, COLLECTIONS.CONTAS_BANCARIAS, antigaContaId));
     if (snapAntiga.exists()) {
-      const cAntiga = { ...snapAntiga.data(), id: snapAntiga.id } as ContaBancariaCaixa;
-      const saldoAntigo = Number(cAntiga.saldo || 0);
+      const cAntiga = snapAntiga.data();
+      const saldoAntigo = Number(cAntiga.saldoAtualOperacional ?? cAntiga.saldo ?? 0);
       // Se era despesa, devolve o valor antigo; se era receita, retira o valor antigo
       const saldoEstornado = movimentacaoAntiga.tipo === 'Despesa'
         ? saldoAntigo + valorAntigo
         : saldoAntigo - valorAntigo;
 
-      await saveContaBancariaFirestore({
+      await saveContaBancariaFirestore(normalizeContaBancaria({
         ...cAntiga,
+        saldoAtualOperacional: saldoEstornado,
         saldo: saldoEstornado,
+        saldoAtual: saldoEstornado,
         updatedAt: new Date().toISOString(),
-      });
+      }, antigaContaId));
     }
 
     // 2. Aplicar novo impacto na nova conta
     const snapNova = await getDoc(doc(db, COLLECTIONS.CONTAS_BANCARIAS, novaContaId));
     if (snapNova.exists()) {
-      const cNova = { ...snapNova.data(), id: snapNova.id } as ContaBancariaCaixa;
-      const saldoNova = Number(cNova.saldo || 0);
+      const cNova = snapNova.data();
+      const saldoNova = Number(cNova.saldoAtualOperacional ?? cNova.saldo ?? 0);
       const saldoFinal = novosDados.tipo === 'Despesa'
         ? saldoNova - novoValor
         : saldoNova + novoValor;
 
-      contaAtualizada = {
+      contaAtualizada = normalizeContaBancaria({
         ...cNova,
+        saldoAtualOperacional: saldoFinal,
         saldo: saldoFinal,
+        saldoAtual: saldoFinal,
         updatedAt: new Date().toISOString(),
-      };
+      }, novaContaId);
       await saveContaBancariaFirestore(contaAtualizada);
     }
   }
@@ -3006,6 +3137,70 @@ export async function editarMovimentacaoContaFirestore(
     contaAtualizada,
     diferencaCalculada: diferenca,
   };
+}
+
+/**
+ * Exclui uma movimentação bancária e estorna automaticamente o saldo da conta associada no Firestore,
+ * mantendo integridade com despesas fixas ou despesas de veículos caso vinculadas.
+ */
+export async function excluirMovimentacaoComEstornoFirestore(
+  movimentacaoId: string
+): Promise<{ saldoRestaurado: number; contaId?: string }> {
+  const movDocRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movimentacaoId);
+  const movSnap = await getDoc(movDocRef);
+
+  if (!movSnap.exists()) {
+    throw new Error('Movimentação bancária não encontrada.');
+  }
+
+  const mov = movSnap.data() as MovimentacaoConta;
+  const contaId = mov.contaId;
+  const valor = Number(mov.valor || 0);
+  const isSaida = (mov.tipo as string) === 'Despesa' || (mov.tipo as string) === 'Saída';
+
+  let saldoRestaurado = 0;
+
+  if (contaId) {
+    const contaDocRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaId);
+    await runTransaction(db, async (transaction) => {
+      const cSnap = await transaction.get(contaDocRef);
+      if (cSnap.exists()) {
+        const cData = cSnap.data();
+        const saldoAtual = Number(cData.saldoAtualOperacional ?? cData.saldo ?? 0);
+        // Se era saída/despesa, estornar significa somar de volta. Se era entrada/receita, subtrair.
+        const novoSaldo = isSaida ? saldoAtual + valor : saldoAtual - valor;
+        saldoRestaurado = novoSaldo;
+
+        transaction.update(contaDocRef, {
+          saldoAtualOperacional: novoSaldo,
+          saldo: novoSaldo,
+          saldoAtual: novoSaldo,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      transaction.delete(movDocRef);
+    });
+  } else {
+    await deleteDoc(movDocRef);
+  }
+
+  // Se estiver vinculada a uma despesa fixa, desmarcar pagamento ou alertar
+  if (mov.despesaFixaId) {
+    try {
+      const dfRef = doc(db, COLLECTIONS.DESPESAS_FIXAS, mov.despesaFixaId);
+      const dfSnap = await getDoc(dfRef);
+      if (dfSnap.exists()) {
+        await updateDoc(dfRef, {
+          status: 'Pendente',
+          dataPagamento: null,
+        });
+      }
+    } catch (err) {
+      console.warn('Aviso: Não foi possível atualizar despesa fixa vinculada:', err);
+    }
+  }
+
+  return { saldoRestaurado, contaId };
 }
 
 

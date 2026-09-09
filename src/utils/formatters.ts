@@ -397,7 +397,7 @@ export interface ItemRepasseDistribuicao {
   fornecedorOuBeneficiario?: string;
   placa?: string;
   chassi?: string;
-  statusPagamento?: 'Pago' | 'Pendente';
+  statusPagamento?: 'Pago' | 'Pendente' | 'Estornada' | 'Cancelada';
 }
 
 export interface GrupoRepasseDistribuicao {

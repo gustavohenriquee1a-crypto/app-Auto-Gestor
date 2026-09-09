@@ -365,13 +365,14 @@ export const DossieModal: React.FC<DossieModalProps> = ({
     await saveVeiculoFirestore(veiculoAtualizado);
   };
 
-  // Group expenses by category for quick insights
-  const despesasPorCategoria = (veiculo.despesas || []).reduce((acc, d) => {
-    if (!d) return acc;
-    const cat = d.categoria || 'Geral';
-    acc[cat] = (acc[cat] || 0) + (Number(d.valor) || 0);
-    return acc;
-  }, {} as Record<string, number>);
+  // Group expenses by category for quick insights (excluindo canceladas e estornadas)
+  const despesasPorCategoria = (veiculo.despesas || [])
+    .filter((d) => d && d.statusPagamento !== 'Cancelada' && d.statusPagamento !== 'Estornada')
+    .reduce((acc, d) => {
+      const cat = d.categoria || 'Geral';
+      acc[cat] = (acc[cat] || 0) + (Number(d.valor) || 0);
+      return acc;
+    }, {} as Record<string, number>);
 
   // Consolidate & Auto-generate unified chronological timeline events
   const timelineEventos = useMemo(() => {
@@ -1926,8 +1927,20 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                             <span className={`font-bold text-sm font-mono ${desp.categoria === 'Comissão' ? 'text-amber-300' : 'text-slate-200'}`}>
                               {formatCurrencyDetailed(desp.valor)}
                             </span>
-                            <span className={`block text-[10px] font-bold ${desp.statusPagamento === 'Pago' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                              {desp.statusPagamento === 'Pago' ? '✓ Pago' : '⏳ Pendente'}
+                            <span className={`block text-[10px] font-bold ${
+                              desp.statusPagamento === 'Estornada' || desp.statusPagamento === 'Cancelada'
+                                ? 'text-rose-400'
+                                : desp.statusPagamento === 'Pago'
+                                ? 'text-emerald-400'
+                                : 'text-amber-400'
+                            }`}>
+                              {desp.statusPagamento === 'Estornada'
+                                ? '↩ Estornada'
+                                : desp.statusPagamento === 'Cancelada'
+                                ? '✕ Cancelada'
+                                : desp.statusPagamento === 'Pago'
+                                ? '✓ Pago'
+                                : '⏳ Pendente'}
                             </span>
                           </div>
 
@@ -1943,7 +1956,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                           )}
 
                           {/* Botão de Lançar Restante Vinculado */}
-                          {canViewCosts && desp.tipoVinculo !== 'restante' && desp.tipoCondicao !== 'parcelado' && (
+                          {canViewCosts && desp.statusPagamento !== 'Estornada' && desp.statusPagamento !== 'Cancelada' && desp.tipoVinculo !== 'restante' && desp.tipoCondicao !== 'parcelado' && (
                             <button
                               onClick={() => onOpenNovaDespesa(veiculo, desp)}
                               className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition flex items-center gap-1 cursor-pointer"
@@ -1955,7 +1968,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                           )}
 
                           {/* Botão de Editar Despesa */}
-                          {canViewCosts && (
+                          {canViewCosts && desp.statusPagamento !== 'Estornada' && desp.statusPagamento !== 'Cancelada' && (
                             <button
                               onClick={() => {
                                 if (onEditDespesa) {
@@ -1971,12 +1984,12 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                             </button>
                           )}
 
-                          {/* Botão de Excluir */}
-                          {canViewCosts && (
+                          {/* Botão de Excluir / Estornar */}
+                          {canViewCosts && desp.statusPagamento !== 'Estornada' && desp.statusPagamento !== 'Cancelada' && (
                             <button
                               onClick={() => onDeleteDespesa(veiculo.id, desp.id)}
                               className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg bg-white/5 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition cursor-pointer"
-                              title="Excluir despesa"
+                              title={desp.statusPagamento === 'Pago' ? 'Estornar despesa paga (devolve saldo na conta)' : 'Excluir despesa'}
                             >
                               <Trash2 size={14} />
                             </button>

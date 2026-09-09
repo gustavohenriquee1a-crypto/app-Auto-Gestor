@@ -55,6 +55,7 @@ import {
   saveContaBancariaFirestore,
   saveMovimentacaoContaFirestore,
   processarLiquidacaoRecebivelFirestore,
+  excluirOuEstornarDespesaVeiculoFirestore,
   DEFAULT_CONTAS_BANCARIAS,
 } from './services/firestoreService';
 import {
@@ -938,65 +939,32 @@ export default function App() {
   };
 
   const handleDeleteDespesa = async (veiculoId: string, despesaId: string) => {
-    let targetVeiculoUpdated: Veiculo | null = null;
-    let despesaRemovida: DespesaVeiculo | undefined;
+    try {
+      const res = await excluirOuEstornarDespesaVeiculoFirestore({
+        veiculoId,
+        despesaId,
+        motivo: 'Exclusão/Cancelamento solicitado pelo usuário',
+        usuarioId: currentUserProfile?.id || currentUserProfile?.email,
+        usuarioNome: currentUserProfile?.displayName || currentUserProfile?.email || 'Administrador',
+      });
 
-    setVeiculos((prev) =>
-      prev.map((v) => {
-        if (v.id === veiculoId) {
-          despesaRemovida = (v.despesas || []).find((d) => d.id === despesaId);
-          const updated: Veiculo = {
-            ...v,
-            despesas: (v.despesas || []).filter((d) => d.id !== despesaId),
-          };
-          targetVeiculoUpdated = updated;
-          return updated;
+      if (res.veiculoAtualizado) {
+        setVeiculos((prev) =>
+          prev.map((v) => (v.id === res.veiculoAtualizado.id ? res.veiculoAtualizado : v))
+        );
+        if (dossieVeiculo?.id === veiculoId) {
+          setDossieVeiculo(res.veiculoAtualizado);
         }
-        return v;
-      })
-    );
-
-    if (targetVeiculoUpdated) {
-      await saveVeiculoFirestore(targetVeiculoUpdated);
-      if (dossieVeiculo?.id === veiculoId) {
-        setDossieVeiculo(targetVeiculoUpdated);
       }
-    }
 
-    // Se a despesa estava Paga e com conta bancária vinculada, estornar o valor na conta
-    if (despesaRemovida && despesaRemovida.statusPagamento === 'Pago' && despesaRemovida.contaBancariaId) {
-      const conta = contasBancarias.find((c) => c.id === despesaRemovida?.contaBancariaId);
-      if (conta) {
-        const valorEstornado = Number(despesaRemovida.valor || 0);
-        const saldoNovo = Number(conta.saldoAtualOperacional ?? conta.saldo ?? 0) + valorEstornado;
-        const contaAtualizada: ContaBancariaCaixa = {
-          ...conta,
-          saldoAtualOperacional: saldoNovo,
-          saldo: saldoNovo,
-          saldoAtual: saldoNovo,
-          updatedAt: new Date().toISOString(),
-        };
-        setContasBancarias((prev) => prev.map((c) => (c.id === conta.id ? contaAtualizada : c)));
-        await saveContaBancariaFirestore(contaAtualizada);
-
-        // Registrar estorno no extrato
-        const movEstorno: MovimentacaoConta = {
-          id: `estorno-desp-${Date.now()}`,
-          contaId: conta.id,
-          contaNome: conta.nome,
-          tipo: 'Receita',
-          categoria: 'Estorno de Lançamento',
-          valor: valorEstornado,
-          data: new Date().toISOString().split('T')[0],
-          descricao: `Estorno de exclusão: ${despesaRemovida.descricao || 'Despesa'} (${despesaRemovida.placa || ''})`,
-          veiculoId: veiculoId,
-          placa: despesaRemovida.placa,
-          formaPagamento: despesaRemovida.formaPagamento || 'PIX',
-          criadoPor: currentUserProfile?.displayName || 'Sistema',
-          createdAt: new Date().toISOString(),
-        };
-        await saveMovimentacaoContaFirestore(movEstorno);
+      if (res.contaAtualizada) {
+        setContasBancarias((prev) =>
+          prev.map((c) => (c.id === res.contaAtualizada!.id ? res.contaAtualizada! : c))
+        );
       }
+    } catch (error: any) {
+      console.error('Erro ao excluir/estornar despesa:', error);
+      alert(error?.message || 'Erro ao processar estorno da despesa.');
     }
   };
 

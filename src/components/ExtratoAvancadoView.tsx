@@ -1638,15 +1638,11 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
                             <ChevronRight size={15} />
                           </button>
 
-                          {item.movimentacaoOriginal && onDeleteMovimentacao && (
+                          {item.movimentacaoOriginal && onDeleteMovimentacao && !item.movimentacaoOriginal.isEstorno && !item.movimentacaoOriginal.isEstornado && !item.movimentacaoOriginal.movimentacaoEstornoId && (
                             <button
-                              onClick={() => {
-                                if (window.confirm('Deseja excluir este registro de movimentação do extrato?')) {
-                                  onDeleteMovimentacao(item.id);
-                                }
-                              }}
+                              onClick={() => onDeleteMovimentacao(item.id)}
                               className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
-                              title="Excluir do Extrato"
+                              title="Estornar movimentação confirmada"
                             >
                               <Trash2 size={13} />
                             </button>

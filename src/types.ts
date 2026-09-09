@@ -62,14 +62,19 @@ export type StatusConciliacaoRegistro =
 
 // Trilha de Auditoria para Edição de Despesa sem sobrescrita destrutiva
 export interface TrilhaAuditoriaDespesa {
-  valorAnterior: number;
-  novoValor: number;
-  diferenca: number;
-  motivoAjuste: string;
-  dataHoraAjuste: string;
+  valorAnterior?: number;
+  novoValor?: number;
+  diferenca?: number;
+  motivoAjuste?: string;
+  dataHoraAjuste?: string;
   usuarioAjusteId?: string;
   usuarioAjusteNome?: string;
   movimentacaoAjusteId?: string;
+  dataHora?: string;
+  usuarioId?: string;
+  usuarioNome?: string;
+  acao?: string;
+  detalhes?: string;
 }
 
 // Informações de Rateio Centesimal entre Múltiplos Veículos
@@ -118,7 +123,13 @@ export interface DespesaVeiculo {
   fornecedorId?: string;
   nfNumero?: string;
   comprovanteUrl?: string;
-  statusPagamento: 'Pago' | 'Pendente';
+  statusPagamento: 'Pago' | 'Pendente' | 'Cancelada' | 'Estornada';
+  statusEstorno?: 'Nao_Estornado' | 'Estornado';
+  movimentacaoEstornoId?: string;
+  motivoEstorno?: string;
+  dataHoraEstorno?: string;
+  usuarioEstornoId?: string;
+  usuarioEstornoNome?: string;
   // Regra de Vencimento / Exigibilidade (ex: Cartório, Despachante)
   exigibilidade?: 'imediata' | 'no_ato_venda'; // 'imediata' = vence na data informada; 'no_ato_venda' = só vence/liquida quando o veículo for vendido
   dataVencimento?: string;
@@ -881,6 +892,8 @@ export interface Veiculo {
   vistoriasInternasPatio?: VistoriaInternaPatio[];
   laudosCautelaresOficiais?: LaudoCautelarOficial[];
   etapaKanban?: EtapaKanbanPreparacao;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export type EtapaKanbanPreparacao = 'Oficina' | 'Funilaria' | 'Estética' | 'Pronto para Pátio';
@@ -1173,6 +1186,8 @@ export interface MovimentacaoConta {
   statusConciliacao?: StatusConciliacaoRegistro;
   // Gestão de Estornos Auditados
   isEstorno?: boolean;
+  isEstornado?: boolean;
+  statusEstorno?: 'Nao_Estornado' | 'Estornado';
   movimentacaoOriginalId?: string;
   movimentacaoEstornoId?: string;
   motivoEstorno?: string;
@@ -1209,6 +1224,7 @@ export interface MovimentacaoConta {
   contratoLocacaoId?: string;
   pagadorSemContrato?: boolean;
   periodicidadeRecebimento?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Diária' | 'Avulso';
+  updatedAt?: string;
 }
 
 export interface PagadorPreCadastro {

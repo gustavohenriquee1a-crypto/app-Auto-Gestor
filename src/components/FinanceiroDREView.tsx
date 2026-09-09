@@ -93,6 +93,7 @@ import {
   DEFAULT_CONTAS_BANCARIAS,
   subscribeMovimentacoesContas,
   deleteMovimentacaoContaFirestore,
+  excluirMovimentacaoComEstornoFirestore,
   executarTransferenciaEntreContasFirestore,
   ParametrosTransferencia
 } from '../services/firestoreService';
@@ -310,8 +311,58 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
   };
 
   const handleDeleteMovimentacao = async (movId: string) => {
-    if (window.confirm('Deseja excluir este registro de movimentação do extrato? (Isso não altera os saldos atuais)')) {
-      await deleteMovimentacaoContaFirestore(movId);
+    const mov = movimentacoesContas.find((m) => m.id === movId);
+    if (!mov) return;
+    if (mov.isEstorno) {
+      alert('Não é permitido estornar uma movimentação que já é um estorno.');
+      return;
+    }
+    if (mov.isEstornado || mov.movimentacaoEstornoId) {
+      alert('Esta movimentação já foi estornada anteriormente.');
+      return;
+    }
+
+    const valorFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(mov.valor || 0));
+    const motivo = window.prompt(
+      `Confirma o estorno desta movimentação de ${mov.tipo} (${valorFmt})?\n\nO registro original será mantido no extrato e uma movimentação de estorno com sinal contrário será gerada com atualização de saldo.\n\nInforme o motivo do estorno:`,
+      'Estorno solicitado pelo usuário'
+    );
+    if (!motivo || !motivo.trim()) return;
+
+    try {
+      const res = await excluirMovimentacaoComEstornoFirestore(movId, {
+        motivo: motivo.trim(),
+        usuarioId: currentUser?.uid,
+        usuarioNome: currentUser?.displayName || currentUser?.email || 'Administrador',
+      });
+
+      // Atualiza o extrato local mantendo a movimentação original e inserindo o estorno
+      setMovimentacoesContas((prev) => {
+        let updated = prev.map((m) => (m.id === movId ? res.movimentacaoOriginal : m));
+        if (res.movimentacaoEstorno && !updated.some((m) => m.id === res.movimentacaoEstorno.id)) {
+          updated = [res.movimentacaoEstorno, ...updated];
+        }
+        return updated;
+      });
+
+      // Atualiza o saldo bancário da conta
+      if (res.contaId) {
+        setContasBancarias((prev) =>
+          prev.map((c) =>
+            c.id === res.contaId
+              ? {
+                  ...c,
+                  saldoAtualOperacional: res.saldoRestaurado,
+                  saldo: res.saldoRestaurado,
+                  saldoAtual: res.saldoRestaurado,
+                }
+              : c
+          )
+        );
+      }
+    } catch (err: any) {
+      console.error('Erro ao estornar movimentação:', err);
+      alert(err?.message || 'Erro ao estornar movimentação bancária.');
     }
   };
 
@@ -2370,13 +2421,15 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                               >
                                 <Edit3 size={13} />
                               </button>
-                              <button
-                                onClick={() => handleDeleteMovimentacao(mov.id)}
-                                className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
-                                title="Excluir do extrato"
-                              >
-                                <Trash2 size={13} />
-                              </button>
+                              {!mov.isEstorno && !mov.isEstornado && !mov.movimentacaoEstornoId && (
+                                <button
+                                  onClick={() => handleDeleteMovimentacao(mov.id)}
+                                  className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
+                                  title="Estornar movimentação confirmada"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -2602,10 +2655,7 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
             setContaOrigemPreSelecionadaId(undefined);
             setModalTransferenciaOpen(true);
           }}
-          onDeleteMovimentacao={async (movId) => {
-            setMovimentacoesContas((prev) => prev.filter((m) => m.id !== movId));
-            await deleteMovimentacaoContaFirestore(movId);
-          }}
+          onDeleteMovimentacao={handleDeleteMovimentacao}
         />
       )}
 

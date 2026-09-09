@@ -33,6 +33,7 @@ import {
   LancamentoContaMotorista,
   ComissaoDetalhadaVenda,
   SnapshotConfirmacaoTacComissao,
+  RegraRemuneracao,
 } from '../types';
 import { initialVeiculos, initialVendas, initialDespesasFixas } from '../data/initialData';
 
@@ -2276,12 +2277,39 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
       let comissoes = Array.isArray(vendaAtual.comissoesDetalhadas)
         ? [...vendaAtual.comissoesDetalhadas]
         : [];
-      let hasTacItem = false;
 
-      // Recalcular ou finalizar cada comissão existente de tipoBase === 'Retorno TAC' usando o TAC líquido efetivamente recebido
+      // 1. Identificar todos os usuários participantes da venda
+      // (vendedor, usuários já com comissões na venda, beneficiário de comissão gerencial, etc.)
+      const usuarioIdsParticipantes = new Set<string>();
+      if (vendaAtual.vendedorId) usuarioIdsParticipantes.add(vendaAtual.vendedorId);
+      if (vendaAtual.comissaoGerencialBeneficiarioId) usuarioIdsParticipantes.add(vendaAtual.comissaoGerencialBeneficiarioId);
+      if ((vendaAtual as any).operadorFinanciamentoId) usuarioIdsParticipantes.add((vendaAtual as any).operadorFinanciamentoId);
+      if ((vendaAtual as any).responsavelFinanciamentoId) usuarioIdsParticipantes.add((vendaAtual as any).responsavelFinanciamentoId);
+      comissoes.forEach((c) => {
+        if (c.usuarioId) usuarioIdsParticipantes.add(c.usuarioId);
+      });
+
+      // Carregar os dados de cada usuário participante dentro da mesma transação
+      const usuariosMap = new Map<string, any>();
+      for (const uId of usuarioIdsParticipantes) {
+        if (!uId) continue;
+        const userRef = doc(db, COLLECTIONS.USUARIOS, uId);
+        const userSnap = await transaction.get(userRef);
+        if (userSnap.exists()) {
+          usuariosMap.set(uId, userSnap.data());
+        }
+      }
+
+      // Conjunto para rastrear chaves já processadas: `${usuarioId}_${regraId}`
+      const regrasProcessadas = new Set<string>();
+
+      // 2. Primeiro: recalcular ou finalizar cada comissão existente de tipoBase === 'Retorno TAC' usando o TAC líquido efetivo
       comissoes = comissoes.map((c) => {
         if (c.tipoBase === 'Retorno TAC') {
-          hasTacItem = true;
+          const uId = c.usuarioId;
+          const rId = c.regraId;
+          regrasProcessadas.add(`${uId}_${rId}`);
+
           const percentOuValor = Number(c.valorOrPercentual || 0);
           const novoValorCalculado = c.formato === 'Percentual'
             ? Number(((tacLiquidoEfetivo * percentOuValor) / 100).toFixed(2))
@@ -2296,13 +2324,14 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
             dataHoraConfirmacao: nowIso,
             usuarioConfirmouId,
             usuarioConfirmouNome,
-            regraIdOriginal: c.regraId || '',
+            regraIdOriginal: rId || '',
           };
 
           return {
             ...c,
+            id: `${vendaAtual.id}_${uId}_${rId}`,
             baseCalculo: tacLiquidoEfetivo,
-            valorCalculado: novoValorCalculado,
+            valorCalculado: c.isento ? 0 : novoValorCalculado,
             aguardaLiquidacaoTac: false,
             statusLiberacao: 'Liberada_Para_Pagamento' as const,
             snapshotConfirmacaoTac: snapshot,
@@ -2318,80 +2347,105 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
           };
         }
 
-        // Não alterar status de comissões que não dependem de TAC
         return c;
       });
 
-      // Se não houver item de TAC mas houver regra de TAC para o vendedor, criar esse item com ID determinístico
-      if (!hasTacItem) {
-        let percentualTacRegra: number | undefined =
-          vendaAtual.comissaoBonusTacPercent ||
-          vendaAtual.comissaoPercentualTac;
-        const vendedorId = vendaAtual.vendedorId;
-        let vendedorNome = vendaAtual.vendedorNome || 'Vendedor';
+      // 3. Aplicar as regras dinâmicas com tipoBase === 'Retorno TAC' de cada participante da venda
+      // Preservando o motor dinâmico e sem assumir que o vendedor é o beneficiário, nem usar regraComissaoPadrao/comissaoBonusTacPercent
+      for (const [uId, uData] of usuariosMap.entries()) {
+        const regrasRemuneracao = (uData?.regrasRemuneracao && Array.isArray(uData.regrasRemuneracao))
+          ? (uData.regrasRemuneracao as RegraRemuneracao[])
+          : [];
 
-        if (!percentualTacRegra && vendedorId) {
-          const userRef = doc(db, COLLECTIONS.USUARIOS, vendedorId);
-          const userSnap = await transaction.get(userRef);
-          if (userSnap.exists()) {
-            const uData = userSnap.data();
-            if (uData.comissaoBonusTacPercent && Number(uData.comissaoBonusTacPercent) > 0) {
-              percentualTacRegra = Number(uData.comissaoBonusTacPercent);
-            } else if (uData.regraComissaoPadrao === 'vendedor_bonus_tac') {
-              percentualTacRegra = Number(uData.comissaoPercentualTac || 20);
-            }
-            if (!vendaAtual.vendedorNome && (uData.nomeCompleto || uData.displayName)) {
-              vendedorNome = uData.nomeCompleto || uData.displayName;
-            }
-          }
-        }
+        const regrasTacUsuario = regrasRemuneracao.filter((r) => r.tipoBase === 'Retorno TAC');
 
-        if (percentualTacRegra && percentualTacRegra > 0) {
-          const regraIdDeterministica = 'regra_retorno_tac';
-          const itemTacId = `${vendaAtual.id}_${vendedorId || 'vendedor'}_regra_${regraIdDeterministica}`;
-          const valorComissaoTac = Number(((tacLiquidoEfetivo * percentualTacRegra) / 100).toFixed(2));
+        for (const r of regrasTacUsuario) {
+          const itemKey = `${uId}_${r.id}`;
+          const itemId = `${vendaAtual.id}_${uId}_${r.id}`;
+
+          const percentOuValor = Number(r.valorOrPercentual || 0);
+          const novoValorCalculado =
+            r.formato === 'Percentual'
+              ? Number(((tacLiquidoEfetivo * percentOuValor) / 100).toFixed(2))
+              : percentOuValor;
 
           const snapshot: SnapshotConfirmacaoTacComissao = {
             tacBruto: tacBrutoEfetivo,
             descontoIla: descontoIlaEfetivo,
             tacLiquidoEfetivo: tacLiquidoEfetivo,
-            percentualOuValorRegra: percentualTacRegra,
-            valorComissaoCalculado: valorComissaoTac,
+            percentualOuValorRegra: percentOuValor,
+            valorComissaoCalculado: novoValorCalculado,
             dataHoraConfirmacao: nowIso,
             usuarioConfirmouId,
             usuarioConfirmouNome,
-            regraIdOriginal: regraIdDeterministica,
+            regraIdOriginal: r.id,
           };
 
-          const novoItemTac: ComissaoDetalhadaVenda = {
-            id: itemTacId,
-            vendaId: vendaAtual.id,
-            veiculoId: vendaAtual.veiculoId,
-            usuarioId: vendedorId || '',
-            usuarioNome: vendedorNome,
-            beneficiarioPapel: 'Vendedor',
-            regraId: regraIdDeterministica,
-            tipoBase: 'Retorno TAC',
-            formato: 'Percentual',
-            valorOrPercentual: percentualTacRegra,
-            condicaoGatilho: 'Apenas se houver TAC',
-            baseCalculo: tacLiquidoEfetivo,
-            valorCalculado: valorComissaoTac,
-            aguardaLiquidacaoTac: false,
-            statusLiberacao: 'Liberada_Para_Pagamento',
-            statusPagamento: 'Pendente',
-            snapshotConfirmacaoTac: snapshot,
-          };
+          if (regrasProcessadas.has(itemKey)) {
+            continue;
+          }
 
-          comissoes.push(novoItemTac);
+          // Localizar se já existe item de comissão com esse usuário e regra
+          const indexExistente = comissoes.findIndex(
+            (c) => (c.usuarioId === uId && c.regraId === r.id) || c.id === itemId
+          );
+
+          if (indexExistente !== -1) {
+            comissoes[indexExistente] = {
+              ...comissoes[indexExistente],
+              id: itemId,
+              baseCalculo: tacLiquidoEfetivo,
+              valorCalculado: comissoes[indexExistente].isento ? 0 : novoValorCalculado,
+              aguardaLiquidacaoTac: false,
+              statusLiberacao: 'Liberada_Para_Pagamento',
+              snapshotConfirmacaoTac: snapshot,
+            };
+          } else {
+            const papelBeneficiario =
+              uData?.role === 'admin'
+                ? 'Gerente'
+                : uId === vendaAtual.vendedorId
+                ? 'Vendedor'
+                : 'Responsavel_Financiamento';
+
+            const novoItemTac: ComissaoDetalhadaVenda = {
+              id: itemId,
+              vendaId: vendaAtual.id,
+              veiculoId: vendaAtual.veiculoId,
+              placa: vendaAtual.placa,
+              usuarioId: uId,
+              usuarioNome: uData?.nomeCompleto || uData?.displayName || uData?.email || 'Usuário',
+              usuarioEmail: uData?.email,
+              usuarioCargo: uData?.cargo,
+              usuarioRole: uData?.role,
+              beneficiarioPapel: papelBeneficiario,
+              regraId: r.id,
+              tipoBase: 'Retorno TAC',
+              formato: r.formato || 'Percentual',
+              valorOrPercentual: percentOuValor,
+              condicaoGatilho: r.condicaoGatilho || 'Apenas se houver TAC',
+              baseCalculo: tacLiquidoEfetivo,
+              valorCalculado: novoValorCalculado,
+              aguardaLiquidacaoTac: false,
+              statusLiberacao: 'Liberada_Para_Pagamento',
+              statusPagamento: 'Pendente',
+              status: 'Pendente',
+              snapshotConfirmacaoTac: snapshot,
+            };
+
+            comissoes.push(novoItemTac);
+          }
+          regrasProcessadas.add(itemKey);
         }
       }
 
       vendaAtual.comissoesDetalhadas = comissoes;
-      const tacItemAtualizado = comissoes.find((c) => c.tipoBase === 'Retorno TAC');
-      if (tacItemAtualizado) {
-        vendaAtual.comissaoBonusTacValor = tacItemAtualizado.valorCalculado;
-        vendaAtual.comissaoBonusTacPercent = Number(tacItemAtualizado.valorOrPercentual || 0);
+      const tacItems = comissoes.filter((c) => c.tipoBase === 'Retorno TAC');
+      if (tacItems.length > 0) {
+        const totalTacComissao = tacItems.reduce((sum, c) => sum + (Number(c.valorCalculado) || 0), 0);
+        vendaAtual.comissaoBonusTacValor = totalTacComissao;
+        const primeiroTac = tacItems[0];
+        vendaAtual.comissaoBonusTacPercent = Number(primeiroTac.valorOrPercentual || 0);
       }
       const totalComissoes = comissoes.reduce((sum, c) => sum + (Number(c.valorCalculado) || 0), 0);
       if (totalComissoes > 0) {
@@ -3312,34 +3366,61 @@ export async function editarMovimentacaoContaFirestore(
 }
 
 /**
- * Exclui uma movimentação bancária e estorna automaticamente o saldo da conta associada no Firestore,
- * mantendo integridade com despesas fixas ou despesas de veículos caso vinculadas.
+ * Realiza o estorno de uma movimentação bancária confirmada sem NUNCA deletar o registro original.
+ * Preserva a movimentação original no extrato, cria nova movimentação de estorno com sinal contrário,
+ * vincula mutuamente os registros e atualiza o saldo bancário operacional na mesma transação atômica.
  */
 export async function excluirMovimentacaoComEstornoFirestore(
-  movimentacaoId: string
-): Promise<{ saldoRestaurado: number; contaId?: string }> {
-  const movDocRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movimentacaoId);
-  const movSnap = await getDoc(movDocRef);
-
-  if (!movSnap.exists()) {
-    throw new Error('Movimentação bancária não encontrada.');
+  movimentacaoId: string,
+  params?: {
+    motivo?: string;
+    usuarioId?: string;
+    usuarioNome?: string;
   }
+): Promise<{
+  saldoRestaurado: number;
+  contaId?: string;
+  movimentacaoOriginal: MovimentacaoConta;
+  movimentacaoEstorno: MovimentacaoConta;
+}> {
+  const motivo = params?.motivo?.trim() || 'Estorno de movimentação bancária confirmada';
+  const usuarioId = params?.usuarioId;
+  const usuarioNome = params?.usuarioNome || 'Sistema';
+  const nowIso = new Date().toISOString();
 
-  const mov = movSnap.data() as MovimentacaoConta;
-  const contaId = mov.contaId;
-  const valor = Number(mov.valor || 0);
-  const isSaida = (mov.tipo as string) === 'Despesa' || (mov.tipo as string) === 'Saída';
+  const movDocRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movimentacaoId);
 
-  let saldoRestaurado = 0;
+  return await runTransaction(db, async (transaction) => {
+    // 1. Ler a movimentação original
+    const movSnap = await transaction.get(movDocRef);
+    if (!movSnap.exists()) {
+      throw new Error('Movimentação bancária não encontrada.');
+    }
 
-  if (contaId) {
-    const contaDocRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaId);
-    await runTransaction(db, async (transaction) => {
+    const mov = movSnap.data() as MovimentacaoConta;
+
+    // 2. Impedir estorno duplo ou estorno de estorno
+    if (mov.isEstorno) {
+      throw new Error('Não é permitido estornar uma movimentação que já é um estorno.');
+    }
+    if (mov.movimentacaoEstornoId || mov.isEstornado) {
+      throw new Error('Esta movimentação já foi estornada anteriormente.');
+    }
+
+    const contaId = mov.contaId;
+    const valor = Number(mov.valor || 0);
+    const isSaida = (mov.tipo as string) === 'Despesa' || (mov.tipo as string) === 'Saída';
+
+    let saldoRestaurado = 0;
+
+    // 3. Ler e atualizar a conta bancária
+    if (contaId) {
+      const contaDocRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaId);
       const cSnap = await transaction.get(contaDocRef);
       if (cSnap.exists()) {
-        const cData = cSnap.data();
+        const cData = cSnap.data() as ContaBancariaCaixa;
         const saldoAtual = Number(cData.saldoAtualOperacional ?? cData.saldo ?? 0);
-        // Se era saída/despesa, estornar significa somar de volta. Se era entrada/receita, subtrair.
+        // Se era saída/despesa, estornar soma de volta. Se era entrada/receita, subtrai.
         const novoSaldo = isSaida ? saldoAtual + valor : saldoAtual - valor;
         saldoRestaurado = novoSaldo;
 
@@ -3347,32 +3428,313 @@ export async function excluirMovimentacaoComEstornoFirestore(
           saldoAtualOperacional: novoSaldo,
           saldo: novoSaldo,
           saldoAtual: novoSaldo,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso,
         });
       }
-      transaction.delete(movDocRef);
-    });
-  } else {
-    await deleteDoc(movDocRef);
-  }
+    }
 
-  // Se estiver vinculada a uma despesa fixa, desmarcar pagamento ou alertar
-  if (mov.despesaFixaId) {
-    try {
+    // 4. Verificar se a movimentação de estorno já existe (idempotência determinística)
+    const estornoId = `mov_estorno_${mov.id}`;
+    const estornoDocRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, estornoId);
+    const estornoSnap = await transaction.get(estornoDocRef);
+    if (estornoSnap.exists()) {
+      throw new Error('O estorno desta movimentação já foi processado anteriormente no extrato.');
+    }
+
+    // 5. Criar nova movimentação de estorno com sinal contrário (SEM deletar a original!)
+    const movimentacaoEstorno: MovimentacaoConta = {
+      id: estornoId,
+      idempotencyKey: `idemp_estorno_${mov.id}`,
+      contaId: mov.contaId,
+      contaNome: mov.contaNome,
+      tipo: isSaida ? 'Receita' : 'Despesa', // sinal contrário
+      categoria: 'Estorno de Lançamento',
+      valor: valor,
+      data: nowIso.split('T')[0],
+      descricao: `Estorno de lançamento: ${mov.descricao || ''} - Motivo: ${motivo}`,
+      criadoPor: usuarioNome,
+      createdAt: nowIso,
+      afetaSaldoAtual: true,
+      naturezaTemporal: 'operacao_atual',
+      statusConciliacao: 'movimentacao_bancaria_confirmada',
+      isEstorno: true,
+      statusEstorno: 'Estornado',
+      movimentacaoOriginalId: mov.id,
+      motivoEstorno: motivo,
+      dataHoraEstorno: nowIso,
+      usuarioEstornoId: usuarioId,
+      usuarioEstornoNome: usuarioNome,
+      veiculoId: mov.veiculoId,
+      placa: mov.placa,
+      vinculoVendaId: mov.vinculoVendaId,
+      despesaFixaId: mov.despesaFixaId,
+      despesaVeiculoId: mov.despesaVeiculoId,
+      formaPagamento: mov.formaPagamento,
+    };
+    transaction.set(estornoDocRef, movimentacaoEstorno);
+
+    // 6. Atualizar a movimentação original vinculando o estorno (mantém intacta no extrato para auditoria)
+    const movimentacaoOriginalAtualizada: MovimentacaoConta = {
+      ...mov,
+      movimentacaoEstornoId: estornoId,
+      motivoEstorno: motivo,
+      dataHoraEstorno: nowIso,
+      usuarioEstornoId: usuarioId,
+      usuarioEstornoNome: usuarioNome,
+      isEstornado: true,
+      statusEstorno: 'Estornado',
+      updatedAt: nowIso,
+    };
+    transaction.update(movDocRef, {
+      movimentacaoEstornoId: estornoId,
+      motivoEstorno: motivo,
+      dataHoraEstorno: nowIso,
+      usuarioEstornoId: usuarioId,
+      usuarioEstornoNome: usuarioNome,
+      isEstornado: true,
+      statusEstorno: 'Estornado',
+      updatedAt: nowIso,
+    });
+
+    // 7. Se estiver vinculada a uma despesa fixa, desmarcar pagamento na mesma transação atômica
+    if (mov.despesaFixaId) {
       const dfRef = doc(db, COLLECTIONS.DESPESAS_FIXAS, mov.despesaFixaId);
-      const dfSnap = await getDoc(dfRef);
+      const dfSnap = await transaction.get(dfRef);
       if (dfSnap.exists()) {
-        await updateDoc(dfRef, {
+        transaction.update(dfRef, {
           status: 'Pendente',
           dataPagamento: null,
+          updatedAt: nowIso,
         });
       }
-    } catch (err) {
-      console.warn('Aviso: Não foi possível atualizar despesa fixa vinculada:', err);
     }
-  }
 
-  return { saldoRestaurado, contaId };
+    return {
+      saldoRestaurado,
+      contaId,
+      movimentacaoOriginal: movimentacaoOriginalAtualizada,
+      movimentacaoEstorno,
+    };
+  });
+}
+
+/**
+ * Serviço transacional atômico único para exclusão ou estorno de despesas de veículos.
+ * Na mesma runTransaction:
+ * - lê veículo, despesa, conta bancária e movimentação original;
+ * - preserva a despesa com status Cancelada/Estornada e registra auditoria;
+ * - atualiza saldoAtualOperacional, saldo e saldoAtual da conta;
+ * - mantém a movimentação original no extrato;
+ * - cria nova movimentação de estorno com sinal contrário;
+ * - vincula despesa, movimento original e estorno;
+ * - impede segundo estorno do mesmo pagamento.
+ */
+export async function excluirOuEstornarDespesaVeiculoFirestore(params: {
+  veiculoId: string;
+  despesaId: string;
+  motivo?: string;
+  usuarioId?: string;
+  usuarioNome?: string;
+}): Promise<{
+  veiculoAtualizado: Veiculo;
+  contaAtualizada?: ContaBancariaCaixa;
+  movimentacaoOriginal?: MovimentacaoConta;
+  movimentacaoEstorno?: MovimentacaoConta;
+  foiEstornada: boolean;
+}> {
+  const motivo = params.motivo?.trim() || 'Cancelamento/Exclusão de Despesa';
+  const usuarioId = params.usuarioId;
+  const usuarioNome = params.usuarioNome || 'Sistema';
+  const nowIso = new Date().toISOString();
+
+  const docVeiculoRef = doc(db, COLLECTIONS.VEICULOS, params.veiculoId);
+
+  return await runTransaction(db, async (transaction) => {
+    // 1. Ler veículo
+    const veiculoSnap = await transaction.get(docVeiculoRef);
+    if (!veiculoSnap.exists()) {
+      throw new Error('Veículo não encontrado.');
+    }
+    const veiculo = veiculoSnap.data() as Veiculo;
+    const despesas = veiculo.despesas || [];
+    const despesaIndex = despesas.findIndex((d) => d.id === params.despesaId);
+    if (despesaIndex === -1) {
+      throw new Error('Despesa não encontrada no veículo.');
+    }
+    const despesa = despesas[despesaIndex];
+
+    // 2. Impedir um segundo estorno do mesmo pagamento
+    if (
+      despesa.statusPagamento === 'Estornada' ||
+      despesa.statusPagamento === 'Cancelada' ||
+      despesa.statusEstorno === 'Estornado' ||
+      despesa.movimentacaoEstornoId
+    ) {
+      throw new Error('Esta despesa já foi estornada/cancelada anteriormente. Não é permitido estornar novamente.');
+    }
+
+    const valorDespesa = Number(despesa.valor || 0);
+    const isPaga = despesa.statusPagamento === 'Pago' && Boolean(despesa.contaBancariaId);
+    const afetaSaldo =
+      isPaga &&
+      despesa.naturezaTemporal !== 'historico_importado' &&
+      !despesa.jaEstavaNoSaldoConferido &&
+      valorDespesa > 0;
+
+    let contaAtualizada: ContaBancariaCaixa | undefined;
+    let movOriginalData: MovimentacaoConta | undefined;
+    let movEstorno: MovimentacaoConta | undefined;
+    let estornoMovId: string | undefined;
+
+    if (afetaSaldo && despesa.contaBancariaId) {
+      // 3. Ler Conta Bancária na mesma transação
+      const docContaRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, despesa.contaBancariaId);
+      const contaSnap = await transaction.get(docContaRef);
+      if (!contaSnap.exists()) {
+        throw new Error(`Conta bancária associada à despesa não encontrada.`);
+      }
+      const dataConta = contaSnap.data() as ContaBancariaCaixa;
+
+      // 4. Ler Movimentação Original
+      const movOriginalId = despesa.movimentacaoFinanceiraId || `mov_desp_${despesa.id}`;
+      const docMovOriginalRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movOriginalId);
+      const movOriginalSnap = await transaction.get(docMovOriginalRef);
+
+      if (movOriginalSnap.exists()) {
+        movOriginalData = movOriginalSnap.data() as MovimentacaoConta;
+        if (movOriginalData.movimentacaoEstornoId || movOriginalData.isEstorno) {
+          throw new Error('A movimentação financeira desta despesa já possui um estorno registrado.');
+        }
+      }
+
+      // 5. Verificar e impedir estorno duplicado na movimentação
+      estornoMovId = `mov_estorno_desp_${despesa.id}`;
+      const docMovEstornoRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, estornoMovId);
+      const movEstornoSnap = await transaction.get(docMovEstornoRef);
+      if (movEstornoSnap.exists()) {
+        throw new Error('O estorno desta despesa já foi processado anteriormente no extrato.');
+      }
+
+      // 6. Atualizar saldo operacional da conta
+      const saldoAnterior = Number(dataConta.saldoAtualOperacional ?? dataConta.saldo ?? 0);
+      const novoSaldo = saldoAnterior + valorDespesa;
+
+      contaAtualizada = {
+        ...dataConta,
+        saldoAtualOperacional: novoSaldo,
+        saldo: novoSaldo,
+        saldoAtual: novoSaldo,
+        updatedAt: nowIso,
+      };
+
+      transaction.update(docContaRef, {
+        saldoAtualOperacional: novoSaldo,
+        saldo: novoSaldo,
+        saldoAtual: novoSaldo,
+        updatedAt: nowIso,
+      });
+
+      // 7. Criar movimentação de estorno (valor de sinal contrário no extrato: Receita)
+      movEstorno = {
+        id: estornoMovId,
+        idempotencyKey: `idemp_estorno_desp_${despesa.id}`,
+        contaId: dataConta.id,
+        contaNome: dataConta.nome,
+        tipo: 'Receita', // sinal contrário da Despesa original
+        categoria: 'Estorno de Lançamento',
+        valor: valorDespesa,
+        data: nowIso.split('T')[0],
+        descricao: `Estorno de despesa cancelada: ${despesa.descricao || despesa.categoria} (${veiculo.placa || despesa.placa || ''}) - Motivo: ${motivo}`,
+        veiculoId: veiculo.id,
+        placa: veiculo.placa || despesa.placa,
+        formaPagamento: despesa.formaPagamento || 'PIX',
+        criadoPor: usuarioNome,
+        createdAt: nowIso,
+        afetaSaldoAtual: true,
+        naturezaTemporal: 'operacao_atual',
+        statusConciliacao: 'movimentacao_bancaria_confirmada',
+        isEstorno: true,
+        statusEstorno: 'Estornado',
+        movimentacaoOriginalId: movOriginalSnap.exists() ? movOriginalId : undefined,
+        motivoEstorno: motivo,
+        dataHoraEstorno: nowIso,
+        usuarioEstornoId: usuarioId,
+        usuarioEstornoNome: usuarioNome,
+        despesaVeiculoId: despesa.id,
+      };
+      transaction.set(docMovEstornoRef, movEstorno);
+
+      // 8. Manter a movimentação original no extrato e vinculá-la ao estorno
+      if (movOriginalSnap.exists()) {
+        transaction.update(docMovOriginalRef, {
+          movimentacaoEstornoId: estornoMovId,
+          motivoEstorno: motivo,
+          dataHoraEstorno: nowIso,
+          usuarioEstornoId: usuarioId,
+          usuarioEstornoNome: usuarioNome,
+          isEstornado: true,
+          statusEstorno: 'Estornado',
+          updatedAt: nowIso,
+        });
+        movOriginalData = {
+          ...movOriginalData,
+          movimentacaoEstornoId: estornoMovId,
+          motivoEstorno: motivo,
+          dataHoraEstorno: nowIso,
+          usuarioEstornoId: usuarioId,
+          usuarioEstornoNome: usuarioNome,
+          isEstornado: true,
+          statusEstorno: 'Estornado',
+        };
+      }
+    }
+
+    // 9. Preservar a despesa com status Cancelada/Estornada e registrar auditoria
+    const despesaAtualizada: DespesaVeiculo = {
+      ...despesa,
+      statusPagamento: afetaSaldo ? 'Estornada' : 'Cancelada',
+      statusEstorno: afetaSaldo ? 'Estornado' : undefined,
+      movimentacaoEstornoId: estornoMovId,
+      motivoEstorno: motivo,
+      dataHoraEstorno: nowIso,
+      usuarioEstornoId: usuarioId,
+      usuarioEstornoNome: usuarioNome,
+      trilhaAuditoria: [
+        ...(despesa.trilhaAuditoria || []),
+        {
+          dataHora: nowIso,
+          usuarioId,
+          usuarioNome,
+          acao: afetaSaldo ? 'Estorno e Cancelamento de Despesa Paga' : 'Cancelamento de Despesa',
+          detalhes: afetaSaldo
+            ? `Estorno de R$ ${valorDespesa.toFixed(2)} creditado na conta ${despesa.contaBancariaNome || 'bancária'}. Motivo: ${motivo}`
+            : `Despesa cancelada sem movimentação financeira. Motivo: ${motivo}`,
+        },
+      ],
+    };
+
+    const novasDespesas = [...despesas];
+    novasDespesas[despesaIndex] = despesaAtualizada;
+
+    const veiculoAtualizado: Veiculo = {
+      ...veiculo,
+      despesas: novasDespesas,
+      updatedAt: nowIso,
+    };
+
+    transaction.update(docVeiculoRef, {
+      despesas: novasDespesas,
+      updatedAt: nowIso,
+    });
+
+    return {
+      veiculoAtualizado,
+      contaAtualizada,
+      movimentacaoOriginal: movOriginalData,
+      movimentacaoEstorno: movEstorno,
+      foiEstornada: afetaSaldo,
+    };
+  });
 }
 
 

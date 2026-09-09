@@ -57,6 +57,14 @@ export const ModalEditarContratoAtivo: React.FC<ModalEditarContratoAtivoProps> =
   const [motoristaApp, setMotoristaApp] = useState<'Uber' | '99' | 'Indrive' | 'Misto'>(
     contrato.motoristaApp || 'Uber'
   );
+  const [motoristaRg, setMotoristaRg] = useState(contrato.motoristaRg || '');
+  const [motoristaCnh, setMotoristaCnh] = useState(contrato.motoristaCnh || '');
+  const [motoristaCnhCategoria, setMotoristaCnhCategoria] = useState(contrato.motoristaCnhCategoria || 'B');
+  const [motoristaCnhValidade, setMotoristaCnhValidade] = useState(contrato.motoristaCnhValidade || '');
+  const [motoristaNacionalidade, setMotoristaNacionalidade] = useState(contrato.motoristaNacionalidade || 'Brasileiro(a)');
+  const [motoristaEstadoCivil, setMotoristaEstadoCivil] = useState(contrato.motoristaEstadoCivil || 'Solteiro(a)');
+  const [motoristaProfissao, setMotoristaProfissao] = useState(contrato.motoristaProfissao || 'Motorista de Aplicativo');
+  const [motoristaEmail, setMotoristaEmail] = useState(contrato.motoristaEmail || '');
   const [statusContrato, setStatusContrato] = useState<'Ativo' | 'Encerrado' | 'Inadimplente'>(
     contrato.status || 'Ativo'
   );
@@ -236,6 +244,14 @@ export const ModalEditarContratoAtivo: React.FC<ModalEditarContratoAtivoProps> =
         motoristaCpf: motoristaCpf.trim(),
         motoristaTelefone: motoristaTelefone.trim(),
         motoristaApp,
+        motoristaRg: motoristaRg.trim() || undefined,
+        motoristaCnh: motoristaCnh.trim() || undefined,
+        motoristaCnhCategoria: motoristaCnhCategoria || 'B',
+        motoristaCnhValidade: motoristaCnhValidade || undefined,
+        motoristaNacionalidade: motoristaNacionalidade.trim() || 'Brasileiro(a)',
+        motoristaEstadoCivil: motoristaEstadoCivil.trim() || 'Solteiro(a)',
+        motoristaProfissao: motoristaProfissao.trim() || 'Motorista de Aplicativo',
+        motoristaEmail: motoristaEmail.trim() || undefined,
         status: statusContrato,
         valorSemanal: Number(valorSemanal) || 0,
         diaCobranca,
@@ -444,6 +460,89 @@ export const ModalEditarContratoAtivo: React.FC<ModalEditarContratoAtivoProps> =
                       <option value="Inadimplente">Inadimplente (Com pendências)</option>
                       <option value="Encerrado">Encerrado / Devolvido</option>
                     </select>
+                  </div>
+                </div>
+
+                {/* Qualificação Civil & Documentos */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2 border-t border-white/5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1">RG do Condutor</label>
+                    <input
+                      type="text"
+                      value={motoristaRg}
+                      onChange={(e) => setMotoristaRg(e.target.value)}
+                      placeholder="RG"
+                      className="w-full bg-[#161722] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1">CNH e Categoria</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={motoristaCnh}
+                        onChange={(e) => setMotoristaCnh(e.target.value)}
+                        placeholder="Nº CNH"
+                        className="flex-1 bg-[#161722] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
+                      />
+                      <select
+                        value={motoristaCnhCategoria}
+                        onChange={(e) => setMotoristaCnhCategoria(e.target.value)}
+                        className="w-16 bg-[#161722] border border-white/10 rounded-xl px-2 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                      >
+                        <option value="B">B</option>
+                        <option value="AB">AB</option>
+                        <option value="A">A</option>
+                        <option value="C">C</option>
+                        <option value="D">D</option>
+                        <option value="E">E</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1">Nacionalidade</label>
+                    <input
+                      type="text"
+                      value={motoristaNacionalidade}
+                      onChange={(e) => setMotoristaNacionalidade(e.target.value)}
+                      placeholder="Ex: Brasileiro(a)"
+                      className="w-full bg-[#161722] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1">Estado Civil</label>
+                    <input
+                      type="text"
+                      value={motoristaEstadoCivil}
+                      onChange={(e) => setMotoristaEstadoCivil(e.target.value)}
+                      placeholder="Ex: Solteiro(a)"
+                      className="w-full bg-[#161722] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1">Profissão</label>
+                    <input
+                      type="text"
+                      value={motoristaProfissao}
+                      onChange={(e) => setMotoristaProfissao(e.target.value)}
+                      placeholder="Ex: Motorista de Aplicativo"
+                      className="w-full bg-[#161722] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1">E-mail do Condutor</label>
+                    <input
+                      type="email"
+                      value={motoristaEmail}
+                      onChange={(e) => setMotoristaEmail(e.target.value)}
+                      placeholder="Ex: condutor@email.com"
+                      className="w-full bg-[#161722] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
                   </div>
                 </div>
               </div>

@@ -353,6 +353,10 @@ export interface ContratoLocacao {
   motoristaNome: string;
   motoristaCpf: string;
   motoristaRg?: string;
+  motoristaNacionalidade?: string;
+  motoristaEstadoCivil?: string;
+  motoristaProfissao?: string;
+  motoristaEmail?: string;
   motoristaCnh?: string;
   motoristaCnhCategoria?: string;
   motoristaCnhValidade?: string;
@@ -384,7 +388,7 @@ export interface ContratoLocacao {
   // Limites e Multas Parametrizáveis
   limiteKmSemanal?: number; // Padrão: 1750 km
   valorMultaPorKmExcedente?: number; // Padrão: 1.20 R$/km
-  percentualMultaAtraso?: number; // Padrão: 40 (%)
+  percentualMultaAtraso?: number; // Padrão: 10 (%)
   // Caução & Carência de Devolução (30 dias)
   caucao: number; // Caução total exigido
   formaPagamentoCaucao?: 'A_VISTA' | 'PARCELADO_SEMANAL';

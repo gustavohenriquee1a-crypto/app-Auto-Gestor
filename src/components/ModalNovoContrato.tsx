@@ -40,6 +40,10 @@ export const ModalNovoContrato: React.FC<ModalNovoContratoProps> = ({
   const [motoristaCnh, setMotoristaCnh] = useState('');
   const [motoristaCnhCategoria, setMotoristaCnhCategoria] = useState('B');
   const [motoristaCnhValidade, setMotoristaCnhValidade] = useState('');
+  const [motoristaNacionalidade, setMotoristaNacionalidade] = useState('Brasileiro(a)');
+  const [motoristaEstadoCivil, setMotoristaEstadoCivil] = useState('Solteiro(a)');
+  const [motoristaProfissao, setMotoristaProfissao] = useState('Motorista de Aplicativo');
+  const [motoristaEmail, setMotoristaEmail] = useState('');
   
   // Endereço do Motorista
   const [logradouro, setLogradouro] = useState('');
@@ -52,13 +56,13 @@ export const ModalNovoContrato: React.FC<ModalNovoContratoProps> = ({
 
   const [motoristaTelefone, setMotoristaTelefone] = useState('');
   const [motoristaApp, setMotoristaApp] = useState<'Uber' | '99' | 'Indrive' | 'Misto'>('Uber');
-  const [valorSemanal, setValorSemanal] = useState<number>(650);
+  const [valorSemanal, setValorSemanal] = useState<number>(770);
   const [diaCobranca, setDiaCobranca] = useState<any>('Segunda-feira');
   
   // Caução & Parcelamento
-  const [caucao, setCaucao] = useState<number>(1400);
+  const [caucao, setCaucao] = useState<number>(600);
   const [formaPagamentoCaucao, setFormaPagamentoCaucao] = useState<'A_VISTA' | 'PARCELADO_SEMANAL'>('A_VISTA');
-  const [quantidadeParcelasCaucao, setQuantidadeParcelasCaucao] = useState<number>(4);
+  const [quantidadeParcelasCaucao, setQuantidadeParcelasCaucao] = useState<number>(6);
 
   // Representante Legal da Locadora
   const [representanteLocadoraNome, setRepresentanteLocadoraNome] = useState('Diretoria Auto Gestor');
@@ -100,11 +104,15 @@ export const ModalNovoContrato: React.FC<ModalNovoContratoProps> = ({
       }
       setMotoristaTelefone(contratoToEdit.motoristaTelefone || '');
       setMotoristaApp(contratoToEdit.motoristaApp || 'Uber');
-      setValorSemanal(contratoToEdit.valorSemanal || 650);
+      setMotoristaNacionalidade(contratoToEdit.motoristaNacionalidade || 'Brasileiro(a)');
+      setMotoristaEstadoCivil(contratoToEdit.motoristaEstadoCivil || 'Solteiro(a)');
+      setMotoristaProfissao(contratoToEdit.motoristaProfissao || 'Motorista de Aplicativo');
+      setMotoristaEmail(contratoToEdit.motoristaEmail || '');
+      setValorSemanal(contratoToEdit.valorSemanal || 770);
       setDiaCobranca(contratoToEdit.diaCobranca || 'Segunda-feira');
-      setCaucao(contratoToEdit.caucao || 1400);
+      setCaucao(contratoToEdit.caucao || 600);
       setFormaPagamentoCaucao(contratoToEdit.formaPagamentoCaucao || 'A_VISTA');
-      setQuantidadeParcelasCaucao(contratoToEdit.quantidadeParcelasCaucao || 4);
+      setQuantidadeParcelasCaucao(contratoToEdit.quantidadeParcelasCaucao || 6);
       setRepresentanteLocadoraNome(contratoToEdit.representanteLocadoraNome || 'Diretoria Auto Gestor');
       setRepresentanteLocadoraCpf(contratoToEdit.representanteLocadoraCpf || '');
       setVistoriaRetiradaId(contratoToEdit.vistoriaRetiradaId || '');
@@ -115,7 +123,7 @@ export const ModalNovoContrato: React.FC<ModalNovoContratoProps> = ({
       setCaucaoPendente(Boolean(contratoToEdit.caucaoPendente));
       setLimiteKmSemanal(contratoToEdit.limiteKmSemanal ?? 1750);
       setValorMultaPorKmExcedente(contratoToEdit.valorMultaPorKmExcedente ?? 1.20);
-      setPercentualMultaAtraso(contratoToEdit.percentualMultaAtraso ?? 40);
+      setPercentualMultaAtraso(contratoToEdit.percentualMultaAtraso ?? 10);
     } else if (defaultVeiculo) {
       setSelectedVeiculoId(defaultVeiculo.id);
       setKmInicialCustom(defaultVeiculo.kmAtual || 0);
@@ -192,6 +200,10 @@ export const ModalNovoContrato: React.FC<ModalNovoContratoProps> = ({
         motoristaCnh: motoristaCnh.trim() || undefined,
         motoristaCnhCategoria: motoristaCnhCategoria || 'B',
         motoristaCnhValidade: motoristaCnhValidade || undefined,
+        motoristaNacionalidade: motoristaNacionalidade.trim() || 'Brasileiro(a)',
+        motoristaEstadoCivil: motoristaEstadoCivil.trim() || 'Solteiro(a)',
+        motoristaProfissao: motoristaProfissao.trim() || 'Motorista de Aplicativo',
+        motoristaEmail: motoristaEmail.trim() || undefined,
         motoristaEndereco: enderecoObj,
         motoristaTelefone: motoristaTelefone.trim() || '(11) 99999-9999',
         motoristaApp,
@@ -214,7 +226,7 @@ export const ModalNovoContrato: React.FC<ModalNovoContratoProps> = ({
         caucaoPendente,
         limiteKmSemanal: Number(limiteKmSemanal) || 1750,
         valorMultaPorKmExcedente: Number(valorMultaPorKmExcedente) || 1.20,
-        percentualMultaAtraso: Number(percentualMultaAtraso) || 40,
+        percentualMultaAtraso: Number(percentualMultaAtraso) || 10,
       },
       contratoToEdit?.id
     );
@@ -424,6 +436,53 @@ export const ModalNovoContrato: React.FC<ModalNovoContratoProps> = ({
                   type="date"
                   value={motoristaCnhValidade}
                   onChange={(e) => setMotoristaCnhValidade(e.target.value)}
+                  className="w-full p-2 rounded-xl border border-white/10 text-xs bg-[#16171f] text-slate-200 outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            {/* Qualificação Civil do Motorista */}
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[11px] text-slate-300 font-semibold mb-1">Nacionalidade</label>
+                <input
+                  type="text"
+                  value={motoristaNacionalidade}
+                  onChange={(e) => setMotoristaNacionalidade(e.target.value)}
+                  placeholder="Ex: Brasileiro(a)"
+                  className="w-full p-2 rounded-xl border border-white/10 text-xs bg-[#16171f] text-slate-200 outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-slate-300 font-semibold mb-1">Estado Civil</label>
+                <input
+                  type="text"
+                  value={motoristaEstadoCivil}
+                  onChange={(e) => setMotoristaEstadoCivil(e.target.value)}
+                  placeholder="Ex: Solteiro(a)"
+                  className="w-full p-2 rounded-xl border border-white/10 text-xs bg-[#16171f] text-slate-200 outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-slate-300 font-semibold mb-1">Profissão</label>
+                <input
+                  type="text"
+                  value={motoristaProfissao}
+                  onChange={(e) => setMotoristaProfissao(e.target.value)}
+                  placeholder="Ex: Motorista de Aplicativo"
+                  className="w-full p-2 rounded-xl border border-white/10 text-xs bg-[#16171f] text-slate-200 outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-slate-300 font-semibold mb-1">E-mail do Condutor</label>
+                <input
+                  type="email"
+                  value={motoristaEmail}
+                  onChange={(e) => setMotoristaEmail(e.target.value)}
+                  placeholder="Ex: motorista@email.com"
                   className="w-full p-2 rounded-xl border border-white/10 text-xs bg-[#16171f] text-slate-200 outline-none focus:border-blue-500"
                 />
               </div>

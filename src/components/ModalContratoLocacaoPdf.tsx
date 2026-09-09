@@ -93,8 +93,23 @@ export const ModalContratoLocacaoPdf: React.FC<ModalContratoLocacaoPdfProps> = (
 
   const endMot = contrato.motoristaEndereco;
   const enderecoMotoristaStr = endMot
-    ? `${endMot.logradouro || ''}, ${endMot.numero || 's/n'}${endMot.complemento ? ` - ${endMot.complemento}` : ''} - ${endMot.bairro || ''}, ${endMot.cidade || ''}/${endMot.uf || ''} - CEP: ${endMot.cep || ''}`
-    : 'Conforme cadastro';
+    ? `${endMot.logradouro || ''}${endMot.numero ? `, nº ${endMot.numero}` : ''}${endMot.complemento ? ` - ${endMot.complemento}` : ''}${endMot.bairro ? `, ${endMot.bairro}` : ''}`
+    : '[ENDEREÇO NÃO INFORMADO]';
+
+  const dataAssinaturaFormatada = contrato.dataInicio
+    ? (() => {
+        try {
+          const partes = contrato.dataInicio.split('-');
+          if (partes.length === 3) {
+            const d = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]));
+            return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+          }
+        } catch {
+          // fallback
+        }
+        return new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+      })()
+    : new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
 
   const handlePrint = () => {
     if (printRef.current) {
@@ -186,11 +201,10 @@ export const ModalContratoLocacaoPdf: React.FC<ModalContratoLocacaoPdfProps> = (
             {/* Header Timbrado */}
             <div className="border-b-2 border-slate-900 pb-4 text-center space-y-1">
               <h1 className="text-base font-black uppercase tracking-wider text-slate-900">
-                {nomeFantasia ? `${nomeFantasia.toUpperCase()} • ${razaoSocial}` : razaoSocial}
+                TROCA FÁCIL VEÍCULOS LTDA
               </h1>
               <p className="text-[11px] text-slate-600">
-                CNPJ: {cnpj} • {enderecoCompleto}
-                {configLoja?.telefone ? ` • Tel: ${configLoja.telefone}` : ''}
+                CNPJ: 47.271.452/0001-71 • Rua Nicolau Cacciatori, nº 477, Jardim dos Pioneiros, CEP 19050-350, Presidente Prudente/SP
               </p>
               <div className="pt-2 pb-1">
                 <h2 className="text-xs sm:text-[13px] font-extrabold uppercase tracking-wide text-blue-950 py-1.5 px-3 bg-slate-100 border border-slate-300 rounded inline-block">
@@ -208,213 +222,492 @@ export const ModalContratoLocacaoPdf: React.FC<ModalContratoLocacaoPdfProps> = (
                 Quadro Resumo das Partes, Veículo e Condições Comerciais
               </div>
 
-              {/* LOCADORA */}
+              {/* 1. LOCADORA (PROPRIETÁRIA/POSSUIDORA DIRETA) */}
               <div className="p-3.5 border-b border-slate-200 bg-white space-y-1">
-                <span className="font-bold text-slate-800 uppercase block text-[10px]">1. LOCADORA (PROPRIETÁRIA/POSSUIDORA DIRETA):</span>
+                <span className="font-bold text-slate-800 uppercase block text-[10px]">
+                  1. LOCADORA (PROPRIETÁRIA/POSSUIDORA DIRETA):
+                </span>
                 <p className="text-slate-700 leading-normal">
-                  <strong>{razaoSocial}</strong> (Nome Fantasia: <strong>{nomeFantasia}</strong>), pessoa jurídica de direito privado inscrita no CNPJ sob o nº <strong>{cnpj}</strong>, com sede comercial estabelecida em <strong>{enderecoCompleto}</strong>, neste ato representada por seu representante legal infra-assinado <strong>{repNome}</strong>, portador do CPF nº <strong>{repCpf}</strong>.
+                  <strong>TROCA FÁCIL VEÍCULOS LTDA</strong>, pessoa jurídica de direito privado, devidamente inscrita no CNPJ sob o nº <strong>47.271.452/0001-71</strong>, com sede na Rua Nicolau Cacciatori, nº 477, Jardim dos Pioneiros, CEP 19050-350, na cidade de Presidente Prudente/SP.
                 </p>
               </div>
 
-              {/* LOCATÁRIO / MOTORISTA */}
+              {/* 2. LOCATÁRIO (CONDUTOR RESPONSÁVEL) */}
               <div className="p-3.5 border-b border-slate-200 bg-slate-50/50 space-y-1">
-                <span className="font-bold text-slate-800 uppercase block text-[10px]">2. LOCATÁRIO (CONDUTOR RESPONSÁVEL):</span>
+                <span className="font-bold text-slate-800 uppercase block text-[10px]">
+                  2. LOCATÁRIO (CONDUTOR RESPONSÁVEL):
+                </span>
                 <p className="text-slate-700 leading-normal">
-                  <strong>{contrato.motoristaNome}</strong>, portador do CPF nº <strong>{contrato.motoristaCpf}</strong>
-                  {contrato.motoristaRg ? `, RG nº ${contrato.motoristaRg}` : ''}
-                  {contrato.motoristaCnh ? `, CNH nº ${contrato.motoristaCnh} (Categoria ${contrato.motoristaCnhCategoria || 'B'})` : ''}
-                  , residente e domiciliado em: {enderecoMotoristaStr}. Contato telefônico/WhatsApp: <strong>{contrato.motoristaTelefone}</strong>. Plataforma de mobilidade declarada: <strong>{contrato.motoristaApp}</strong>.
+                  <strong>{contrato.motoristaNome}</strong>, {contrato.motoristaNacionalidade || 'Brasileiro(a)'}, {contrato.motoristaEstadoCivil || 'Solteiro(a)'}, {contrato.motoristaProfissao || 'Motorista de Aplicativo'}, portador do RG nº <strong>{contrato.motoristaRg || '[NÃO INFORMADO]'}</strong>, inscrito no CPF sob o nº <strong>{contrato.motoristaCpf}</strong>, CNH nº <strong>{contrato.motoristaCnh || '[NÃO INFORMADO]'}</strong>{contrato.motoristaCnhCategoria ? ` (Categoria ${contrato.motoristaCnhCategoria})` : ''}, residente e domiciliado em <strong>{enderecoMotoristaStr}</strong>, CEP <strong>{endMot?.cep || '[NÃO INFORMADO]'}</strong>, cidade de <strong>{endMot?.cidade || 'Presidente Prudente'}/{endMot?.uf || 'SP'}</strong>, telefone <strong>{contrato.motoristaTelefone || '[NÃO INFORMADO]'}</strong>, e-mail <strong>{contrato.motoristaEmail || '[NÃO INFORMADO]'}</strong>.
                 </p>
               </div>
 
-              {/* VEÍCULO */}
+              {/* 3. VEÍCULO AUTOMOTOR OBJETO DA LOCAÇÃO */}
               <div className="p-3.5 border-b border-slate-200 bg-white space-y-1">
-                <span className="font-bold text-slate-800 uppercase block text-[10px]">3. VEÍCULO AUTOMOTOR OBJETO DA LOCAÇÃO:</span>
+                <span className="font-bold text-slate-800 uppercase block text-[10px]">
+                  3. VEÍCULO AUTOMOTOR OBJETO DA LOCAÇÃO:
+                </span>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-slate-700 pt-1">
                   <div><strong>Modelo:</strong> {veiculo.modelo}</div>
                   <div><strong>Marca:</strong> {veiculo.marca}</div>
                   <div><strong>Placa:</strong> <span className="font-mono font-bold text-blue-900">{veiculo.placa}</span></div>
-                  <div><strong>Ano/Modelo:</strong> {veiculo.ano}</div>
+                  <div><strong>Ano/Modelo:</strong> {veiculo.anoFabricacao || veiculo.ano}/{veiculo.anoModelo || veiculo.ano}</div>
                   <div><strong>Cor:</strong> {veiculo.cor}</div>
                   <div><strong>Chassi:</strong> <span className="font-mono">{veiculo.chassi || 'Constante no CRLV'}</span></div>
                   <div><strong>Renavam:</strong> <span className="font-mono">{veiculo.renavam || 'Constante no CRLV'}</span></div>
-                  <div><strong>KM Inicial de Saída:</strong> {contrato.kmInicial?.toLocaleString('pt-BR')} KM</div>
+                  <div><strong>KM Inicial de Saída:</strong> {(contrato.kmInicial || 0).toLocaleString('pt-BR')} KM</div>
                 </div>
               </div>
 
-              {/* CONDIÇÕES FINANCEIRAS */}
+              {/* 4. CONDIÇÕES FINANCEIRAS & OPERACIONAIS */}
               <div className="p-3.5 bg-slate-50/50 space-y-1">
-                <span className="font-bold text-slate-800 uppercase block text-[10px]">4. CONDIÇÕES FINANCEIRAS & OPERACIONAIS:</span>
+                <span className="font-bold text-slate-800 uppercase block text-[10px]">
+                  4. CONDIÇÕES FINANCEIRAS & OPERACIONAIS:
+                </span>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-slate-700 pt-1">
-                  <div><strong>Aluguel Semanal:</strong> <span className="text-emerald-700 font-bold">{formatCurrency(contrato.valorSemanal)}</span></div>
-                  <div><strong>Dia de Cobrança:</strong> {contrato.diaCobranca}</div>
                   <div>
-                    <strong>Caução de Garantia:</strong> {formatCurrency(contrato.caucao)}{' '}
-                    {contrato.formaPagamentoCaucao === 'PARCELADO_SEMANAL'
-                      ? `(${contrato.quantidadeParcelasCaucao || 4}x de ${formatCurrency(contrato.valorParcelaCaucao || (contrato.caucao / 4))})`
-                      : '(À Vista)'}
+                    <strong>Aluguel Semanal:</strong> <span className="text-emerald-700 font-bold">{formatCurrency(contrato.valorSemanal || 770)}</span>
                   </div>
-                  <div><strong>Franquia Semanal de KM:</strong> {contrato.limiteKmSemanal || 1750} KM / semana</div>
-                  <div><strong>Valor KM Excedente:</strong> {formatCurrency(contrato.valorMultaPorKmExcedente || 1.20)} / KM</div>
-                  <div><strong>Multa por Atraso:</strong> {contrato.percentualMultaAtraso || 40}% do valor semanal</div>
-                  <div className="sm:col-span-3 pt-1 border-t border-slate-200">
-                    <strong>Franquia de Seguro em Caso de Sinistro/Colisão:</strong> <span className="font-bold text-red-700">R$ 3.000,00 (Três mil reais)</span>
+                  <div>
+                    <strong>Vencimento Semanal:</strong> Toda segunda-feira, até as 11h00
+                  </div>
+                  <div>
+                    <strong>Forma de Pagamento:</strong> PIX ou Dinheiro
+                  </div>
+                  <div>
+                    <strong>Caução de Garantia:</strong> {formatCurrency(contrato.caucao || 600)}{' '}
+                    {contrato.formaPagamentoCaucao === 'PARCELADO_SEMANAL'
+                      ? `(${contrato.quantidadeParcelasCaucao || 6}x de ${formatCurrency(contrato.valorParcelaCaucao || (contrato.caucao / (contrato.quantidadeParcelasCaucao || 6)) || 100)})`
+                      : '(À vista)'}
+                  </div>
+                  <div>
+                    <strong>Limite Semanal de KM:</strong> {contrato.limiteKmSemanal || 1750} KM / semana
+                  </div>
+                  <div>
+                    <strong>Valor KM Excedente:</strong> {formatCurrency(contrato.valorMultaPorKmExcedente || 1.20)} / KM
+                  </div>
+                  <div>
+                    <strong>Multa por Atraso:</strong> 10% (dez por cento) sobre a locação + juros 1% a.m.
+                  </div>
+                  <div>
+                    <strong>Bloqueio por Inadimplência:</strong> Bloqueio a partir das 18h00 do mesmo dia; rescisão após 24h
+                  </div>
+                  <div>
+                    <strong>Participação em Sinistro:</strong> <span className="font-bold text-red-700">R$ 3.000,00</span> (G AUTOS)
+                  </div>
+                  <div className="sm:col-span-3 pt-1 border-t border-slate-200 flex flex-wrap gap-x-6 gap-y-1 text-[10px] text-slate-600">
+                    <span><strong>Carência Devolução Caução:</strong> até 45 dias da assinatura do Laudo de Devolução</span>
+                    <span><strong>Envio Foto Odômetro:</strong> toda segunda-feira (multa de R$ 50,00 por ocorrência)</span>
+                    <span><strong>Raio de Circulação:</strong> até 100 km de Presidente Prudente/SP</span>
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* IDENTIFICAÇÃO DAS PARTES */}
+            <div className="space-y-2 pt-2 text-[11px] text-justify text-slate-800 leading-relaxed border-t border-slate-200">
+              <h3 className="font-bold text-slate-900 uppercase text-xs tracking-wider">
+                IDENTIFICAÇÃO DAS PARTES
+              </h3>
+              
+              <p>
+                <strong>LOCADORA:</strong> <strong>TROCA FÁCIL VEÍCULOS LTDA</strong>, pessoa jurídica de direito privado, devidamente inscrita no CNPJ sob o nº <strong>47.271.452/0001-71</strong>, com sede na Rua Nicolau Cacciatori, nº 477, Jardim dos Pioneiros, CEP 19050-350, na cidade de Presidente Prudente/SP.
+              </p>
+
+              <p>
+                <strong>LOCATÁRIO:</strong> <strong>{contrato.motoristaNome}</strong>, {contrato.motoristaNacionalidade || 'Brasileiro(a)'}, {contrato.motoristaEstadoCivil || 'Solteiro(a)'}, {contrato.motoristaProfissao || 'Motorista de Aplicativo'}, portador do RG nº <strong>{contrato.motoristaRg || '[NÃO INFORMADO]'}</strong>, inscrito no CPF sob o nº <strong>{contrato.motoristaCpf}</strong>, CNH nº <strong>{contrato.motoristaCnh || '[NÃO INFORMADO]'}</strong>{contrato.motoristaCnhCategoria ? ` (Categoria ${contrato.motoristaCnhCategoria})` : ''}, residente e domiciliado em <strong>{enderecoMotoristaStr}</strong>, CEP <strong>{endMot?.cep || '[NÃO INFORMADO]'}</strong>, cidade de <strong>{endMot?.cidade || 'Presidente Prudente'}/{endMot?.uf || 'SP'}</strong>, telefone <strong>{contrato.motoristaTelefone || '[NÃO INFORMADO]'}</strong>, e-mail <strong>{contrato.motoristaEmail || '[NÃO INFORMADO]'}</strong>.
+              </p>
+
+              <p>
+                As partes acima identificadas têm, entre si, justo e contratado o presente <strong>CONTRATO DE LOCAÇÃO DE AUTOMÓVEL</strong>, que se regerá pelas cláusulas e condições a seguir elencadas.
+              </p>
             </div>
 
             {/* CLÁUSULAS CONTRATUAIS COMPLETAS */}
             <div className="space-y-3.5 text-[11px] text-justify text-slate-800 leading-relaxed">
-              <h4 className="font-bold text-slate-900 uppercase border-b border-slate-300 pb-1 text-xs tracking-wider">
-                Cláusulas e Condições Gerais do Contrato
-              </h4>
-
-              <p>
-                <strong>CLÁUSULA PRIMEIRA - DO OBJETO E DESTINAÇÃO EXCLUSIVA:</strong> O presente contrato tem por objeto a locação do veículo automotor individualizado no Quadro Resumo deste instrumento, de propriedade legítima ou legítima posse da <strong>LOCADORA</strong>, destinado única e exclusivamente para a exploração da atividade profissional de transporte individual remunerado de passageiros através de aplicativos e plataformas de mobilidade urbana (Uber, 99, inDrive e congêneres) pelo <strong>LOCATÁRIO</strong> devidamente credenciado.
-              </p>
-
-              <div className="p-2.5 bg-slate-50 border-l-2 border-amber-500 rounded text-slate-800">
-                <strong>Parágrafo Único - Do Banimento ou Exclusão dos Aplicativos de Mobilidade:</strong> Na hipótese de o <strong>LOCATÁRIO</strong> sofrer suspensão preventiva, cancelamento ou banimento/exclusão definitiva de sua conta de motorista parceiro perante os aplicativos de mobilidade urbana em que opera, obriga-se a comunicar imediatamente o fato à <strong>LOCADORA</strong> e <strong>proceder à DEVOLUÇÃO IMEDIATA DO VEÍCULO na sede da LOCADORA no prazo máximo e improrrogável de 24 (vinte e quatro) horas</strong> contadas da notificação da suspensão ou banimento. O não cumprimento da devolução no prazo de 24 horas configurará retenção indevida e crime de apropriação indébita (Art. 168 do Código Penal), autorizando o bloqueio eletrônico do motor de partida e ajuizamento imediato de Ação de Busca e Apreensão, com cobrança cumulada de perdas e danos.
+              <div className="border-t border-slate-300 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA PRIMEIRA – DO OBJETO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>1.1.</strong> O presente contrato tem como objeto a locação do veículo de propriedade da LOCADORA, identificado no Quadro Resumo deste instrumento, em perfeito estado de conservação e funcionamento, que neste ato é entregue ao LOCATÁRIO para utilização conforme as condições aqui estabelecidas.
+                </p>
+                <p className="mb-1.5">
+                  <strong>1.2.</strong> A expressão “veículo” compreende o automóvel, incluindo pneus, ferramentas, equipamentos, acessórios, placas, chaves e documentos.
+                </p>
+                <p className="mb-1.5">
+                  <strong>1.3.</strong> As partes declaram terem efetuado a vistoria do objeto do presente contrato e que o mesmo se encontra em perfeito estado de conservação e funcionamento, conforme laudo de vistoria de retirada.
+                </p>
+                <p>
+                  <strong>1.4.</strong> O veículo deverá ser devolvido na sede da LOCADORA ou onde esta indicar, na data e hora previamente estabelecidas, nas condições previstas neste contrato.
+                </p>
               </div>
 
-              <div>
-                <p>
-                  <strong>CLÁUSULA SEGUNDA - DAS RESTRIÇÕES E VEDAÇÕES EXPRESSAS DE USO:</strong> O veículo locado deve ser utilizado estritamente com diligência e respeito às normas de trânsito e aos limites de sua capacidade. É expressamente vedado ao <strong>LOCATÁRIO</strong>, sob pena de rescisão contratual imediata por justa causa, retenção da caução, cobrança de perdas e danos e ação regressiva:
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA SEGUNDA – DO USO DO VEÍCULO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>2.1.</strong> O veículo será utilizado unicamente pelo LOCATÁRIO com a finalidade de transporte de passageiros por meio de aplicativos, tais como Uber, 99, inDrive e congêneres, não sendo permitido seu uso por terceiros, sob pena de rescisão contratual e aplicação das multas previstas neste contrato.
                 </p>
-                <div className="mt-1.5 space-y-1 pl-2">
-                  <p>
-                    <strong>a) Transporte de Cargas e Mercadorias:</strong> Utilizar o veículo para transporte de cargas volumosas ou pesadas, fretes, entregas de grande porte, carretos, materiais perigosos, inflamáveis, corrosivos, explosivos, entulho de obras ou qualquer volume que descaracterize o transporte exclusivo de passageiros ou exceda a capacidade de carga recomendada pelo fabricante do automóvel;
-                  </p>
-                  <p>
-                    <strong>b) Corridas, Competições e Rachas:</strong> Utilizar, submeter ou permitir que o veículo participe de qualquer competição automobilística, corridas, provas de arrancada, gincanas, rally, testes de aceleração, manobras bruscas perigosas ("rachas" ou "pegas"), seja em vias públicas ou em pistas privadas;
-                  </p>
-                  <p>
-                    <strong>c) Vias Alagadas e Terrenos Inóspitos:</strong> Trafegar ou transpor vias públicas sabidamente alagadas, poças d'água profundas, enchentes, enxurradas, estradas de terra severamente esburacadas ou lamacentas, praias, dunas ou terrenos acidentados, assumindo integral responsabilidade por danos causados na suspensão, lataria e especialmente calço hidráulico no motor;
-                  </p>
-                  <p>
-                    <strong>d) Trânsito Fora do Território Nacional:</strong> Conduzir, levar ou transportar o veículo para fora das fronteiras da República Federativa do Brasil, sendo terminantemente proibida a travessia para países fronteiriços (como Paraguai, Argentina, Uruguai, Bolívia e demais nações vizinhas), sem autorização expressa, prévia e formal por escrito lavrada pela <strong>LOCADORA</strong>;
-                  </p>
-                  <p>
-                    <strong>e) Sublocação ou Cessão a Terceiros:</strong> Sublocar, emprestar, ceder, alugar, doar ou permitir que qualquer terceiro não expressamente qualificado e homologado neste contrato conduza o veículo sob qualquer pretexto;
-                  </p>
-                  <p>
-                    <strong>f) Reboque e Guincho:</strong> Utilizar o automóvel para empurrar, puxar, guinchar outros veículos ou tracionar carretas e reboques de qualquer espécie;
-                  </p>
-                  <p>
-                    <strong>g) Ilícitos e Condução sob Substâncias:</strong> Conduzir o veículo sob influência de álcool, drogas ou entorpecentes ilícitos, ou utilizá-lo para a prática de qualquer ato ilícito, contrabando ou descaminho.
-                  </p>
+                <p className="mb-1.5">
+                  <strong>2.2.</strong> É proibida a utilização e condução do veículo para:
+                </p>
+                <div className="pl-3 space-y-1 mb-1.5">
+                  <p>(a) transporte de cargas, mediante cobrança de qualquer natureza, ou transporte de pessoas além da capacidade informada nas especificações técnicas do veículo;</p>
+                  <p>(b) teste de velocidade, rachas ou competições de qualquer natureza;</p>
+                  <p>(c) transporte de combustíveis, explosivos ou qualquer outro material inflamável, produtos proibidos por lei, ou qualquer fim incompatível com a finalidade descrita neste contrato;</p>
+                  <p>(d) uso incompatível com as características do veículo ou em desacordo com a finalidade da locação;</p>
+                  <p>(e) violação das normas do Código de Trânsito Brasileiro;</p>
+                  <p>(f) guinchar, empurrar e/ou rebocar outros veículos;</p>
+                  <p>(g) quaisquer finalidades ilícitas;</p>
+                  <p>(h) campanha política;</p>
+                  <p>(i) circulação em condições impróprias, tais como áreas inundadas, dunas, terrenos que não ofereçam segurança para a integridade do veículo e seus ocupantes;</p>
+                  <p>(j) trânsito em cidades onde seja proibido o transporte por aplicativos, sendo de inteira responsabilidade do LOCATÁRIO quaisquer danos ocorridos em virtude de tal proibição, bem como despesas de liberação e apreensão do veículo;</p>
+                  <p>(k) circulação fora do território nacional.</p>
+                </div>
+                <p className="mb-1.5">
+                  <strong>2.3.</strong> O LOCATÁRIO é livre para determinar os dias e horários para a prestação de serviços, respeitada a legislação aplicável.
+                </p>
+                <p className="mb-1.5">
+                  <strong>2.4.</strong> O veículo possui limite de <strong>1.750 km (mil e setecentos e cinquenta quilômetros) semanais</strong>, conforme cláusula específica deste contrato.
+                </p>
+                <p>
+                  <strong>2.5.</strong> O veículo deve ser devolvido limpo e com o tanque de combustível na mesma quantidade em que foi entregue, sob pena de desconto na caução conforme previsto neste contrato.
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA TERCEIRA – DO PAGAMENTO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>3.1.</strong> O pagamento da locação será realizado semanalmente, de forma antecipada e vincendo, sendo o valor inicial de <strong>R$ 770,00 (setecentos e setenta reais)</strong>.
+                </p>
+                <p className="mb-1.5">
+                  <strong>3.2.</strong> Os pagamentos serão realizados por PIX ou dinheiro, em favor da LOCADORA, conforme dados informados no ato do pagamento.
+                </p>
+                <p className="mb-1.5">
+                  <strong>3.3.</strong> Os pagamentos serão realizados semanalmente, <strong>todas as segundas-feiras, até as 11h00</strong>.
+                </p>
+                <p className="mb-1.5">
+                  <strong>3.4.</strong> O atraso no pagamento sujeitará o LOCATÁRIO à incidência de multa moratória de <strong>10% (dez por cento)</strong> sobre o valor da locação, juros de mora de 1% ao mês e correção monetária.
+                </p>
+                <p className="mb-1.5">
+                  <strong>3.5.</strong> Em caso de atraso no pagamento até as 11h00 de segunda-feira, sem comunicação prévia e justificativa aceita pela LOCADORA, o veículo poderá ser <strong>bloqueado eletronicamente a partir das 18h00 do mesmo dia</strong>, ficando o LOCATÁRIO obrigado a devolver imediatamente o veículo na sede da LOCADORA.
+                </p>
+                <p>
+                  <strong>3.6.</strong> A inadimplência superior a <strong>24 (vinte e quatro) horas</strong> caracterizará rescisão automática do contrato por justa causa, facultando à LOCADORA a retomada imediata do veículo, independentemente de notificação judicial.
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA QUARTA – DA CAUÇÃO DE GARANTIA
+                </h4>
+                <p className="mb-1.5">
+                  <strong>4.1.</strong> Como garantia das obrigações assumidas neste contrato, o LOCATÁRIO entregará à LOCADORA, no ato da retirada do veículo, a quantia de <strong>R$ 600,00 (seiscentos reais)</strong> a título de caução, que poderá ser paga à vista ou parcelada em até 6 (seis) semanas de R$ 100,00.
+                </p>
+                <p className="mb-1.5">
+                  <strong>4.2.</strong> A caução não será remunerada, não incidindo juros ou correção em favor do LOCATÁRIO, e será mantida pela LOCADORA como garantia de cumprimento das obrigações contratuais, conservação e restituição do veículo, e pagamento de multas, pedágios, taxas e demais débitos.
+                </p>
+                <p className="mb-1.5">
+                  <strong>4.3.</strong> Em caso de devolução do veículo, a LOCADORA poderá reter a caução por até <strong>45 (quarenta e cinco) dias</strong>, contados da data de assinatura do Laudo de Devolução, para apuração de multas, pedágios, danos e demais débitos.
+                </p>
+                <p className="mb-1.5">
+                  <strong>4.4.</strong> Findo o prazo de retenção e inexistindo débitos, a caução será restituída integralmente ao LOCATÁRIO, sem juros, em até 5 (cinco) dias úteis. Havendo pendências, estas serão deduzidas e o saldo remanescente será devolvido no mesmo prazo.
+                </p>
+                <p>
+                  <strong>4.5.</strong> Caso o valor da caução seja utilizado para pagamento de multas ou outros débitos, o LOCATÁRIO deverá recompor o valor integral da caução (R$ 600,00) no prazo acordado com a LOCADORA, sob pena de rescisão contratual e retenção do veículo até a regularização.
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA QUINTA – DO CONTROLE DE QUILOMETRAGEM
+                </h4>
+                <p className="mb-1.5">
+                  <strong>5.1.</strong> O veículo possui limite semanal de rodagem de <strong>1.750 km (mil e setecentos e cinquenta quilômetros)</strong>, válido para todos os veículos da frota.
+                </p>
+                <p className="mb-1.5">
+                  <strong>5.2.</strong> O excedente de quilometragem será cobrado ao valor fixo de <strong>R$ 1,20 (um real e vinte centavos) por quilômetro rodado além do limite</strong>, apurado semanalmente.
+                </p>
+                <p className="mb-1.5">
+                  <strong>5.3.</strong> O LOCATÁRIO obriga-se a enviar, toda segunda-feira, juntamente com o dia do pagamento, fotografia clara e legível do painel do veículo, exibindo a quilometragem atual do odômetro.
+                </p>
+                <p className="mb-1.5">
+                  <strong>5.4.</strong> A LOCADORA utilizará, como forma de controle complementar, os dados de quilometragem fornecidos pelo sistema de rastreamento veicular, podendo confrontar as informações com as fotos enviadas pelo LOCATÁRIO.
+                </p>
+                <p>
+                  <strong>5.5.</strong> O não envio da fotografia do odômetro no prazo estabelecido sujeitará o LOCATÁRIO a multa contratual de <strong>R$ 50,00 (cinquenta reais)</strong> por ocorrência e bloqueio preventivo do veículo até a regularização da informação.
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA SEXTA – DO SEGURO / PROTEÇÃO VEICULAR E PARTICIPAÇÃO EM SINISTRO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>6.1.</strong> O veículo conta com proteção veicular contratada junto à G AUTOS, que cobre eventos como colisão, furto, roubo e incêndio, conforme condições gerais da apólice/certificado.
+                </p>
+                <p className="mb-1.5">
+                  <strong>6.2.</strong> Em caso de sinistro coberto (colisão, furto, roubo, incêndio, perda total), o LOCATÁRIO deverá arcar com participação obrigatória no valor fixo de <strong>R$ 3.000,00 (três mil reais)</strong>, a ser pago à LOCADORA em até 48 (quarenta e oito) horas da ocorrência.
+                </p>
+                <p className="mb-1.5">
+                  <strong>6.3.</strong> A participação obrigatória de R$ 3.000,00 corresponde à parcela de responsabilidade do condutor nos custos do sinistro, sendo que a LOCADORA assumirá a diferença entre esse valor e a franquia real da proteção veicular, quando houver.
+                </p>
+                <p className="mb-1.5">
+                  <strong>6.4.</strong> O pagamento da participação obrigatória será feito diretamente pelo LOCATÁRIO à LOCADORA, que repassará os valores à entidade de proteção veicular e/ou oficina, conforme o caso.
+                </p>
+                <p className="mb-1.5">
+                  <strong>6.5.</strong> Em caso de perda total, furto ou roubo, além da participação obrigatória, o LOCATÁRIO responderá por lucros cessantes, calculados com base no valor do aluguel semanal dividido por 7 (sete), multiplicado pelo número de dias em que o veículo permaneceu indisponível para locação em razão do sinistro e/ou reparos.
+                </p>
+                <p>
+                  <strong>6.6.</strong> A cobertura da proteção veicular não se aplicará e o LOCATÁRIO responderá integralmente pelos danos (incluindo valor do veículo com base na Tabela FIPE vigente e lucros cessantes) nas hipóteses de condução sob influência de álcool ou drogas, recusa ao teste do bafômetro, fuga do local do acidente, entrega da direção a terceiro não autorizado, ou prática de dolo ou culpa grave.
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA SÉTIMA – DAS INFRAÇÕES DE TRÂNSITO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>7.1.</strong> O LOCATÁRIO assume integral responsabilidade civil, criminal e administrativa por todas as infrações de trânsito (CTB) cometidas durante a vigência da posse do veículo.
+                </p>
+                <p className="mb-1.5">
+                  <strong>7.2.</strong> Em caso de notificação de infração, o LOCATÁRIO deverá fornecer, no prazo máximo de 48 (quarenta e oito) horas após a comunicação pela LOCADORA, todos os documentos necessários para a indicação do condutor infrator perante o órgão autuador.
+                </p>
+                <p className="mb-1.5">
+                  <strong>7.3.</strong> O LOCATÁRIO reembolsará à LOCADORA o valor integral da multa e taxa administrativa de 15% (quinze por cento) sobre o valor da multa, a título de custos de atendimento, emissão de documentos e deslocamento.
+                </p>
+                <p className="mb-1.5">
+                  <strong>7.4.</strong> O valor da multa e da taxa administrativa poderá ser descontado da caução, facultado ao LOCATÁRIO o parcelamento do débito, mediante acordo com a LOCADORA, sem prejuízo da obrigação de recompor o valor integral da caução.
+                </p>
+                <p>
+                  <strong>7.5.</strong> Caso o LOCATÁRIO se negue a assinar a indicação do condutor infrator, ficará sujeito ao pagamento de multa contratual equivalente ao dobro do valor da multa original, uma vez que a recusa pode acarretar majoração do débito junto ao órgão emissor.
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA OITAVA – DA MANUTENÇÃO PREVENTIVA E CONSERVAÇÃO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>8.1.</strong> As manutenções preventivas programadas por quilometragem (troca de óleo, filtros, revisões conforme manual do fabricante) são de responsabilidade da LOCADORA, que as realizará em oficinas parceiras/credenciadas, mediante agendamento prévio.
+                </p>
+                <p className="mb-1.5">
+                  <strong>8.2.</strong> O LOCATÁRIO obriga-se a levar o veículo à oficina indicada no dia e horário agendados, comunicar imediatamente à LOCADORA qualquer anormalidade no funcionamento do veículo e realizar verificações diárias de nível de óleo, água do radiador e pressão dos pneus.
+                </p>
+                <p className="mb-1.5">
+                  <strong>8.3.</strong> São de responsabilidade exclusiva do LOCATÁRIO os danos decorrentes de rodagem com falta de óleo e/ou água, ignorar luzes de alerta no painel, colisões, riscos, arranhões e amassados não constatados na vistoria de entrega, mau uso, negligência ou imperícia na condução do veículo.
+                </p>
+                <p>
+                  <strong>8.4.</strong> O não comparecimento do LOCATÁRIO à revisão agendada sujeitará o LOCATÁRIO ao pagamento de multa contratual equivalente ao valor de uma diária (R$ 110,00), sem prejuízo da responsabilidade por danos decorrentes da falta de manutenção.
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA NONA – DA VISTORIA, LIMPEZA E COMBUSTÍVEL
+                </h4>
+                <p className="mb-1.5">
+                  <strong>9.1.</strong> O veículo será entregue ao LOCATÁRIO mediante laudo de vistoria de retirada, assinado por ambas as partes, com registro do estado de conservação, quilometragem e nível de combustível.
+                </p>
+                <p className="mb-1.5">
+                  <strong>9.2.</strong> Na devolução, será realizada vistoria presencial obrigatória, com laudo comparativo em relação à vistoria de retirada, para apuração de danos, nível de combustível e condições de limpeza.
+                </p>
+                <p className="mb-1.5">
+                  <strong>9.3.</strong> O LOCATÁRIO obriga-se a devolver o veículo nas mesmas condições de conservação em que o recebeu, considerado o desgaste normal pelo uso.
+                </p>
+                <p className="mb-1.5">
+                  <strong>9.4.</strong> Caso o veículo seja devolvido sujo, será descontado da caução o valor de R$ 80,00 (oitenta reais) a título de lavagem.
+                </p>
+                <p>
+                  <strong>9.5.</strong> O veículo deverá ser devolvido com o mesmo nível de combustível anotado na retirada. Caso contrário, será cobrado o valor do combustível necessário para completar o tanque, acrescido de taxa de serviço de R$ 20,00 (vinte reais).
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA DÉCIMA – DO PRAZO DE DEVOLUÇÃO E RETOMADA DO VEÍCULO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>10.1.</strong> Em caso de rescisão do contrato, seja por inadimplência ou por vontade das partes, o LOCATÁRIO deverá devolver o veículo na sede da LOCADORA no prazo máximo e improrrogável de 12 (doze) horas, contados da notificação.
+                </p>
+                <p className="mb-1.5">
+                  <strong>10.2.</strong> Ultrapassado o prazo de 12 horas sem a devolução, a LOCADORA poderá bloquear eletronicamente o veículo, notificar o LOCATÁRIO para devolução imediata e promover as medidas judiciais cabíveis, inclusive ação de busca e apreensão.
+                </p>
+                <p className="mb-1.5">
+                  <strong>10.3.</strong> A não devolução do veículo no prazo estabelecido, após notificação, poderá configurar apropriação indébita (art. 168 do Código Penal), ficando o LOCATÁRIO responsável por todas as despesas de recuperação do bem, tais como chaveiro, combustível, guincho, pedágios, taxas judiciais, diárias de pátio, honorários advocatícios e demais custos necessários.
+                </p>
+                <p className="mb-1.5">
+                  <strong>10.4.</strong> Em caso de inadimplência e notificação, ficará o LOCATÁRIO sujeito ao repasse de honorários advocatícios, 10% (dez por cento) a título de cobrança extrajudicial e 20% (vinte por cento) em caso de cobrança judicial, incidentes sobre o valor total do débito.
+                </p>
+                <p>
+                  <strong>10.5.</strong> O LOCATÁRIO autoriza expressamente a LOCADORA a utilizar bloqueio eletrônico do veículo em situações de atraso no pagamento, descumprimento do prazo de devolução ou suspeita de uso indevido.
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA DÉCIMA PRIMEIRA – DO RAIO DE CIRCULAÇÃO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>11.1.</strong> O veículo poderá circular livremente em um raio de até 100 km (cem quilômetros) da cidade de Presidente Prudente/SP, sede da LOCADORA.
+                </p>
+                <p className="mb-1.5">
+                  <strong>11.2.</strong> Para deslocamentos além desse raio, o LOCATÁRIO deverá comunicar a LOCADORA com antecedência mínima de 48 (quarenta e oito) horas, informar o período previsto de ausência e o destino da viagem, e obter autorização expressa da LOCADORA.
+                </p>
+                <p>
+                  <strong>11.3.</strong> O descumprimento desta cláusula sujeitará o LOCATÁRIO às penalidades previstas neste contrato, sem prejuízo da responsabilidade por eventuais danos ou prejuízos decorrentes.
+                </p>
+              </div>
+
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA DÉCIMA SEGUNDA – DAS OBRIGAÇÕES DO LOCATÁRIO
+                </h4>
+                <div className="space-y-1.5">
+                  <p><strong>12.1.</strong> Conduzir o veículo com segurança e cautela, respeitando as leis de trânsito e garantindo a integridade material do veículo, equipamentos e acessórios.</p>
+                  <p><strong>12.2.</strong> Observar as restrições de circulação de veículos advindas do poder público, tais como rodízio, nas localidades em que existam leis municipais neste sentido.</p>
+                  <p><strong>12.3.</strong> Observar as exigências constantes no manual do veículo quanto às revisões preventivas programadas, comunicando de imediato à LOCADORA e informando a quilometragem mensalmente.</p>
+                  <p><strong>12.4.</strong> Não realizar quaisquer reparos ou serviços no veículo sem a prévia e expressa autorização da LOCADORA.</p>
+                  <p><strong>12.5.</strong> Manter linha telefônica com pacote de dados, bem como suportar a despesa com referida linha telefônica.</p>
+                  <p><strong>12.6.</strong> Não alterar as características originais do veículo sem prévia autorização por escrito da LOCADORA.</p>
+                  <p><strong>12.7.</strong> Declarar que possui carteira nacional de habilitação para trabalho remunerado, comprometendo-se a mantê-la nesta categoria.</p>
+                  <p><strong>12.8.</strong> Em caso de perda, suspensão ou cassação da CNH, informar e devolver o veículo à LOCADORA no prazo de 24 (vinte e quatro) horas.</p>
+                  <p><strong>12.9.</strong> Atender aos requisitos exigidos pelos aplicativos Uber, 99, inDrive e congêneres, incluindo instalação de equipamento “Sem Parar”, fornecimento de água e bala aos passageiros, bem como a higiene diária do veículo.</p>
+                  <p><strong>12.10.</strong> Em caso de exclusão do cadastro junto às plataformas, informar imediatamente a LOCADORA, devolvendo o veículo no prazo de 24 (vinte e quatro) horas.</p>
                 </div>
               </div>
 
-              <div>
-                <p>
-                  <strong>CLÁUSULA TERCEIRA - DO CONTROLE DE QUILOMETRAGEM E FOTO DO ODÔMETRO A CADA 30 DIAS:</strong> O <strong>LOCATÁRIO</strong> declara ciência do limite semanal de rodagem estabelecido no Quadro Resumo (<strong>{contrato.limiteKmSemanal || 1750} KM</strong>), obrigando-se a pagar o valor de <strong>{formatCurrency(contrato.valorMultaPorKmExcedente || 1.20)}</strong> por quilômetro excedente apurado semanalmente.
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA DÉCIMA TERCEIRA – DO SINISTRO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>13.1.</strong> Na hipótese de furto, roubo, incêndio, colisão ou perda total do veículo, considera-se para fins de encerramento do período de locação a data da entrega do Boletim de Ocorrência, juntamente com as chaves e documento do veículo, fornecendo ainda dados de possíveis testemunhas, do policial que o atendeu e outras informações que contribuam para o esclarecimento do sinistro.
                 </p>
-                <div className="mt-1 p-2.5 bg-red-50 border-l-2 border-red-600 rounded text-slate-900">
-                  <strong>Parágrafo Único - Do Envio Compulsório de Foto do Odômetro a Cada 30 Dias e Multa Cominatória:</strong> É dever indeclinável e obrigatório do <strong>LOCATÁRIO</strong> <strong>enviar à LOCADORA uma fotografia clara, nítida e legível do painel do automóvel exibindo a quilometragem atualizada do odômetro e o marcador de combustível com periodicidade improrrogável de a cada 30 (trinta) dias corridos</strong>, contados do início do contrato. <strong>O não envio da fotografia do odômetro ou o descumprimento do prazo acarretará a incidência automática de MULTA PENAL NO VALOR EQUIVALENTE A 2 (DOIS) SALÁRIOS MÍNIMOS NACIONAIS VIGENTES</strong>, além do acionamento de bloqueio preventivo do veículo por segurança e convocação imediata para vistoria presencial obrigatória na sede da <strong>LOCADORA</strong>.
-                </div>
-              </div>
-
-              <div>
-                <p>
-                  <strong>CLÁUSULA QUARTA - DO PREÇO, PAGAMENTO E DADOS BANCÁRIOS / PIX DA EMPRESA:</strong> Pela locação do automóvel, o <strong>LOCATÁRIO</strong> pagará à <strong>LOCADORA</strong> a quantia semanal fixada no Quadro Resumo (<strong>{formatCurrency(contrato.valorSemanal)}</strong>), pontualmente em toda <strong>{contrato.diaCobranca}</strong>. O pagamento deverá ser efetuado exclusivamente através da Chave PIX ou dados bancários oficiais da <strong>LOCADORA</strong>:
+                <p className="mb-1.5">
+                  <strong>13.2.</strong> No caso de acidente, o LOCATÁRIO deverá fornecer cópias dos documentos e demais informações do terceiro, sendo CNH e CRLV, telefones e endereços da(s) vítima(s) e do terceiro, arcando com o pagamento do valor da participação obrigatória estabelecida neste contrato.
                 </p>
-                <div className="mt-1 p-2 bg-slate-100 border border-slate-300 rounded font-mono text-[10px] space-y-0.5 text-slate-800">
-                  <div><strong>• Titular / Favorecido:</strong> {razaoSocial} ({nomeFantasia})</div>
-                  <div><strong>• CNPJ:</strong> {cnpj}</div>
-                  <div><strong>• Chave PIX Oficial da Empresa:</strong> {chavePix}</div>
-                  <div><strong>• Dados Bancários:</strong> {dadosBancarios}</div>
-                </div>
-                <p className="mt-1">
-                  O atraso em qualquer pagamento semanal sujeitará o <strong>LOCATÁRIO</strong> à incidência de multa moratória de <strong>{contrato.percentualMultaAtraso || 40}%</strong> sobre o montante em atraso, juros de mora legais de 1% ao mês e atualização monetária. A inadimplência superior a 24 (vinte e quatro) horas caracterizará rescisão imediata com direito a bloqueio eletrônico de partida e recolhimento do veículo.
+                <p className="mb-1.5">
+                  <strong>13.3.</strong> No caso de furto/roubo, o LOCATÁRIO deverá registrar boletim de ocorrência imediatamente, fornecer cópia do mesmo e arcar com o pagamento do valor da participação obrigatória.
+                </p>
+                <p className="mb-1.5">
+                  <strong>13.4.</strong> Caso o LOCATÁRIO não atenda todas as exigências deste item, fica integralmente responsável pelo pagamento do valor total do prejuízo, incluindo lucros cessantes.
+                </p>
+                <p>
+                  <strong>13.5.</strong> O LOCATÁRIO responde ainda por eventual recusa do pagamento por parte da entidade de proteção veicular, responsabilizando-se civil e criminalmente pelos danos causados à LOCADORA e a terceiros.
                 </p>
               </div>
 
-              <div>
-                <p>
-                  <strong>CLÁUSULA QUINTA - DA CAUÇÃO DE GARANTIA E PERÍODO DE CARÊNCIA DE 30 DIAS:</strong> O <strong>LOCATÁRIO</strong> entrega à <strong>LOCADORA</strong> a caução estipulada no Quadro Resumo como garantia integral das obrigações contratuais, conservação do bem e quitação de eventuais débitos pendentes.
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA DÉCIMA QUARTA – DA RESCISÃO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>14.1.</strong> É assegurado às partes a rescisão do presente contrato a qualquer momento, desde que haja comunicação à outra parte com antecedência mínima de 30 (trinta) dias.
                 </p>
-                <div className="mt-1 p-2 bg-slate-50 border-l-2 border-slate-400 rounded text-slate-800">
-                  <strong>Parágrafo Único - Da Carência Obrigatória de 30 (Trinta) Dias para Devolução da Caução:</strong> Fica expressamente acordado entre as partes que, por ocasião do encerramento da locação e restituição física do veículo, a <strong>LOCADORA</strong> reterá a caução por um <strong>PERÍODO DE CARÊNCIA OBRIGATÓRIO DE 30 (TRINTA) DIAS</strong>, contados da data da lavratura do Laudo de Devolução. O referido prazo tem a finalidade exclusiva de permitir a consulta e lançamento de eventuais multas de trânsito emitidas pelos órgãos fiscalizadores (DETRAN, DER, DNIT, PRF, Prefeituras), evasões de pedágio ou danos mecânicos latentes ocorridos durante a posse do <strong>LOCATÁRIO</strong>. Findo o prazo de carência e inexistindo débitos, a caução será restituída integralmente; havendo pendências, estas serão deduzidas com a devolução do saldo restante.
-                </div>
-              </div>
-
-              <div>
-                <p>
-                  <strong>CLÁUSULA SEXTA - DO SEGURO, PROTEÇÃO VEICULAR E FRANQUIA EM CASO DE SINISTRO:</strong> O veículo conta com cobertura de seguro ou proteção patrimonial contratada pela <strong>LOCADORA</strong> para cobertura de eventos de colisão, furto e roubo.
+                <p className="mb-1.5">
+                  <strong>14.2.</strong> O descumprimento de qualquer das cláusulas por parte dos contratantes ensejará a rescisão deste instrumento com a imediata devolução do veículo e o devido pagamento de multa equivalente a dois salários mínimos vigentes em território nacional.
                 </p>
-                <div className="mt-1 p-2.5 bg-amber-50 border-l-2 border-amber-600 rounded text-slate-900">
-                  <strong>Parágrafo Primeiro - Da Franquia Fixa Obrigatória em Caso de Sinistro ou Colisão:</strong> Em caso de qualquer sinistro envolvendo o veículo locado (tais como colisão, abalroamento, capotamento, danos a terceiros, perda parcial ou total, furto, roubo ou incêndio), <strong>o LOCATÁRIO é expressamente obrigado a arcar e pagar à LOCADORA o valor da FRANQUIA / PARTICIPAÇÃO OBRIGATÓRIA NO VALOR FIXO DE R$ 3.000,00 (TRÊS MIL REAIS)</strong> no prazo máximo e improrrogável de até 48 (quarenta e oito) horas da data do ocorrido.
-                </div>
-                <p className="mt-1">
-                  <strong>Parágrafo Segundo - Perda de Cobertura e Culpa Grave:</strong> O <strong>LOCATÁRIO</strong> deverá providenciar o Boletim de Ocorrência policial em até 24h e entregá-lo à <strong>LOCADORA</strong>. A cobertura securitária cessará integralmente caso o condutor esteja sob efeito de álcool/drogas, recuse o teste do bafômetro, fuja do local do acidente, entregue a direção a terceiro não autorizado ou cometa dolo/culpa grave, hipóteses em que o <strong>LOCATÁRIO</strong> responderá com seu patrimônio pessoal pelo valor integral do veículo conforme Tabela FIPE somado aos lucros cessantes.
+                <p className="mb-1.5">
+                  <strong>14.3.</strong> O LOCATÁRIO deverá devolver o veículo à LOCADORA nas mesmas condições em que estava quando o recebeu, respondendo pelos danos ou prejuízos causados.
+                </p>
+                <p>
+                  <strong>14.4.</strong> Se a devolução do veículo ocorrer desacompanhada dos documentos de circulação e/ou das chaves, será cobrada do LOCATÁRIO, a título de multa, o valor equivalente a um salário mínimo vigente para cada uma das infrações, além do pagamento das despesas necessárias para obtenção de nova via dos documentos e/ou confecção de cópias das chaves.
                 </p>
               </div>
 
-              <p>
-                <strong>CLÁUSULA SÉTIMA - DAS INFRAÇÕES DE TRÂNSITO E TRANSFERÊNCIA DE PONTOS:</strong> O <strong>LOCATÁRIO</strong> assume integral responsabilidade civil, criminal e administrativa por toda e qualquer infração de trânsito (CTB) cometida durante a vigência da posse do veículo. O <strong>LOCATÁRIO</strong> compromete-se a comparecer à sede da <strong>LOCADORA</strong> no prazo improrrogável de 48 (quarenta e oito) horas após notificado para <strong>assinar o formulário de Indicação do Real Condutor Infrator perante o DETRAN, PRF, DER ou órgãos municipais</strong>, transferindo a pontuação gerada na CNH para o seu prontuário, bem como reembolsar o valor integral da multa acrescido de 15% de taxa administrativa de processamento. A omissão ou recusa autoriza o desconto imediato da caução e cobrança regressiva de perdas e danos.
-              </p>
-
-              <p>
-                <strong>CLÁUSULA OITAVA - DA MANUTENÇÃO PREVENTIVA E CONSERVAÇÃO:</strong> Manutenções preventivas decorrentes de desgaste natural por quilometragem (troca de óleo de motor, filtros de óleo, combustível e ar) são de responsabilidade da <strong>LOCADORA</strong> em oficinas credenciadas conforme o cronograma oficial. É dever indeclinável e diário do <strong>LOCATÁRIO</strong> conferir os níveis do reservatório de arrefecimento (água do radiador), nível da vareta de óleo e pressão dos pneus. Danos provocados por negligência, motor superaquecido, ausência de água/óleo, pneus rasgados por guias ou buracos e avarias mecânicas decorrentes de mau uso correrão por conta exclusiva do <strong>LOCATÁRIO</strong>.
-              </p>
-
-              <p>
-                <strong>CLÁUSULA NONA - DA VISTORIA E DEVOLUÇÃO DO AUTOMÓVEL:</strong> O veículo é entregue devidamente vistoriado conforme Laudo de Vistoria de Retirada, em perfeito estado mecânico, lataria, pneus e tapeçaria. O <strong>LOCATÁRIO</strong> obriga-se a devolvê-lo nas mesmas condições de limpeza e conservação em que o recebeu, e com a mesma quantidade de combustível anotada na saída.
-              </p>
-
-              <div>
-                <p>
-                  <strong>CLÁUSULA DÉCIMA - DA VIGÊNCIA, RESCISÃO VOLUNTÁRIA E AVISO PRÉVIO:</strong> O presente contrato vigora por prazo indeterminado a partir da data de sua assinatura.
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA DÉCIMA QUINTA – DAS DISPOSIÇÕES GERAIS
+                </h4>
+                <p className="mb-1.5">
+                  <strong>15.1.</strong> A LOCADORA não reconhece, exceto por autorização escrita, o LOCATÁRIO como seu preposto ou agente.
                 </p>
-                <div className="mt-1 p-2.5 bg-red-50 border-l-2 border-red-600 rounded text-slate-900 space-y-1">
-                  <p>
-                    <strong>Parágrafo Primeiro - Do Aviso Prévio Obrigatório de 30 Dias:</strong> Qualquer uma das partes contratantes poderá rescindir este contrato unilateralmente e por vontade própria a qualquer momento, <strong>desde que notifique a outra parte com antecedência mínima e compulsória de 30 (TRINTA) DIAS DE AVISO PRÉVIO formal e escrito</strong>.
-                  </p>
-                  <p>
-                    <strong>Parágrafo Segundo - Da Multa Rescisória de 2 Salários Mínimos por Descumprimento do Aviso Prévio:</strong> A devolução, entrega abrupta ou abandono do veículo pelo <strong>LOCATÁRIO</strong> sem a concessão ou cumprimento integral do aviso prévio de 30 (trinta) dias importará na aplicação automática de <strong>MULTA CONTRATUAL PENAL COMPENSATÓRIA NO VALOR EQUIVALENTE A 2 (DOIS) SALÁRIOS MÍNIMOS NACIONAIS VIGENTES</strong>, além de perdas e danos e cobrança das semanas faltantes.
-                  </p>
-                </div>
+                <p className="mb-1.5">
+                  <strong>15.2.</strong> O presente contrato obriga, além dos contratantes, seus herdeiros e sucessores.
+                </p>
+                <p className="mb-1.5">
+                  <strong>15.3.</strong> Na hipótese de a LOCADORA vir a ser acionada judicialmente por danos causados a terceiros pelo LOCATÁRIO, fica desde já assegurado à LOCADORA o direito de regresso contra o LOCATÁRIO pelos valores de sua eventual condenação.
+                </p>
+                <p className="mb-1.5">
+                  <strong>15.4.</strong> O LOCATÁRIO concorda em aceitar qualquer pedido da LOCADORA, independentemente de sua forma processual, para seu ingresso em processo judicial contra ele promovido por terceiros, vítima em acidente causado pelo LOCATÁRIO na direção do veículo, comprometendo-se a reconhecer em juízo a limitação da responsabilidade da LOCADORA pelos danos contratualmente previstos.
+                </p>
+                <p>
+                  <strong>15.5.</strong> A LOCADORA não responde, direta ou indiretamente, nem indeniza o LOCATÁRIO por quaisquer danos provenientes deste contrato, em especial por indenizações por danos materiais, morais e/ou pessoais causados ou sofridos pelo LOCATÁRIO e/ou seus passageiros ou terceiros, bens ou valores deixados no interior do veículo, atos ilícitos, lucros cessantes causados a terceiros e despesas de qualquer espécie.
+                </p>
               </div>
 
-              <p>
-                <strong>CLÁUSULA DÉCIMA PRIMEIRA - DO FORO DA COMARCA:</strong> As partes elegem expressamente o <strong>FORO DA COMARCA DE {cidadeForo.toUpperCase()} - ESTADO DE {estadoForo.toUpperCase()}</strong>, onde se situa a sede da <strong>LOCADORA</strong>, com renúncia irrevogável a qualquer outro foro por mais privilegiado ou especial que seja, para dirimir quaisquer litígios ou dúvidas decorrentes da aplicação e execução deste contrato.
-              </p>
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-900 uppercase text-xs tracking-wider mb-2">
+                  CLÁUSULA DÉCIMA SEXTA – DO FORO
+                </h4>
+                <p className="mb-1.5">
+                  <strong>16.1.</strong> Para dirimir quaisquer controvérsias oriundas do presente contrato, as partes elegem o foro da Comarca de Presidente Prudente/SP, com exclusão de qualquer outro, por mais privilegiado que seja.
+                </p>
+                <p>
+                  <strong>16.2.</strong> Por fim, o presente contrato não gera vínculo empregatício entre as partes.
+                </p>
+              </div>
             </div>
 
             {/* Assinaturas */}
-            <div className="pt-6 space-y-8 break-inside-avoid">
-              <div className="text-right text-[11px] text-slate-600">
-                {cidadeForo} - {estadoForo}, {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}.
+            <div className="pt-6 space-y-6 break-inside-avoid">
+              <p className="text-justify text-[11px] text-slate-800">
+                Por estarem assim justos e contratados, firmam o presente instrumento, juntamente com duas testemunhas, para que produza seus regulares e jurídicos efeitos.
+              </p>
+
+              <div className="text-right text-[11px] text-slate-700 font-medium">
+                Presidente Prudente/SP, {dataAssinaturaFormatada}.
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 pt-4">
+                {/* LOCADORA */}
                 <div className="text-center space-y-1">
                   <div className="border-t border-slate-900 w-full pt-2"></div>
-                  <strong className="block text-slate-900 uppercase text-[11px]">{razaoSocial}</strong>
-                  <span className="text-[10px] text-slate-600 block">{nomeFantasia} • CNPJ: {cnpj}</span>
-                  <span className="text-[10px] text-slate-500 block">Representante Legal: {repNome} (CPF: {repCpf})</span>
+                  <strong className="block text-slate-900 uppercase text-[11px]">
+                    TROCA FÁCIL VEÍCULOS LTDA
+                  </strong>
+                  <span className="text-[10px] text-slate-600 block">
+                    CNPJ 47.271.452/0001-71
+                  </span>
+                  <span className="text-[10px] text-slate-700 font-bold block uppercase">
+                    LOCADORA
+                  </span>
                 </div>
 
+                {/* LOCATÁRIO */}
                 <div className="text-center space-y-1">
                   <div className="border-t border-slate-900 w-full pt-2"></div>
-                  <strong className="block text-slate-900 uppercase text-[11px]">{contrato.motoristaNome}</strong>
-                  <span className="text-[10px] text-slate-600 block">LOCATÁRIO / CONDUTOR - CPF: {contrato.motoristaCpf}</span>
-                  {contrato.motoristaCnh && (
-                    <span className="text-[10px] text-slate-500 block">CNH: {contrato.motoristaCnh} (Cat. {contrato.motoristaCnhCategoria || 'B'})</span>
-                  )}
+                  <strong className="block text-slate-900 uppercase text-[11px]">
+                    {contrato.motoristaNome}
+                  </strong>
+                  <span className="text-[10px] text-slate-600 block">
+                    CPF {contrato.motoristaCpf}
+                  </span>
+                  <span className="text-[10px] text-slate-700 font-bold block uppercase">
+                    LOCATÁRIO
+                  </span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-8 pt-4 text-center text-[10px] text-slate-500">
-                <div>
-                  <div className="border-t border-slate-400 w-3/4 mx-auto pt-1"></div>
-                  <span>Testemunha 1 (Nome e CPF)</span>
-                </div>
-                <div>
-                  <div className="border-t border-slate-400 w-3/4 mx-auto pt-1"></div>
-                  <span>Testemunha 2 (Nome e CPF)</span>
+              {/* Testemunhas */}
+              <div className="pt-4 space-y-3">
+                <p className="text-[10px] text-slate-500 font-medium">Testemunhas:</p>
+                <div className="grid grid-cols-2 gap-8 text-center text-[10px] text-slate-600">
+                  <div>
+                    <div className="border-t border-slate-400 w-4/5 mx-auto pt-1"></div>
+                    <span className="block font-medium">1. ______________________________________</span>
+                    <span>CPF:</span>
+                  </div>
+                  <div>
+                    <div className="border-t border-slate-400 w-4/5 mx-auto pt-1"></div>
+                    <span className="block font-medium">2. ______________________________________</span>
+                    <span>CPF:</span>
+                  </div>
                 </div>
               </div>
             </div>

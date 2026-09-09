@@ -274,6 +274,7 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   // Status de Envio
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [lancamentoExpressoId, setLancamentoExpressoId] = useState<string>(() => `lexp_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`);
 
   // Contratos de locação ativos indexados
   const contratosAtivos = useMemo(() => {
@@ -479,6 +480,7 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
       setClienteNome('');
       setDescricao('');
       setObservacoes('');
+      setLancamentoExpressoId(`lexp_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`);
       setErrorMsg(null);
     }
   }, [isOpen, movimentacaoToEdit, contasBancarias, veiculos, initialTipo, initialDestino, initialPlaca, initialPagador]);
@@ -658,6 +660,7 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
           : undefined;
 
         const params: ParametrosLancamentoExpresso = {
+          lancamentoExpressoId: lancamentoExpressoId,
           tipo: tipo,
           valor: valorNum,
           data: data,

@@ -2495,11 +2495,13 @@ export default function App() {
     valorLiquidado: number;
     formaLiquidacao?: string;
     observacoes?: string;
+    tacBruto?: number;
+    descontoIla?: number;
+    tacLiquido?: number;
+    usuarioConfirmouId?: string;
+    usuarioConfirmouNome?: string;
   }) => {
-    const contaTarget = contasBancarias.find((c) => c.id === params.contaBancariaId);
-    const contaNome = contaTarget ? contaTarget.nome : 'Conta Bancária';
-
-    await processarLiquidacaoRecebivelFirestore({
+    const resultado = await processarLiquidacaoRecebivelFirestore({
       venda: params.venda,
       tipoTitulo: params.tipoTitulo,
       dataLiquidacao: params.dataLiquidacao,
@@ -2507,45 +2509,25 @@ export default function App() {
       valorLiquidado: params.valorLiquidado,
       formaLiquidacao: params.formaLiquidacao,
       observacoes: params.observacoes,
+      tacBruto: params.tacBruto,
+      descontoIla: params.descontoIla,
+      tacLiquido: params.tacLiquido,
+      usuarioConfirmouId: params.usuarioConfirmouId || currentUserProfile?.id || currentUserProfile?.email,
+      usuarioConfirmouNome: params.usuarioConfirmouNome || currentUserProfile?.displayName || currentUserProfile?.email || 'Sistema AutoGestor',
       usuarioNome: currentUserProfile?.displayName || currentUserProfile?.email || 'Sistema AutoGestor',
     });
 
-    // Atualizar estado local de vendas
-    setVendas((prev) =>
-      prev.map((v) => {
-        if (v.id === params.venda.id) {
-          const fin = v.financiamentoDetalhes || {};
-          if (params.tipoTitulo === 'financiamento') {
-            return {
-              ...v,
-              financiamentoDetalhes: {
-                ...fin,
-                statusLiquidacaoFinanciamento: 'Recebido',
-                dataLiquidacaoFinanciamento: params.dataLiquidacao,
-                contaBancariaLiquidacaoId: params.contaBancariaId,
-                contaBancariaLiquidacaoNome: contaNome,
-                formaLiquidacaoFinanciamento: params.formaLiquidacao,
-                observacoesLiquidacao: params.observacoes,
-              },
-            };
-          } else {
-            return {
-              ...v,
-              financiamentoDetalhes: {
-                ...fin,
-                statusLiquidacaoTac: 'Recebido',
-                dataLiquidacaoTac: params.dataLiquidacao,
-                contaBancariaTacId: params.contaBancariaId,
-                contaBancariaTacNome: contaNome,
-                formaLiquidacaoTac: params.formaLiquidacao,
-                observacoesLiquidacao: params.observacoes,
-              },
-            };
-          }
-        }
-        return v;
-      })
-    );
+    // Atualizar estado local de vendas e contas bancárias com o retorno atômico
+    if (resultado?.vendaAtualizada) {
+      setVendas((prev) =>
+        prev.map((v) => (v.id === resultado.vendaAtualizada.id ? resultado.vendaAtualizada : v))
+      );
+    }
+    if (resultado?.contaAtualizada) {
+      setContasBancarias((prev) =>
+        prev.map((c) => (c.id === resultado.contaAtualizada.id ? resultado.contaAtualizada : c))
+      );
+    }
   };
 
   // Logout Handler

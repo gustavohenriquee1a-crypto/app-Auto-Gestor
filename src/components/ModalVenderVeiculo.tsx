@@ -223,7 +223,8 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
   // Múltiplas Parcelas / Linhas Híbridas
   const [parcelasHibridas, setParcelasHibridas] = useState<ParcelaPagamentoHibrido[]>([
     {
-      id: '1',
+      id: 'parc-1',
+      pagamentoId: 'pag_init_1',
       tipo: 'PIX',
       valorBruto: 0,
       valorLiquido: 0,
@@ -743,11 +744,14 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
   const handleAddParcela = () => {
     const totalJaAlocado = parcelasHibridas.reduce((acc, p) => acc + p.valorBruto, 0);
     const saldoRestante = Math.max(0, valorVenda - totalJaAlocado);
+    const idUnico = `parc-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+    const pagamentoIdUnico = `pag_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
 
     setParcelasHibridas((prev) => [
       ...prev,
       {
-        id: `parc-${Date.now()}`,
+        id: idUnico,
+        pagamentoId: pagamentoIdUnico,
         tipo: 'Financiamento',
         valorBruto: saldoRestante,
         valorLiquido: saldoRestante,
@@ -1026,7 +1030,12 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
       previsaoEntregaVeiculo: previsaoEntregaVeiculo || undefined,
 
       // Detalhamento de Alta Granularidade
-      composicaoPagamento: modoPagamento === 'hibrido' ? parcelasHibridas : undefined,
+      composicaoPagamento: modoPagamento === 'hibrido'
+        ? parcelasHibridas.map((p, idx) => ({
+            ...p,
+            pagamentoId: p.pagamentoId || p.id || `pag_${idx + 1}`,
+          }))
+        : undefined,
       retornoFinanciamentoTac: totalRetornoTacBancos,
       taxasMaquininhaTotal: totalTaxasMaquininhas,
       fundoGarantiaProvisao: reterFundoGarantia ? {
@@ -3085,7 +3094,12 @@ export const ModalVenderVeiculo: React.FC<ModalVenderVeiculoProps> = ({
             contaBancariaDestinoNome,
             observacoesVenda: observacoesVenda,
             previsaoEntregaVeiculo,
-            composicaoPagamento: modoPagamento === 'hibrido' ? parcelasHibridas : undefined,
+            composicaoPagamento: modoPagamento === 'hibrido'
+              ? parcelasHibridas.map((p, idx) => ({
+                  ...p,
+                  pagamentoId: p.pagamentoId || p.id || `pag_${idx + 1}`,
+                }))
+              : undefined,
             financiamentoDetalhes: isFinanciamentoAtivo ? {
               bancoParceiro,
               valorEntrada: valorEntradaFinanciamento,

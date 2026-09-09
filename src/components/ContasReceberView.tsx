@@ -71,6 +71,11 @@ interface ContasReceberViewProps {
     valorLiquidado: number;
     formaLiquidacao?: string;
     observacoes?: string;
+    tacBruto?: number;
+    descontoIla?: number;
+    tacLiquido?: number;
+    usuarioConfirmouId?: string;
+    usuarioConfirmouNome?: string;
   }) => Promise<void>;
 }
 
@@ -101,6 +106,8 @@ export const ContasReceberView: React.FC<ContasReceberViewProps> = ({
   const [contaBancariaIdBaixa, setContaBancariaIdBaixa] = useState<string>('');
   const [formaLiquidacaoBaixa, setFormaLiquidacaoBaixa] = useState<string>('TED/PIX Financeira');
   const [valorLiquidadoBaixa, setValorLiquidadoBaixa] = useState<number>(0);
+  const [tacBrutoBaixa, setTacBrutoBaixa] = useState<number>(0);
+  const [descontoIlaBaixa, setDescontoIlaBaixa] = useState<number>(0);
   const [obsLiquidacaoBaixa, setObsLiquidacaoBaixa] = useState<string>('');
   const [isProcessingBaixa, setIsProcessingBaixa] = useState(false);
 
@@ -366,7 +373,16 @@ export const ContasReceberView: React.FC<ContasReceberViewProps> = ({
     setFormaLiquidacaoBaixa('TED/PIX Financeira');
     // Pre-selecionar primeira conta bancária disponível
     setContaBancariaIdBaixa(contasBancarias.length > 0 ? contasBancarias[0].id : '');
-    setValorLiquidadoBaixa(item.valor);
+    if (item.tipoTitulo === 'tac') {
+      const tacBruto = Number(item.venda.financiamentoDetalhes?.retornoComissaoBanco ?? item.valor ?? 0);
+      setTacBrutoBaixa(tacBruto);
+      setDescontoIlaBaixa(0);
+      setValorLiquidadoBaixa(tacBruto);
+    } else {
+      setTacBrutoBaixa(0);
+      setDescontoIlaBaixa(0);
+      setValorLiquidadoBaixa(item.valor);
+    }
     setObsLiquidacaoBaixa('');
     setModalBaixaOpen(true);
   };
@@ -386,6 +402,7 @@ export const ContasReceberView: React.FC<ContasReceberViewProps> = ({
 
     setIsProcessingBaixa(true);
     try {
+      const isTac = selectedTituloParaBaixa.tipoTitulo === 'tac';
       await onProcessarLiquidacao({
         venda: selectedTituloParaBaixa.venda,
         tipoTitulo: selectedTituloParaBaixa.tipoTitulo,
@@ -394,6 +411,11 @@ export const ContasReceberView: React.FC<ContasReceberViewProps> = ({
         valorLiquidado: valorLiquidadoBaixa,
         formaLiquidacao: formaLiquidacaoBaixa,
         observacoes: obsLiquidacaoBaixa,
+        tacBruto: isTac ? tacBrutoBaixa : undefined,
+        descontoIla: isTac ? descontoIlaBaixa : undefined,
+        tacLiquido: isTac ? valorLiquidadoBaixa : undefined,
+        usuarioConfirmouId: currentUser?.id || currentUser?.email || 'admin',
+        usuarioConfirmouNome: currentUser?.nomeCompleto || currentUser?.displayName || currentUser?.email || 'Administrador',
       });
 
       setModalBaixaOpen(false);
@@ -1019,40 +1041,109 @@ export const ContasReceberView: React.FC<ContasReceberViewProps> = ({
                 </select>
               </div>
 
-              {/* Forma de Liquidação & Valor */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    💳 Forma de Recebimento
-                  </label>
-                  <select
-                    value={formaLiquidacaoBaixa}
-                    onChange={(e) => setFormaLiquidacaoBaixa(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-[#1c1d29] border border-white/10 text-xs text-slate-200 outline-none focus:border-emerald-500 cursor-pointer font-semibold"
-                  >
-                    <option value="TED/PIX Financeira">TED / PIX da Financeira</option>
-                    <option value="Crédito em Conta Corrente">Crédito em Conta Corrente</option>
-                    <option value="Boleto Bancário">Boleto Bancário</option>
-                    <option value="Cheque Administrativo">Cheque Administrativo</option>
-                    <option value="Outra Forma">Outra Forma</option>
-                  </select>
-                </div>
+              {/* Detalhamento Especial para TAC ou Liquidação Geral */}
+              {selectedTituloParaBaixa.tipoTitulo === 'tac' ? (
+                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      🎁 Apuração e Desconto de Retorno / TAC
+                    </span>
+                    <span className="text-[11px] text-slate-400">Auditoria Obrigatória</span>
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    💰 Valor Efetivo Creditado (R$) *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    value={valorLiquidadoBaixa}
-                    onChange={(e) => setValorLiquidadoBaixa(Number(e.target.value))}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#1c1d29] border border-emerald-500/40 text-xs text-emerald-300 font-mono font-black outline-none focus:border-emerald-400"
-                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                        TAC Bruto (R$) *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        required
+                        value={tacBrutoBaixa}
+                        onChange={(e) => {
+                          const novoBruto = Number(e.target.value);
+                          setTacBrutoBaixa(novoBruto);
+                          setValorLiquidadoBaixa(Math.max(0, Number((novoBruto - descontoIlaBaixa).toFixed(2))));
+                        }}
+                        className="w-full px-3 py-2 rounded-xl bg-[#14151f] border border-white/10 text-xs text-white font-mono font-bold outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                        Desconto ILA / Retenção (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={descontoIlaBaixa}
+                        onChange={(e) => {
+                          const novoIla = Number(e.target.value);
+                          setDescontoIlaBaixa(novoIla);
+                          setValorLiquidadoBaixa(Math.max(0, Number((tacBrutoBaixa - novoIla).toFixed(2))));
+                        }}
+                        className="w-full px-3 py-2 rounded-xl bg-[#14151f] border border-red-500/20 text-xs text-red-300 font-mono font-bold outline-none focus:border-red-400"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-emerald-400 mb-1">
+                        TAC Líquido Efetivo (R$) *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        required
+                        value={valorLiquidadoBaixa}
+                        onChange={(e) => setValorLiquidadoBaixa(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl bg-[#14151f] border border-emerald-500/40 text-xs text-emerald-300 font-mono font-black outline-none focus:border-emerald-400"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-amber-200/80">
+                    ℹ️ Comissões indexadas ao "Retorno TAC" serão calculadas e consolidadas sobre o <strong>TAC Líquido (R$ {valorLiquidadoBaixa.toFixed(2)})</strong>, gravando snapshot imutável para auditoria.
+                  </p>
                 </div>
-              </div>
+              ) : (
+                /* Forma de Liquidação & Valor */
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      💳 Forma de Recebimento
+                    </label>
+                    <select
+                      value={formaLiquidacaoBaixa}
+                      onChange={(e) => setFormaLiquidacaoBaixa(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl bg-[#1c1d29] border border-white/10 text-xs text-slate-200 outline-none focus:border-emerald-500 cursor-pointer font-semibold"
+                    >
+                      <option value="TED/PIX Financeira">TED / PIX da Financeira</option>
+                      <option value="Crédito em Conta Corrente">Crédito em Conta Corrente</option>
+                      <option value="Boleto Bancário">Boleto Bancário</option>
+                      <option value="Cheque Administrativo">Cheque Administrativo</option>
+                      <option value="Outra Forma">Outra Forma</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      💰 Valor Efetivo Creditado (R$) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={valorLiquidadoBaixa}
+                      onChange={(e) => setValorLiquidadoBaixa(Number(e.target.value))}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#1c1d29] border border-emerald-500/40 text-xs text-emerald-300 font-mono font-black outline-none focus:border-emerald-400"
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Observações / Protocolo */}
               <div>

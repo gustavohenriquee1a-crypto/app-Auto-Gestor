@@ -37,6 +37,7 @@ export const ModalTransferenciaEntreContas: React.FC<ModalTransferenciaEntreCont
   const [valor, setValor] = useState<string>('');
   const [data, setData] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [motivo, setMotivo] = useState<string>('');
+  const [transferenciaId, setTransferenciaId] = useState<string>(() => `transf_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`);
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [erroValidacao, setErroValidacao] = useState<string | null>(null);
@@ -47,6 +48,7 @@ export const ModalTransferenciaEntreContas: React.FC<ModalTransferenciaEntreCont
       setErroValidacao(null);
       setIsSubmitting(false);
       setData(new Date().toISOString().split('T')[0]);
+      setTransferenciaId(`transf_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`);
 
       if (contasBancarias.length > 0) {
         if (!contaOrigemId || !contasBancarias.some((c) => c.id === contaOrigemId)) {
@@ -137,6 +139,7 @@ export const ModalTransferenciaEntreContas: React.FC<ModalTransferenciaEntreCont
     setIsSubmitting(true);
     try {
       await onConfirmarTransferencia({
+        transferenciaId,
         contaOrigemId,
         contaDestinoId: isTerceiro ? undefined : contaDestinoId,
         isTerceiro,

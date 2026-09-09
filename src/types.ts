@@ -432,6 +432,7 @@ export interface ContratoLocacao {
 
 export interface ParcelaPagamentoHibrido {
   id: string;
+  pagamentoId: string;
   tipo: 'PIX' | 'Financiamento' | 'Cartão de Crédito' | 'Cartão de Débito' | 'TED/Transferência' | 'Dinheiro Espécie' | 'Veículo na Troca';
   valorBruto: number;
   taxaPercentual?: number;
@@ -1173,9 +1174,11 @@ export interface MovimentacaoConta {
   // Gestão de Estornos Auditados
   isEstorno?: boolean;
   movimentacaoOriginalId?: string;
+  movimentacaoEstornoId?: string;
   motivoEstorno?: string;
   dataHoraEstorno?: string;
   usuarioEstornoId?: string;
+  usuarioEstornoNome?: string;
   // Neutralidade de Transferências Internas
   isTransferenciaInterna?: boolean;
   isMovimentacaoNeutra?: boolean;

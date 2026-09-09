@@ -32,6 +32,7 @@ import {
   ContratoLocacao,
   LancamentoContaMotorista,
   ComissaoDetalhadaVenda,
+  SnapshotConfirmacaoTacComissao,
 } from '../types';
 import { initialVeiculos, initialVendas, initialDespesasFixas } from '../data/initialData';
 
@@ -48,6 +49,7 @@ const COLLECTIONS = {
   CONTAS_BANCARIAS: 'contas_bancarias',
   MOVIMENTACOES_CONTAS: 'movimentacoes_contas',
   PAGADORES: 'pagadores',
+  USUARIOS: 'usuarios',
 };
 
 /**
@@ -1656,6 +1658,7 @@ export async function deleteMovimentacaoContaFirestore(movId: string): Promise<v
  * - Gera registros detalhados no extrato de ambas as contas (ou da origem se terceiro)
  */
 export interface ParametrosTransferencia {
+  transferenciaId?: string;
   contaOrigemId: string;
   contaDestinoId?: string;
   isTerceiro: boolean;
@@ -1675,6 +1678,7 @@ export async function executarTransferenciaEntreContasFirestore(
   movimentacaoDestino?: MovimentacaoConta;
 }> {
   const {
+    transferenciaId,
     contaOrigemId,
     contaDestinoId,
     isTerceiro,
@@ -1705,15 +1709,38 @@ export async function executarTransferenciaEntreContasFirestore(
     throw new Error('Informe o nome ou instituição do terceiro favorecido.');
   }
 
-  const idTransferencia = `transf_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  const idTransferencia = (transferenciaId && transferenciaId.trim())
+    ? (transferenciaId.startsWith('transf_') ? transferenciaId : `transf_${transferenciaId}`)
+    : `transf_${data || new Date().toISOString().split('T')[0]}_${contaOrigemId}_${contaDestinoId || 'terc'}_${valor}`;
   const dataMov = data || new Date().toISOString().split('T')[0];
   const nowIso = new Date().toISOString();
 
   const docOrigemRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaOrigemId);
   const docDestinoRef = (!isTerceiro && contaDestinoId) ? doc(db, COLLECTIONS.CONTAS_BANCARIAS, contaDestinoId) : null;
+  const movDebRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, `mov_deb_${idTransferencia}`);
 
   return await runTransaction(db, async (transaction) => {
-    // 1. Leitura das contas na transação
+    // 1. Verificar idempotência da movimentação de débito ANTES de alterar qualquer saldo
+    const movDebSnap = await transaction.get(movDebRef);
+    if (movDebSnap.exists()) {
+      console.log(`[Idempotência] Transferência ${idTransferencia} já processada anteriormente.`);
+      const snapOrigemExisting = await transaction.get(docOrigemRef);
+      const contaOrigemAtualizada = normalizeContaBancaria(snapOrigemExisting.exists() ? snapOrigemExisting.data() : {}, contaOrigemId);
+      let contaDestinoAtualizada: ContaBancariaCaixa | undefined;
+      if (docDestinoRef) {
+        const snapDestinoExisting = await transaction.get(docDestinoRef);
+        if (snapDestinoExisting.exists()) {
+          contaDestinoAtualizada = normalizeContaBancaria(snapDestinoExisting.data(), contaDestinoId!);
+        }
+      }
+      return {
+        contaOrigemAtualizada,
+        contaDestinoAtualizada,
+        movimentacaoOrigem: movDebSnap.data() as MovimentacaoConta,
+      };
+    }
+
+    // 2. Leitura das contas na transação
     const snapOrigem = await transaction.get(docOrigemRef);
     if (!snapOrigem.exists()) {
       throw new Error(`Conta bancária de origem ${contaOrigemId} não encontrada no Firestore.`);
@@ -1767,12 +1794,11 @@ export async function executarTransferenciaEntreContasFirestore(
       }, contaDestinoId!);
     }
 
-    // 2. Extrato Conta Origem (Débito / Saída)
+    // 3. Extrato Conta Origem (Débito / Saída)
     const descricaoOrigem = isTerceiro
       ? `Transferência para Terceiro: ${terceiroDestinoNome?.trim()} - Motivo: ${motivo.trim()}`
       : `Transferência enviada para ${contaDestinoAtualizada?.nome || 'Conta Destino'} - Motivo: ${motivo.trim()}`;
 
-    const movDebRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, `mov_deb_${idTransferencia}`);
     const movimentacaoOrigem: MovimentacaoConta = {
       id: `mov_deb_${idTransferencia}`,
       idempotencyKey: `idemp_transf_deb_${idTransferencia}`,
@@ -1865,7 +1891,7 @@ export async function processarRecebimentoVendaFinanceiro(
 ): Promise<void> {
   try {
     const pagamentosAReceber: Array<{
-      idx: number;
+      pagamentoId: string;
       valor: number;
       forma: string;
       contaId: string;
@@ -1884,9 +1910,10 @@ export async function processarRecebimentoVendaFinanceiro(
         ) {
           const val = p.valorLiquido > 0 ? p.valorLiquido : p.valorBruto;
           const targetContaId = p.contaBancariaId || venda.contaBancariaDestinoId;
+          const pagId = p.pagamentoId || p.id || `pag_${idx + 1}`;
           if (val > 0 && targetContaId) {
             pagamentosAReceber.push({
-              idx,
+              pagamentoId: pagId,
               valor: val,
               forma: p.tipo,
               contaId: targetContaId,
@@ -1901,7 +1928,7 @@ export async function processarRecebimentoVendaFinanceiro(
         const targetContaId = venda.contaBancariaDestinoId;
         if (targetContaId && venda.valorVenda > 0) {
           pagamentosAReceber.push({
-            idx: 0,
+            pagamentoId: 'pag_vista',
             valor: venda.valorVenda,
             forma: venda.formaPagamento,
             contaId: targetContaId,
@@ -1912,7 +1939,7 @@ export async function processarRecebimentoVendaFinanceiro(
           const targetContaId = venda.financiamentoDetalhes.contaDestinoEntrada || venda.contaBancariaDestinoId;
           if (targetContaId) {
             pagamentosAReceber.push({
-              idx: 0,
+              pagamentoId: 'pag_entrada_fin',
               valor: venda.financiamentoDetalhes.valorEntrada,
               forma: 'Entrada Financiamento (PIX/Transferência)',
               contaId: targetContaId,
@@ -1926,8 +1953,8 @@ export async function processarRecebimentoVendaFinanceiro(
 
     // Processar cada recebimento dentro de uma transação atômica e idempotente
     for (const pag of pagamentosAReceber) {
-      const idempotencyKey = `idemp_venda_${venda.id}_pag_${pag.idx}_${pag.forma.replace(/[^a-zA-Z0-9]/g, '')}`;
-      const movId = `mov_venda_${venda.id}_${pag.idx}`;
+      const idempotencyKey = `idemp_venda_${venda.id}_pag_${pag.pagamentoId}`;
+      const movId = `mov_venda_${venda.id}_${pag.pagamentoId}`;
       const docContaRef = doc(db, COLLECTIONS.CONTAS_BANCARIAS, pag.contaId);
       const docMovRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movId);
 
@@ -1935,7 +1962,7 @@ export async function processarRecebimentoVendaFinanceiro(
         // 1. Verificar idempotência determinística
         const movSnap = await transaction.get(docMovRef);
         if (movSnap.exists()) {
-          console.log(`[Idempotência] Recebimento de venda ${venda.id} parcela ${pag.idx} já processado anteriormente.`);
+          console.log(`[Idempotência] Recebimento de venda ${venda.id} parcela ${pag.pagamentoId} já processado anteriormente.`);
           return;
         }
 
@@ -2107,6 +2134,12 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
   formaLiquidacao?: string;
   observacoes?: string;
   usuarioNome?: string;
+  // Parâmetros auditáveis para liquidação de TAC
+  tacBruto?: number;
+  descontoIla?: number;
+  tacLiquido?: number;
+  usuarioConfirmouId?: string;
+  usuarioConfirmouNome?: string;
 }): Promise<{ vendaAtualizada: VendaVeiculo; contaAtualizada: ContaBancariaCaixa; movimentacao: MovimentacaoConta }> {
   const {
     venda,
@@ -2117,6 +2150,11 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
     formaLiquidacao = 'TED/PIX Financeira',
     observacoes = '',
     usuarioNome = 'Sistema Financeiro',
+    tacBruto,
+    descontoIla,
+    tacLiquido,
+    usuarioConfirmouId: userConfIdParam,
+    usuarioConfirmouNome: userConfNomeParam,
   } = params;
 
   if (!contaBancariaId) {
@@ -2148,9 +2186,25 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
     const vendaSnap = await transaction.get(docVendaRef);
     const vendaAtual = (vendaSnap.exists() ? vendaSnap.data() : venda) as VendaVeiculo;
 
+    // Cálculo dos valores efetivos para TAC e Crédito
+    const tacBrutoEfetivo = tacBruto !== undefined
+      ? Number(tacBruto)
+      : Number(vendaAtual.financiamentoDetalhes?.retornoComissaoBanco ?? valorLiquidado);
+    const descontoIlaEfetivo = descontoIla !== undefined
+      ? Number(descontoIla)
+      : 0;
+    const tacLiquidoEfetivo = tacLiquido !== undefined
+      ? Number(tacLiquido)
+      : (tacBrutoEfetivo - descontoIlaEfetivo > 0 ? Number((tacBrutoEfetivo - descontoIlaEfetivo).toFixed(2)) : Number(valorLiquidado));
+
+    const usuarioConfirmouId = userConfIdParam || usuarioNome;
+    const usuarioConfirmouNome = userConfNomeParam || usuarioNome;
+
+    const valorCreditoEfetivo = tipoTitulo === 'tac' ? tacLiquidoEfetivo : Number(valorLiquidado || 0);
+
     const dataConta = contaSnap.data();
     const saldoAnterior = Number(dataConta.saldoAtualOperacional ?? dataConta.saldo ?? 0);
-    const novoSaldo = saldoAnterior + Number(valorLiquidado || 0);
+    const novoSaldo = saldoAnterior + valorCreditoEfetivo;
 
     // 4. Atualizar saldo da Conta Bancária preservando saldoConferido
     transaction.update(docContaRef, {
@@ -2183,7 +2237,7 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
       descricaoExtrato = `Liquidação de Financiamento: ${bancoNome} - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
     } else if (tipoTitulo === 'tac') {
       categoriaExtrato = 'Recebimento TAC / Retorno';
-      descricaoExtrato = `Recebimento de Retorno/TAC: ${bancoNome} - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
+      descricaoExtrato = `Recebimento de Retorno/TAC: ${bancoNome} (Bruto: R$ ${tacBrutoEfetivo.toFixed(2)}, ILA: R$ ${descontoIlaEfetivo.toFixed(2)}, Líq: R$ ${tacLiquidoEfetivo.toFixed(2)}) - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
     } else {
       categoriaExtrato = 'Recebimento de Venda';
       descricaoExtrato = `Liquidação de Recebível: ${formaLiquidacao} - Veículo: ${placaVeiculo} - Cliente: ${compradorNome}`;
@@ -2215,29 +2269,133 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
       updatedFinanciamento.contaBancariaTacId = contaAtualizada.id;
       updatedFinanciamento.contaBancariaTacNome = contaAtualizada.nome;
       updatedFinanciamento.formaLiquidacaoTac = formaLiquidacao;
+      updatedFinanciamento.retornoComissaoBanco = tacBrutoEfetivo;
+      vendaAtual.retornoFinanciamentoTac = tacLiquidoEfetivo;
 
-      // Se houver comissão indexada ao retorno TAC da venda, atualizar snapshot auditável
-      if (Array.isArray(vendaAtual.comissoesDetalhadas)) {
-        vendaAtual.comissoesDetalhadas = vendaAtual.comissoesDetalhadas.map((c) => {
-          if (c.tipoBase === 'Retorno TAC' || c.aguardaLiquidacaoTac) {
-            return {
-              ...c,
-              statusLiberacao: 'Liberada_Para_Pagamento' as const,
-              snapshotConfirmacaoTac: {
-                tacBruto: vendaAtual.financiamentoDetalhes?.retornoComissaoBanco || valorLiquidado,
-                descontoIla: 0,
-                tacLiquidoEfetivo: valorLiquidado,
-                percentualOuValorRegra: c.valorOrPercentual || 0,
-                valorComissaoCalculado: c.valorCalculado,
-                dataHoraConfirmacao: nowIso,
-                usuarioConfirmouId: usuarioNome,
-                usuarioConfirmouNome: usuarioNome,
-                regraIdOriginal: c.regraId || '',
-              },
-            };
+      // Gestão precisa de comissões com auditoria de TAC
+      let comissoes = Array.isArray(vendaAtual.comissoesDetalhadas)
+        ? [...vendaAtual.comissoesDetalhadas]
+        : [];
+      let hasTacItem = false;
+
+      // Recalcular ou finalizar cada comissão existente de tipoBase === 'Retorno TAC' usando o TAC líquido efetivamente recebido
+      comissoes = comissoes.map((c) => {
+        if (c.tipoBase === 'Retorno TAC') {
+          hasTacItem = true;
+          const percentOuValor = Number(c.valorOrPercentual || 0);
+          const novoValorCalculado = c.formato === 'Percentual'
+            ? Number(((tacLiquidoEfetivo * percentOuValor) / 100).toFixed(2))
+            : percentOuValor;
+
+          const snapshot: SnapshotConfirmacaoTacComissao = {
+            tacBruto: tacBrutoEfetivo,
+            descontoIla: descontoIlaEfetivo,
+            tacLiquidoEfetivo: tacLiquidoEfetivo,
+            percentualOuValorRegra: percentOuValor,
+            valorComissaoCalculado: novoValorCalculado,
+            dataHoraConfirmacao: nowIso,
+            usuarioConfirmouId,
+            usuarioConfirmouNome,
+            regraIdOriginal: c.regraId || '',
+          };
+
+          return {
+            ...c,
+            baseCalculo: tacLiquidoEfetivo,
+            valorCalculado: novoValorCalculado,
+            aguardaLiquidacaoTac: false,
+            statusLiberacao: 'Liberada_Para_Pagamento' as const,
+            snapshotConfirmacaoTac: snapshot,
+          };
+        }
+
+        // Liberar somente comissão dependente de TAC se a regra exigir isso, sem alterar indevidamente comissões que não dependem de TAC
+        if (c.aguardaLiquidacaoTac) {
+          return {
+            ...c,
+            aguardaLiquidacaoTac: false,
+            statusLiberacao: 'Liberada_Para_Pagamento' as const,
+          };
+        }
+
+        // Não alterar status de comissões que não dependem de TAC
+        return c;
+      });
+
+      // Se não houver item de TAC mas houver regra de TAC para o vendedor, criar esse item com ID determinístico
+      if (!hasTacItem) {
+        let percentualTacRegra: number | undefined =
+          vendaAtual.comissaoBonusTacPercent ||
+          vendaAtual.comissaoPercentualTac;
+        const vendedorId = vendaAtual.vendedorId;
+        let vendedorNome = vendaAtual.vendedorNome || 'Vendedor';
+
+        if (!percentualTacRegra && vendedorId) {
+          const userRef = doc(db, COLLECTIONS.USUARIOS, vendedorId);
+          const userSnap = await transaction.get(userRef);
+          if (userSnap.exists()) {
+            const uData = userSnap.data();
+            if (uData.comissaoBonusTacPercent && Number(uData.comissaoBonusTacPercent) > 0) {
+              percentualTacRegra = Number(uData.comissaoBonusTacPercent);
+            } else if (uData.regraComissaoPadrao === 'vendedor_bonus_tac') {
+              percentualTacRegra = Number(uData.comissaoPercentualTac || 20);
+            }
+            if (!vendaAtual.vendedorNome && (uData.nomeCompleto || uData.displayName)) {
+              vendedorNome = uData.nomeCompleto || uData.displayName;
+            }
           }
-          return c;
-        });
+        }
+
+        if (percentualTacRegra && percentualTacRegra > 0) {
+          const regraIdDeterministica = 'regra_retorno_tac';
+          const itemTacId = `${vendaAtual.id}_${vendedorId || 'vendedor'}_regra_${regraIdDeterministica}`;
+          const valorComissaoTac = Number(((tacLiquidoEfetivo * percentualTacRegra) / 100).toFixed(2));
+
+          const snapshot: SnapshotConfirmacaoTacComissao = {
+            tacBruto: tacBrutoEfetivo,
+            descontoIla: descontoIlaEfetivo,
+            tacLiquidoEfetivo: tacLiquidoEfetivo,
+            percentualOuValorRegra: percentualTacRegra,
+            valorComissaoCalculado: valorComissaoTac,
+            dataHoraConfirmacao: nowIso,
+            usuarioConfirmouId,
+            usuarioConfirmouNome,
+            regraIdOriginal: regraIdDeterministica,
+          };
+
+          const novoItemTac: ComissaoDetalhadaVenda = {
+            id: itemTacId,
+            vendaId: vendaAtual.id,
+            veiculoId: vendaAtual.veiculoId,
+            usuarioId: vendedorId || '',
+            usuarioNome: vendedorNome,
+            beneficiarioPapel: 'Vendedor',
+            regraId: regraIdDeterministica,
+            tipoBase: 'Retorno TAC',
+            formato: 'Percentual',
+            valorOrPercentual: percentualTacRegra,
+            condicaoGatilho: 'Apenas se houver TAC',
+            baseCalculo: tacLiquidoEfetivo,
+            valorCalculado: valorComissaoTac,
+            aguardaLiquidacaoTac: false,
+            statusLiberacao: 'Liberada_Para_Pagamento',
+            statusPagamento: 'Pendente',
+            snapshotConfirmacaoTac: snapshot,
+          };
+
+          comissoes.push(novoItemTac);
+        }
+      }
+
+      vendaAtual.comissoesDetalhadas = comissoes;
+      const tacItemAtualizado = comissoes.find((c) => c.tipoBase === 'Retorno TAC');
+      if (tacItemAtualizado) {
+        vendaAtual.comissaoBonusTacValor = tacItemAtualizado.valorCalculado;
+        vendaAtual.comissaoBonusTacPercent = Number(tacItemAtualizado.valorOrPercentual || 0);
+      }
+      const totalComissoes = comissoes.reduce((sum, c) => sum + (Number(c.valorCalculado) || 0), 0);
+      if (totalComissoes > 0) {
+        vendaAtual.comissaoValor = totalComissoes;
       }
     }
 
@@ -2262,7 +2420,7 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
       contaNome: contaAtualizada.nome,
       tipo: 'Receita',
       categoria: categoriaExtrato,
-      valor: Number(valorLiquidado || 0),
+      valor: valorCreditoEfetivo,
       data: dataLiquidacao || nowIso.split('T')[0],
       descricao: descricaoExtrato,
       vinculoVendaId: venda.id,
@@ -2296,6 +2454,7 @@ export async function processarLiquidacaoRecebivelFirestore(params: {
  * e auto-criação (pré-cadastro) de Fornecedores e Veículos de Locação.
  */
 export interface ParametrosLancamentoExpresso {
+  lancamentoExpressoId?: string;
   tipo: 'Entrada' | 'Saída' | 'Receita' | 'Despesa';
   valor: number;
   data: string; // YYYY-MM-DD
@@ -2806,8 +2965,10 @@ export async function salvarLancamentoExpressoFirestore(
   }
 
   // 3 e 4. Atualizar saldo da Conta Bancária no Firestore e Gravar Movimentação de forma atômica
-  const movId = `mov_exp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-  const idempotencyKey = `idemp_exp_${movId}`;
+  const movId = (params.lancamentoExpressoId && params.lancamentoExpressoId.trim())
+    ? (params.lancamentoExpressoId.startsWith('mov_') ? params.lancamentoExpressoId : `mov_${params.lancamentoExpressoId}`)
+    : `mov_exp_${params.data || new Date().toISOString().split('T')[0]}_${contaId}_${valor}_${(params.pagadorRecebedor || '').replace(/[^a-zA-Z0-9]/g, '')}`;
+  const idempotencyKey = `idemp_${movId}`;
   const nowIso = new Date().toISOString();
 
   // Determinar categoria contábil e de custos
@@ -2844,6 +3005,17 @@ export async function salvarLancamentoExpressoFirestore(
   const docMovRef = doc(db, COLLECTIONS.MOVIMENTACOES_CONTAS, movId);
 
   const { contaAtualizada, novaMovimentacao } = await runTransaction(db, async (transaction) => {
+    // 1. Verificar idempotência determinística ANTES de alterar saldo
+    const movSnap = await transaction.get(docMovRef);
+    if (movSnap.exists()) {
+      console.log(`[Idempotência] Lançamento expresso ${movId} já foi processado anteriormente.`);
+      const contaSnapExisting = await transaction.get(docContaRef);
+      return {
+        contaAtualizada: normalizeContaBancaria(contaSnapExisting.exists() ? contaSnapExisting.data() : {}, contaId),
+        novaMovimentacao: movSnap.data() as MovimentacaoConta,
+      };
+    }
+
     const contaSnap = await transaction.get(docContaRef);
     if (!contaSnap.exists()) {
       throw new Error(`Conta bancária ${contaId} não encontrada no Firestore.`);

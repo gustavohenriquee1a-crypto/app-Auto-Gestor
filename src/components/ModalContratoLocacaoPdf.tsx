@@ -75,7 +75,7 @@ export const ModalContratoLocacaoPdf: React.FC<ModalContratoLocacaoPdfProps> = (
 
   // Cidade e UF para Foro e Local da Assinatura
   const cidadeUf = configLoja?.cidadeUf || 'Presidente Prudente - SP';
-  const partesCidadeUf = cidadeUf.split(/[-/]/).map((s) => s.trim());
+  const partesCidadeUf = typeof cidadeUf === 'string' ? cidadeUf.split(/[-/]/).map((s) => s.trim()) : ['Presidente Prudente', 'SP'];
   const cidadeForo = partesCidadeUf[0] || 'Presidente Prudente';
   const estadoForo = partesCidadeUf[1] || 'SP';
 
@@ -99,10 +99,12 @@ export const ModalContratoLocacaoPdf: React.FC<ModalContratoLocacaoPdfProps> = (
   const dataAssinaturaFormatada = contrato.dataInicio
     ? (() => {
         try {
-          const partes = contrato.dataInicio.split('-');
-          if (partes.length === 3) {
-            const d = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]));
-            return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+          if (typeof contrato.dataInicio === 'string') {
+            const partes = contrato.dataInicio.split('-');
+            if (partes.length === 3) {
+              const d = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]));
+              return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+            }
           }
         } catch {
           // fallback

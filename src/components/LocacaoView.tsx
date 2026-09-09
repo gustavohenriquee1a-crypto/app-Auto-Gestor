@@ -2523,7 +2523,7 @@ export const LocacaoView: React.FC<LocacaoViewProps> = ({
               motoristaCpf: '000.000.000-00',
               motoristaTelefone: '',
               motoristaApp: 'Uber / 99',
-              dataInicio: modalTermoVistoriaPdfTarget.dataHora.split('T')[0],
+              dataInicio: (modalTermoVistoriaPdfTarget.dataHora || modalTermoVistoriaPdfTarget.data || new Date().toISOString()).split('T')[0],
               valorSemanal: 0,
               diaCobranca: 'Segunda-feira',
               caucao: 0,

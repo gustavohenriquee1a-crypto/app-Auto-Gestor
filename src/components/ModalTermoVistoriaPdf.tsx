@@ -54,7 +54,9 @@ export const ModalTermoVistoriaPdf: React.FC<ModalTermoVistoriaPdfProps> = ({
 
   const kmRegistro = checklist?.km || (tipoVistoria === 'Retirada / Entrega' ? contrato.kmInicial : veiculo.kmAtual) || 0;
   const nivelCombustivel = checklist?.nivelCombustivel || 'Cheio';
-  const dataVistoria = checklist?.dataHora ? formatDate(checklist.dataHora.split('T')[0]) : formatDate(contrato.dataInicio);
+  const dataVistoria = checklist?.dataHora && typeof checklist.dataHora === 'string'
+    ? formatDate(checklist.dataHora.split('T')[0])
+    : formatDate(checklist?.data || contrato?.dataInicio);
 
   const itensConferidos = [
     { item: 'Estepe (Pneu sobressalente calibrado)', status: 'OK / Conforme' },

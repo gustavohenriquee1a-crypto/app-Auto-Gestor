@@ -2569,7 +2569,7 @@ export const DossieModal: React.FC<DossieModalProps> = ({
 
                         <div className="flex items-center gap-2 text-xs text-slate-400">
                           <span className="bg-white/5 border border-white/5 px-2.5 py-1 rounded-lg text-slate-300 font-mono text-[11px]">
-                            📅 {formatDate(td.dataHora.split('T')[0])} {td.dataHora.includes('T') ? td.dataHora.split('T')[1].slice(0, 5) : ''}
+                            📅 {td.dataHora ? `${formatDate(td.dataHora.split('T')[0])} ${td.dataHora.includes('T') ? td.dataHora.split('T')[1].slice(0, 5) : ''}` : '-'}
                           </span>
                         </div>
                       </div>

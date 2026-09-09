@@ -235,7 +235,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               )}
               <span className="text-xs font-semibold text-slate-200 hidden md:inline truncate max-w-[100px]">
-                {currentUser.displayName.split(' ')[0]}
+                {currentUser.displayName ? currentUser.displayName.split(' ')[0] : 'Usuário'}
               </span>
               <ChevronDown size={14} className="text-slate-400" />
             </button>

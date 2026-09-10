@@ -924,9 +924,15 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                   <span className="font-mono text-emerald-300">{formatCurrency(dre.receitaLocacoes)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Retornos TAC Bancários:</span>
+                  <span className="text-slate-400">Retornos TAC Recebidos:</span>
                   <span className="font-mono text-emerald-300 font-bold">+{formatCurrency(dre.receitaRetornoTac)}</span>
                 </div>
+                {dre.tacLiquidoPendenteTotal > 0 && (
+                  <div className="flex justify-between text-amber-300/90 pt-0.5">
+                    <span className="text-[10px] text-amber-400">TAC a Liquidar (Projetado):</span>
+                    <span className="font-mono text-[10px] font-bold">+{formatCurrency(dre.tacLiquidoPendenteTotal)}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1021,10 +1027,16 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                   <span className="text-slate-400">Margem Bruta (s/ CMV):</span>
                   <span className="font-mono text-blue-300 font-bold">{formatPercent(dre.margemBrutaPercent)}</span>
                 </div>
+                {dre.tacLiquidoPendenteTotal > 0 && (
+                  <div className="flex justify-between text-amber-300 pt-0.5 border-t border-white/5">
+                    <span className="text-[10px] text-amber-400">Lucro Projetado (c/ TAC a liquidar):</span>
+                    <span className="font-mono text-[10px] font-bold">{formatCurrency(dre.lucroLiquidoProjetado)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center text-emerald-300 pt-0.5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Resultado Final:</span>
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Resultado Apurado:</span>
                   <span className="text-[10px] bg-emerald-500/20 px-1.5 py-0.2 rounded text-emerald-300 font-bold">
-                    100% Livre de Custos
+                    100% Conciliado
                   </span>
                 </div>
               </div>
@@ -1662,14 +1674,72 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
 
                   {/* 1.3 Retornos TAC */}
                   <tr className="text-slate-300 hover:bg-white/5 transition">
-                    <td className="py-2.5 px-8 font-sans text-slate-300 flex items-center gap-2">
-                      <span className="text-slate-500">•</span>
-                      <span>Retornos de Financiamento Bancário (TAC / Comissões de Bancos Parceiros)</span>
+                    <td className="py-2.5 px-8 font-sans text-slate-300 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-500">•</span>
+                        <span>Retornos de Financiamento Bancário (TAC Recebido em Conta)</span>
+                      </div>
+                      {dre.tacLiquidoPendenteTotal > 0 && (
+                        <span className="text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded font-sans">
+                          Pendente a liquidar: {formatCurrency(dre.tacLiquidoPendenteTotal)}
+                        </span>
+                      )}
                     </td>
                     <td className="py-2.5 px-4 text-right text-emerald-400 font-semibold">+{formatCurrency(dre.receitaRetornoTac)}</td>
                     <td className="py-2.5 px-4 text-right text-slate-400">{formatPercent(dre.pctReceitaRetornoTac)}</td>
-                    <td className="py-2.5 px-4"></td>
+                    <td className="py-2.5 px-4 text-center">
+                      <button 
+                        onClick={() => setTooltipAtivo(tooltipAtivo === 'tac' ? null : 'tac')}
+                        className="text-slate-400 hover:text-emerald-400 p-1 cursor-pointer"
+                        title="Ver demonstrativo detalhado de TAC"
+                      >
+                        <Info size={14} />
+                      </button>
+                    </td>
                   </tr>
+
+                  {/* Sublinhas discriminadas de TAC quando houver valores ou tooltip ativo */}
+                  {(dre.tacBrutoTotal > 0 || tooltipAtivo === 'tac') && (
+                    <tr className="bg-emerald-950/10 border-l-2 border-emerald-500/40 text-[11px] text-slate-400">
+                      <td colSpan={4} className="py-3 px-10">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between font-semibold text-emerald-300 border-b border-emerald-500/15 pb-1">
+                            <span>Demonstrativo Granular de TAC / Financiamento Bancário:</span>
+                            <span className="text-[10px] text-slate-400">
+                              * Somente o TAC líquido recebido em conta compõe o lucro e a receita apurada.
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+                            <div className="bg-black/30 p-2 rounded border border-white/5">
+                              <span className="text-[10px] text-slate-400 block">TAC Bruto</span>
+                              <span className="font-mono text-slate-200 font-bold">{formatCurrency(dre.tacBrutoTotal)}</span>
+                            </div>
+                            <div className="bg-black/30 p-2 rounded border border-white/5">
+                              <span className="text-[10px] text-slate-400 block">(-) Descontos / ILA</span>
+                              <span className="font-mono text-rose-300 font-bold">-{formatCurrency(dre.tacDescontoIlaTotal)}</span>
+                            </div>
+                            <div className="bg-black/30 p-2 rounded border border-white/5">
+                              <span className="text-[10px] text-slate-400 block">(=) TAC Líquido Previsto</span>
+                              <span className="font-mono text-slate-200 font-bold">{formatCurrency(dre.tacLiquidoPrevistoTotal)}</span>
+                            </div>
+                            <div className="bg-black/30 p-2 rounded border border-white/5">
+                              <span className="text-[10px] text-amber-400 block">TAC Líquido Pendente</span>
+                              <span className="font-mono text-amber-300 font-bold">{formatCurrency(dre.tacLiquidoPendenteTotal)}</span>
+                            </div>
+                            <div className="bg-black/30 p-2 rounded border border-emerald-500/30">
+                              <span className="text-[10px] text-emerald-400 block">TAC Líquido Recebido</span>
+                              <span className="font-mono text-emerald-300 font-bold">+{formatCurrency(dre.tacLiquidoRecebidoTotal)}</span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] pt-1 border-t border-emerald-500/10 text-slate-300">
+                            <div>• Impacto no Lucro Projetado: <strong className="font-mono text-slate-200">{formatCurrency(dre.impactoLucroProjetadoTacTotal)}</strong></div>
+                            <div>• Impacto no Lucro Apurado: <strong className="font-mono text-emerald-300">{formatCurrency(dre.impactoLucroApuradoTacTotal)}</strong></div>
+                            <div>• Impacto no Fluxo de Caixa: <strong className="font-mono text-emerald-400">{formatCurrency(dre.impactoFluxoCaixaTacTotal)}</strong></div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
 
                   {/* 2. CUSTO DAS MERCADORIAS VENDIDAS (CMV) */}
                   <tr className="bg-rose-950/20 font-bold text-white">
@@ -1716,15 +1786,74 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                     <td className="py-2.5 px-4"></td>
                   </tr>
 
-                  {/* 2.3 Comissões */}
+                  {/* 2.3 Comissões Comerciais (Total Consolidado com Segregação por Categoria) */}
                   <tr className="text-slate-300 hover:bg-white/5 transition">
-                    <td className="py-2.5 px-8 font-sans text-slate-300 flex items-center gap-2">
-                      <span className="text-slate-500">•</span>
-                      <span>Comissões Pagas a Vendedores / Equipe Comercial</span>
+                    <td className="py-2.5 px-8 font-sans text-slate-300 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-500">•</span>
+                        <span>Comissões Comerciais da Venda (Total Consolidado)</span>
+                      </div>
+                      <span className="text-[10px] text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded font-sans border border-amber-500/20">
+                        5 classes contábeis
+                      </span>
                     </td>
-                    <td className="py-2.5 px-4 text-right text-slate-300">-{formatCurrency(dre.cmvComissoesVendidos)}</td>
+                    <td className="py-2.5 px-4 text-right text-amber-300 font-semibold">-{formatCurrency(dre.cmvComissoesVendidos)}</td>
                     <td className="py-2.5 px-4 text-right text-slate-400">{formatPercent(dre.pctCmvComissoes)}</td>
-                    <td className="py-2.5 px-4"></td>
+                    <td className="py-2.5 px-4 text-center">
+                      <button 
+                        onClick={() => setTooltipAtivo(tooltipAtivo === 'comissoes_dre' ? null : 'comissoes_dre')}
+                        className="text-slate-400 hover:text-amber-400 p-1 cursor-pointer"
+                        title="Ver divisão das 5 classes de comissão"
+                      >
+                        <ChevronDown size={14} className={tooltipAtivo === 'comissoes_dre' ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                      </button>
+                    </td>
+                  </tr>
+
+                  {/* 2.3.1 a 2.3.5 Sublinhas das 5 classes contábeis de comissões */}
+                  <tr className="bg-amber-950/10 text-xs text-slate-400 border-l border-amber-500/30">
+                    <td className="py-2 px-12 text-slate-300">
+                      <span>2.3.1 Comissão de Vendedor (Equipe de Loja)</span>
+                    </td>
+                    <td className="py-2 px-4 text-right text-slate-300 font-mono">-{formatCurrency(dre.cmvComissaoVendedorVendidos)}</td>
+                    <td className="py-2 px-4 text-right text-slate-400">{formatPercent(dre.receitaOperacionalBruta > 0 ? (dre.cmvComissaoVendedorVendidos / dre.receitaOperacionalBruta) * 100 : 0)}</td>
+                    <td className="py-2 px-4"></td>
+                  </tr>
+
+                  <tr className="bg-amber-950/10 text-xs text-slate-400 border-l border-amber-500/30">
+                    <td className="py-2 px-12 text-slate-300">
+                      <span>2.3.2 Comissão de Gestão (Gerentes / Overriding)</span>
+                    </td>
+                    <td className="py-2 px-4 text-right text-slate-300 font-mono">-{formatCurrency(dre.cmvComissaoGestaoVendidos)}</td>
+                    <td className="py-2 px-4 text-right text-slate-400">{formatPercent(dre.receitaOperacionalBruta > 0 ? (dre.cmvComissaoGestaoVendidos / dre.receitaOperacionalBruta) * 100 : 0)}</td>
+                    <td className="py-2 px-4"></td>
+                  </tr>
+
+                  <tr className="bg-amber-950/10 text-xs text-slate-400 border-l border-amber-500/30">
+                    <td className="py-2 px-12 text-slate-300">
+                      <span>2.3.3 Comissão de Financiamento / TAC (Mesa de Crédito / F&I)</span>
+                    </td>
+                    <td className="py-2 px-4 text-right text-slate-300 font-mono">-{formatCurrency(dre.cmvComissaoFinanciamentoTacVendidos)}</td>
+                    <td className="py-2 px-4 text-right text-slate-400">{formatPercent(dre.receitaOperacionalBruta > 0 ? (dre.cmvComissaoFinanciamentoTacVendidos / dre.receitaOperacionalBruta) * 100 : 0)}</td>
+                    <td className="py-2 px-4"></td>
+                  </tr>
+
+                  <tr className="bg-amber-950/10 text-xs text-slate-400 border-l border-amber-500/30">
+                    <td className="py-2 px-12 text-slate-300">
+                      <span>2.3.4 Comissão de Parceiro / Intermediador (Indicações Externas)</span>
+                    </td>
+                    <td className="py-2 px-4 text-right text-slate-300 font-mono">-{formatCurrency(dre.cmvComissaoParceiroIntermediadorVendidos)}</td>
+                    <td className="py-2 px-4 text-right text-slate-400">{formatPercent(dre.receitaOperacionalBruta > 0 ? (dre.cmvComissaoParceiroIntermediadorVendidos / dre.receitaOperacionalBruta) * 100 : 0)}</td>
+                    <td className="py-2 px-4"></td>
+                  </tr>
+
+                  <tr className="bg-amber-950/10 text-xs text-slate-400 border-l border-amber-500/30">
+                    <td className="py-2 px-12 text-slate-300">
+                      <span>2.3.5 Outras Comissões Comerciais</span>
+                    </td>
+                    <td className="py-2 px-4 text-right text-slate-300 font-mono">-{formatCurrency(dre.cmvOutrasComissoesVendidos)}</td>
+                    <td className="py-2 px-4 text-right text-slate-400">{formatPercent(dre.receitaOperacionalBruta > 0 ? (dre.cmvOutrasComissoesVendidos / dre.receitaOperacionalBruta) * 100 : 0)}</td>
+                    <td className="py-2 px-4"></td>
                   </tr>
 
                   {/* (=) LUCRO BRUTO OPERACIONAL */}
@@ -1951,11 +2080,16 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                     </td>
                   </tr>
 
-                  {/* (=) LUCRO LÍQUIDO REAL DA OPERAÇÃO */}
+                  {/* (=) LUCRO LÍQUIDO REAL APURADO DA OPERAÇÃO */}
                   <tr className="bg-gradient-to-r from-emerald-950/50 via-teal-950/40 to-indigo-950/50 font-black text-white text-sm border-t-2 border-emerald-500/50">
-                    <td className="py-3.5 px-4 font-sans uppercase tracking-wider text-emerald-300 flex items-center gap-2">
-                      <Sparkles size={16} className="text-yellow-400" />
-                      <span>(=) LUCRO LÍQUIDO REAL DA OPERAÇÃO</span>
+                    <td className="py-3.5 px-4 font-sans uppercase tracking-wider text-emerald-300 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sparkles size={16} className="text-yellow-400" />
+                        <span>(=) LUCRO LÍQUIDO REAL APURADO DA OPERAÇÃO</span>
+                      </div>
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30 font-sans font-semibold">
+                        Apurado (com TAC compensado)
+                      </span>
                     </td>
                     <td className={`py-3.5 px-4 text-right font-bold text-base ${
                       dre.lucroLiquidoReal >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -1971,6 +2105,31 @@ export const FinanceiroDREView: React.FC<FinanceiroDREViewProps> = ({
                       </span>
                     </td>
                   </tr>
+
+                  {/* Linha adicional quando houver TAC Pendente a Liquidar */}
+                  {dre.tacLiquidoPendenteTotal > 0 && (
+                    <tr className="bg-amber-950/20 text-xs font-semibold text-slate-300 border-t border-amber-500/20">
+                      <td className="py-2.5 px-8 font-sans flex items-center justify-between">
+                        <span className="text-amber-300">
+                          (Projeção) Lucro Líquido Projetado (incluindo TAC a liquidar de {formatCurrency(dre.tacLiquidoPendenteTotal)})
+                        </span>
+                        <span className="text-[10px] text-amber-400 font-mono">
+                          Aguardando liquidação bancária
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-4 text-right text-amber-300 font-mono font-bold">
+                        {formatCurrency(dre.lucroLiquidoProjetado)}
+                      </td>
+                      <td className="py-2.5 px-4 text-right text-amber-400 font-mono font-bold">
+                        {formatPercent(dre.margemLiquidaProjetadaPercent)}
+                      </td>
+                      <td className="py-2.5 px-4 text-center">
+                        <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-mono">
+                          PROJETADO
+                        </span>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

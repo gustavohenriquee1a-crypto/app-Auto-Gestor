@@ -19,6 +19,7 @@ import {
   Activity,
   UserCheck,
   Building,
+  Building2,
   ArrowRight,
   ShieldCheck,
   AlertTriangle,
@@ -70,7 +71,9 @@ import {
   isCategoriaRepasseDistribuicao,
   calcularLucroPorChassi,
   calculateComissoesVeiculo,
-  DemonstrativoLucroChassi
+  DemonstrativoLucroChassi,
+  classificarCategoriaComissao,
+  getLabelCategoriaComissao
 } from '../utils/formatters';
 import { 
   registrarMudancaStatusEstoque, 
@@ -2136,11 +2139,94 @@ export const DossieModal: React.FC<DossieModalProps> = ({
 
                   {/* DRE Rows */}
                   <div className="space-y-2.5 text-xs">
+                    {/* Receitas da Venda & Retorno TAC */}
                     <div className="flex justify-between py-2 border-b border-white/5 font-semibold">
                       <span className="text-slate-300 flex items-center gap-1.5">
-                        <span>Receita {isVendidoOperacao ? 'Realizada' : 'Projetada'}</span>
-                        {isVendidoOperacao && <span className="text-[10px] text-emerald-400 font-mono">(Venda + TAC Líquido)</span>}
+                        <span>Valor de Venda do Veículo</span>
                       </span>
+                      <span className="font-mono text-emerald-400 font-bold">{formatCurrency(dreChassi.valorVenda)}</span>
+                    </div>
+
+                    {/* Linha de TAC com status contábil */}
+                    {dreChassi.tac.tacBruto > 0 && (
+                      <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl space-y-2 my-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-emerald-300 flex items-center gap-1.5">
+                            <Building2 size={13} />
+                            Retorno de Financiamento Bancário (TAC)
+                          </span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            dreChassi.tac.isTacRecebido 
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
+                              : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          }`}>
+                            {dreChassi.tac.isTacRecebido ? 'Liquidado em Conta Bancária' : 'Pendente de Repasse'}
+                          </span>
+                        </div>
+
+                        {/* Indicadores discriminados de TAC */}
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] pt-1">
+                          <div className="bg-black/40 p-2 rounded-lg border border-white/5">
+                            <span className="text-[10px] text-slate-400 block">TAC Bruto</span>
+                            <span className="font-mono font-bold text-slate-200">{formatCurrency(dreChassi.tac.tacBruto)}</span>
+                          </div>
+                          <div className="bg-black/40 p-2 rounded-lg border border-white/5">
+                            <span className="text-[10px] text-slate-400 block">Descontos/ILA</span>
+                            <span className="font-mono font-bold text-rose-300">-{formatCurrency(dreChassi.tac.descontoIla)}</span>
+                          </div>
+                          <div className="bg-black/40 p-2 rounded-lg border border-white/5">
+                            <span className="text-[10px] text-slate-400 block">Líquido Previsto</span>
+                            <span className="font-mono font-bold text-slate-200">{formatCurrency(dreChassi.tac.tacLiquidoPrevisto)}</span>
+                          </div>
+                          <div className="bg-black/40 p-2 rounded-lg border border-white/5">
+                            <span className="text-[10px] text-amber-400 block">Líquido Pendente</span>
+                            <span className="font-mono font-bold text-amber-300">{formatCurrency(dreChassi.tac.tacLiquidoPendente)}</span>
+                          </div>
+                          <div className="bg-black/40 p-2 rounded-lg border border-white/5">
+                            <span className="text-[10px] text-emerald-400 block">Líquido Recebido</span>
+                            <span className="font-mono font-bold text-emerald-300">+{formatCurrency(dreChassi.tac.tacLiquidoRecebido)}</span>
+                          </div>
+                        </div>
+
+                        {/* Impactos contábeis */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] pt-1">
+                          <div className="flex justify-between items-center bg-black/30 px-2.5 py-1.5 rounded-lg border border-white/5">
+                            <span className="text-slate-400">Impacto no Lucro Projetado:</span>
+                            <span className="font-mono font-bold text-slate-200">{formatCurrency(dreChassi.tac.impactoLucroProjetado)}</span>
+                          </div>
+                          <div className="flex justify-between items-center bg-black/30 px-2.5 py-1.5 rounded-lg border border-emerald-500/20">
+                            <span className="text-emerald-400 font-semibold">Impacto no Lucro Apurado:</span>
+                            <span className="font-mono font-bold text-emerald-300">{formatCurrency(dreChassi.tac.impactoLucroApurado)}</span>
+                          </div>
+                          <div className="flex justify-between items-center bg-black/30 px-2.5 py-1.5 rounded-lg border border-white/5">
+                            <span className="text-slate-400">Impacto no Fluxo de Caixa:</span>
+                            <span className="font-mono font-bold text-emerald-400">{formatCurrency(dreChassi.tac.impactoFluxoCaixa)}</span>
+                          </div>
+                        </div>
+
+                        {!dreChassi.tac.isTacRecebido && (
+                          <p className="text-[10px] text-amber-300/90 leading-tight">
+                            * Regra Contábil: O TAC pendente não compõe a receita líquida realizada nem o lucro apurado até que ocorra a compensação bancária efetiva.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Receita Líquida Realizada vs Projetada */}
+                    <div className="flex justify-between py-2 border-b border-white/5 font-semibold">
+                      <div className="flex flex-col">
+                        <span className="text-slate-300 flex items-center gap-1.5">
+                          <span>Receita Líquida {isVendidoOperacao ? 'Apurada' : 'Projetada'}</span>
+                          {dreChassi.retornoTac > 0 && (
+                            <span className="text-[10px] text-emerald-400 font-mono">(inclui TAC recebido: +{formatCurrency(dreChassi.retornoTac)})</span>
+                          )}
+                        </span>
+                        {dreChassi.tac.tacLiquidoPendente > 0 && (
+                          <span className="text-[10px] text-amber-400/80">
+                            Projetada com TAC a liquidar: {formatCurrency(dreChassi.receitaLiquidaProjetada)}
+                          </span>
+                        )}
+                      </div>
                       <span className="font-mono text-emerald-400 font-bold">{formatCurrency(receitaRealOuPrevista)}</span>
                     </div>
 
@@ -2181,19 +2267,56 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                           </span>
                         </div>
 
-                        <div className="flex justify-between items-center py-2 border-b border-white/5 font-semibold text-slate-300">
-                          <div className="flex flex-col">
-                            <span className="flex items-center gap-1.5 text-amber-300">
-                              <Shield size={13} className="text-amber-400" />
-                              (-) Comissões da Equipe Comercial & Gestão
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                              Deduzidas aqui de forma única e protegida • Zero sobreposição com despesas de oficina
+                        {/* Deduções de Comissões Segregadas */}
+                        <div className="py-2 border-b border-white/5 space-y-1.5">
+                          <div className="flex justify-between items-center font-semibold text-slate-300">
+                            <div className="flex flex-col">
+                              <span className="flex items-center gap-1.5 text-amber-300">
+                                <Shield size={13} className="text-amber-400" />
+                                (-) Deduções Comerciais de Comissões (Total Consolidado)
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                Classificadas por papel comercial • Zero sobreposição com despesas de oficina
+                              </span>
+                            </div>
+                            <span className="font-mono font-bold text-amber-400">
+                              -{formatCurrency(comissaoEfetiva)}
                             </span>
                           </div>
-                          <span className="font-mono font-bold text-amber-400">
-                            -{formatCurrency(comissaoEfetiva)}
-                          </span>
+
+                          {/* Sublinhas das 5 classes contábeis */}
+                          <div className="pl-4 space-y-1 text-[11px] text-slate-400 border-l border-amber-500/20 ml-1">
+                            {dreChassi.comissaoVendedor > 0 && (
+                              <div className="flex justify-between">
+                                <span>• Comissão de Vendedor (Equipe de Loja):</span>
+                                <span className="font-mono text-slate-300">-{formatCurrency(dreChassi.comissaoVendedor)}</span>
+                              </div>
+                            )}
+                            {dreChassi.comissaoGestao > 0 && (
+                              <div className="flex justify-between">
+                                <span>• Comissão de Gestão / Overriding:</span>
+                                <span className="font-mono text-slate-300">-{formatCurrency(dreChassi.comissaoGestao)}</span>
+                              </div>
+                            )}
+                            {dreChassi.comissaoFinanciamentoTac > 0 && (
+                              <div className="flex justify-between">
+                                <span>• Comissão de Financiamento / TAC:</span>
+                                <span className="font-mono text-slate-300">-{formatCurrency(dreChassi.comissaoFinanciamentoTac)}</span>
+                              </div>
+                            )}
+                            {dreChassi.comissaoParceiroIntermediador > 0 && (
+                              <div className="flex justify-between">
+                                <span>• Comissão de Parceiro / Intermediador:</span>
+                                <span className="font-mono text-slate-300">-{formatCurrency(dreChassi.comissaoParceiroIntermediador)}</span>
+                              </div>
+                            )}
+                            {dreChassi.outrasComissoes > 0 && (
+                              <div className="flex justify-between">
+                                <span>• Outras Comissões Comerciais:</span>
+                                <span className="font-mono text-slate-300">-{formatCurrency(dreChassi.outrasComissoes)}</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </>
                     )}
@@ -2207,6 +2330,11 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                           {isVendidoOperacao
                             ? 'Resultado contábil definitivo sem dupla dedução de comissões/repasses'
                             : 'Resultado preliminar projetado da venda'}
+                          {dreChassi.tac.tacLiquidoPendente > 0 && (
+                            <span className="block text-amber-400/90 mt-0.5">
+                              Lucro Projetado (com TAC a receber): {formatCurrency(dreChassi.lucroLiquidoProjetado)}
+                            </span>
+                          )}
                         </span>
                       </div>
                       <span className={`font-mono text-base font-black ${lucroLiquidoRealizado >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -2331,8 +2459,11 @@ export const DossieModal: React.FC<DossieModalProps> = ({
                             className="p-2.5 rounded-lg bg-black/40 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
                           >
                             <div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-bold text-slate-200">{comItem.usuarioNome}</span>
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-medium">
+                                  {getLabelCategoriaComissao(classificarCategoriaComissao(comItem))}
+                                </span>
                                 {comItem.beneficiarioPapel && (
                                   <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/5 text-slate-400">
                                     {comItem.beneficiarioPapel}

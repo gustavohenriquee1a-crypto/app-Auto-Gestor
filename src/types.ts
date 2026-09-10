@@ -548,7 +548,33 @@ export interface FinanciamentoDetalhesVenda {
   contaBancariaTacId?: string;
   contaBancariaTacNome?: string;
   formaLiquidacaoTac?: string;
+  tacBruto?: number;
+  descontoIla?: number;
+  tacLiquido?: number;
   observacoesLiquidacao?: string;
+}
+
+export type CategoriaComissaoClassificada = 
+  | 'vendedor' 
+  | 'gestao' 
+  | 'financiamento_tac' 
+  | 'parceiro_intermediador' 
+  | 'outras';
+
+export interface DemonstrativoTacChassi {
+  tacBruto: number;
+  descontoIla: number;
+  tacLiquidoPrevisto: number;
+  tacLiquidoPendente: number;
+  tacLiquidoRecebido: number;
+  impactoLucroProjetado: number;
+  impactoLucroApurado: number;
+  impactoFluxoCaixa: number;
+  statusLiquidacaoTac: 'Pendente' | 'Recebido' | 'Nao_Aplicavel';
+  isTacRecebido: boolean;
+  bancoParceiroNome?: string;
+  dataLiquidacaoTac?: string;
+  contaBancariaTacNome?: string;
 }
 
 export interface VeiculoTrocaDetalhesVenda {
@@ -789,6 +815,8 @@ export interface ComissaoDetalhadaVenda {
   dataHoraAjuste?: string;
   usuarioAjusteId?: string;
   observacoes?: string;
+  descricao?: string;
+  tipoComissaoOrigem?: string;
 }
 
 export interface RegraRemuneracao {

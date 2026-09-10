@@ -1,4 +1,17 @@
-import { Veiculo, AgingSummary, ContratoLocacao, PagamentoAluguel, ItemManutencaoPreventiva, DebitoMotorista, VendaVeiculo, DespesaFixa, CategoriaDespesa, DespesaVeiculo } from '../types';
+import { 
+  Veiculo, 
+  AgingSummary, 
+  ContratoLocacao, 
+  PagamentoAluguel, 
+  ItemManutencaoPreventiva, 
+  DebitoMotorista, 
+  VendaVeiculo, 
+  DespesaFixa, 
+  CategoriaDespesa, 
+  DespesaVeiculo,
+  CategoriaComissaoClassificada,
+  DemonstrativoTacChassi
+} from '../types';
 
 /**
  * Categorias de Repasse de Lucro e Distribuições.
@@ -257,16 +270,148 @@ export const calculateCustoTotal = (veiculo: Veiculo): number => {
   return (Number(veiculo.custoAquisicao) || 0) + calculateTotalDespesas(veiculo);
 };
 
+export interface ItemComissaoDetalhadaResumo {
+  id?: string;
+  nome: string;
+  papel?: string;
+  categoriaClassificada: CategoriaComissaoClassificada;
+  categoriaLabel: string;
+  valor: number;
+  isento?: boolean;
+  statusPagamento?: string;
+  tipoBase?: string;
+}
+
 export interface ResumoComissoesVeiculo {
   totalComissoes: number;
   comissaoVendedor: number;
-  comissaoGerencial: number;
-  itensDetalhados: Array<{ nome: string; papel?: string; valor: number }>;
+  comissaoGestao: number;
+  comissaoGerencial: number; // alias para comissaoGestao (retrocompatibilidade)
+  comissaoFinanciamentoTac: number;
+  comissaoParceiroIntermediador: number;
+  outrasComissoes: number;
+  itensDetalhados: ItemComissaoDetalhadaResumo[];
 }
 
 /**
- * Totaliza as comissões comerciais de vendedores e gestores de um veículo/venda,
- * mantendo a segregação estrita dos custos operacionais de preparação do chassi.
+ * Retorna o rótulo legível da categoria contábil de comissão.
+ */
+export const getLabelCategoriaComissao = (cat: CategoriaComissaoClassificada): string => {
+  switch (cat) {
+    case 'vendedor':
+      return 'Comissão de Vendedor';
+    case 'gestao':
+      return 'Comissão de Gestão';
+    case 'financiamento_tac':
+      return 'Comissão de Financiamento / TAC';
+    case 'parceiro_intermediador':
+      return 'Comissão de Parceiro / Intermediador';
+    case 'outras':
+    default:
+      return 'Outras Comissões';
+  }
+};
+
+/**
+ * Classifica a comissão comercial com base no motor por usuário e regras vigentes,
+ * segregando comissões de vendedor, gestão, financiamento/TAC, parceiro/intermediador e outras.
+ */
+export const classificarCategoriaComissao = (params: {
+  beneficiarioPapel?: string;
+  usuarioCargo?: string;
+  tipoBase?: string;
+  regraOrigem?: string;
+  descricao?: string;
+  tipoComissaoOrigem?: string;
+  isVendedorVenda?: boolean;
+}): CategoriaComissaoClassificada => {
+  const papel = (params.beneficiarioPapel || '').toLowerCase().trim();
+  const cargo = (params.usuarioCargo || '').toLowerCase().trim();
+  const tipoBase = (params.tipoBase || '').toLowerCase().trim();
+  const regra = (params.regraOrigem || '').toLowerCase().trim();
+  const desc = (params.descricao || '').toLowerCase().trim();
+  const tipoOrigem = (params.tipoComissaoOrigem || '').toLowerCase().trim();
+
+  // 1. Financiamento / TAC (F&I, mesa de crédito bancário, retorno TAC da financeira)
+  if (
+    papel === 'responsavel_financiamento' ||
+    papel === 'financiamento' ||
+    papel.includes('f&i') ||
+    cargo.includes('financiamento') ||
+    cargo.includes('f&i') ||
+    cargo.includes('crédito') ||
+    cargo.includes('credito') ||
+    tipoBase.includes('tac') ||
+    tipoBase.includes('retorno tac') ||
+    regra.includes('retorno_tac') ||
+    regra.includes('comissao_tac') ||
+    desc.includes('retorno tac') ||
+    desc.includes('comissão tac') ||
+    desc.includes('comissao tac') ||
+    desc.includes('financiamento')
+  ) {
+    return 'financiamento_tac';
+  }
+
+  // 2. Gestão / Gerência (Overriding de gerentes, diretores e administradores)
+  if (
+    papel === 'gerente' ||
+    papel === 'gestao' ||
+    papel === 'gestão' ||
+    cargo.includes('gerente') ||
+    cargo.includes('gestor') ||
+    cargo.includes('diretor') ||
+    cargo.includes('admin') ||
+    regra.includes('admin_gerente') ||
+    regra.includes('gerencial') ||
+    tipoOrigem === 'automatica_gerencial' ||
+    desc.includes('gerencial') ||
+    desc.includes('gestão') ||
+    desc.includes('gestao') ||
+    desc.includes('overriding')
+  ) {
+    return 'gestao';
+  }
+
+  // 3. Parceiro / Intermediador (Indicações externas, corretores, parceiros comerciais)
+  if (
+    papel === 'intermediador' ||
+    papel === 'parceiro' ||
+    cargo.includes('intermediador') ||
+    cargo.includes('parceiro') ||
+    cargo.includes('corretor') ||
+    desc.includes('intermediador') ||
+    desc.includes('intermediação') ||
+    desc.includes('intermediacao') ||
+    desc.includes('parceiro') ||
+    desc.includes('indicação') ||
+    desc.includes('indicacao')
+  ) {
+    return 'parceiro_intermediador';
+  }
+
+  // 4. Vendedor (Consultores de venda da loja vinculados ao negócio)
+  if (
+    papel === 'vendedor' ||
+    params.isVendedorVenda ||
+    cargo.includes('vendedor') ||
+    cargo.includes('consultor') ||
+    cargo.includes('comercial') ||
+    regra.includes('vendedor_padrao') ||
+    regra.includes('percentual_venda') ||
+    tipoOrigem === 'automatica_venda' ||
+    desc.includes('vendedor')
+  ) {
+    return 'vendedor';
+  }
+
+  // 5. Outras comissões não enquadradas
+  return 'outras';
+};
+
+/**
+ * Totaliza e categoriza as comissões comerciais de um veículo/venda,
+ * mantendo o motor por usuário e segregando em 5 classes contábeis + total consolidado.
  */
 export const calculateComissoesVeiculo = (
   veiculo?: Veiculo | null,
@@ -275,42 +420,78 @@ export const calculateComissoesVeiculo = (
   const v = venda || veiculo?.venda;
   let totalComissoes = 0;
   let comissaoVendedor = 0;
-  let comissaoGerencial = 0;
-  const itensDetalhados: Array<{ nome: string; papel?: string; valor: number }> = [];
+  let comissaoGestao = 0;
+  let comissaoFinanciamentoTac = 0;
+  let comissaoParceiroIntermediador = 0;
+  let outrasComissoes = 0;
+  const itensDetalhados: ItemComissaoDetalhadaResumo[] = [];
 
   if (v?.comissoesDetalhadas && v.comissoesDetalhadas.length > 0) {
     v.comissoesDetalhadas.forEach((item) => {
       if (!item.isento) {
         const val = Number(item.valorCalculado) || 0;
         totalComissoes += val;
-        if (item.beneficiarioPapel === 'Gerente' || item.usuarioCargo?.toLowerCase().includes('gerente')) {
-          comissaoGerencial += val;
-        } else {
+
+        const categoria = classificarCategoriaComissao({
+          beneficiarioPapel: item.beneficiarioPapel,
+          usuarioCargo: item.usuarioCargo,
+          tipoBase: item.tipoBase,
+          regraOrigem: item.regraOrigem,
+          descricao: item.descricao,
+          tipoComissaoOrigem: item.tipoComissaoOrigem,
+          isVendedorVenda: Boolean(v.vendedorId && item.usuarioId === v.vendedorId),
+        });
+
+        if (categoria === 'vendedor') {
           comissaoVendedor += val;
+        } else if (categoria === 'gestao') {
+          comissaoGestao += val;
+        } else if (categoria === 'financiamento_tac') {
+          comissaoFinanciamentoTac += val;
+        } else if (categoria === 'parceiro_intermediador') {
+          comissaoParceiroIntermediador += val;
+        } else {
+          outrasComissoes += val;
         }
+
         itensDetalhados.push({
+          id: item.id,
           nome: item.usuarioNome || 'Beneficiário',
-          papel: item.beneficiarioPapel || item.usuarioCargo || 'Vendedor',
+          papel: item.beneficiarioPapel || item.usuarioCargo || 'Beneficiário',
+          categoriaClassificada: categoria,
+          categoriaLabel: getLabelCategoriaComissao(categoria),
           valor: val,
+          isento: item.isento,
+          statusPagamento: item.statusPagamento || item.status,
+          tipoBase: item.tipoBase,
         });
       }
     });
   } else if (v) {
-    comissaoVendedor = Number(v.comissaoValor || 0);
-    comissaoGerencial = Number(v.comissaoGerencialValor || 0);
-    totalComissoes = comissaoVendedor + comissaoGerencial;
-    if (comissaoVendedor > 0) {
+    const valVendedor = Number(v.comissaoValor || 0);
+    const valGerencial = Number(v.comissaoGerencialValor || 0);
+
+    if (valVendedor > 0) {
+      comissaoVendedor += valVendedor;
+      totalComissoes += valVendedor;
       itensDetalhados.push({
-        nome: v.vendedorNome || 'Vendedor',
+        nome: v.vendedorNome || 'Vendedor Comercial',
         papel: 'Vendedor',
-        valor: comissaoVendedor,
+        categoriaClassificada: 'vendedor',
+        categoriaLabel: getLabelCategoriaComissao('vendedor'),
+        valor: valVendedor,
       });
     }
-    if (comissaoGerencial > 0) {
+
+    if (valGerencial > 0) {
+      comissaoGestao += valGerencial;
+      totalComissoes += valGerencial;
       itensDetalhados.push({
-        nome: v.comissaoGerencialBeneficiarioNome || 'Gestão / Overriding',
+        nome: v.comissaoGerencialBeneficiarioNome || 'Gestão / Gerência',
         papel: 'Gerente',
-        valor: comissaoGerencial,
+        categoriaClassificada: 'gestao',
+        categoriaLabel: getLabelCategoriaComissao('gestao'),
+        valor: valGerencial,
       });
     }
   } else if (veiculo?.despesas && veiculo.despesas.length > 0) {
@@ -326,15 +507,33 @@ export const calculateComissoesVeiculo = (
       ) {
         const val = Number(d.valor) || 0;
         totalComissoes += val;
-        if (d.tipoComissaoOrigem === 'automatica_gerencial') {
-          comissaoGerencial += val;
-        } else {
+
+        const categoria = classificarCategoriaComissao({
+          beneficiarioPapel: d.tipoComissaoOrigem === 'automatica_gerencial' ? 'Gerente' : undefined,
+          descricao: d.descricao,
+          tipoComissaoOrigem: d.tipoComissaoOrigem,
+        });
+
+        if (categoria === 'vendedor') {
           comissaoVendedor += val;
+        } else if (categoria === 'gestao') {
+          comissaoGestao += val;
+        } else if (categoria === 'financiamento_tac') {
+          comissaoFinanciamentoTac += val;
+        } else if (categoria === 'parceiro_intermediador') {
+          comissaoParceiroIntermediador += val;
+        } else {
+          outrasComissoes += val;
         }
+
         itensDetalhados.push({
+          id: d.id,
           nome: d.beneficiarioNome || d.fornecedor || 'Comissão Prevista',
           papel: d.tipoComissaoOrigem === 'automatica_gerencial' ? 'Gerente' : 'Vendedor',
+          categoriaClassificada: categoria,
+          categoriaLabel: getLabelCategoriaComissao(categoria),
           valor: val,
+          statusPagamento: d.statusPagamento,
         });
       }
     });
@@ -343,8 +542,114 @@ export const calculateComissoesVeiculo = (
   return {
     totalComissoes: Number(totalComissoes.toFixed(2)),
     comissaoVendedor: Number(comissaoVendedor.toFixed(2)),
-    comissaoGerencial: Number(comissaoGerencial.toFixed(2)),
+    comissaoGestao: Number(comissaoGestao.toFixed(2)),
+    comissaoGerencial: Number(comissaoGestao.toFixed(2)),
+    comissaoFinanciamentoTac: Number(comissaoFinanciamentoTac.toFixed(2)),
+    comissaoParceiroIntermediador: Number(comissaoParceiroIntermediador.toFixed(2)),
+    outrasComissoes: Number(outrasComissoes.toFixed(2)),
     itensDetalhados,
+  };
+};
+
+/**
+ * Apura o demonstrativo completo de Retorno/TAC de Financiamento da Venda.
+ * NÃO soma TAC à receita/lucro apurado quando estiver apenas previsto ou pendente.
+ */
+export const calcularDemonstrativoTacVenda = (
+  venda?: VendaVeiculo | null
+): DemonstrativoTacChassi => {
+  if (!venda) {
+    return {
+      tacBruto: 0,
+      descontoIla: 0,
+      tacLiquidoPrevisto: 0,
+      tacLiquidoPendente: 0,
+      tacLiquidoRecebido: 0,
+      impactoLucroProjetado: 0,
+      impactoLucroApurado: 0,
+      impactoFluxoCaixa: 0,
+      statusLiquidacaoTac: 'Nao_Aplicavel',
+      isTacRecebido: false,
+    };
+  }
+
+  const fin = venda.financiamentoDetalhes;
+  const hasFinanc = Boolean(
+    fin ||
+    venda.formaPagamento === 'Financiamento' ||
+    (venda.retornoFinanciamentoTac || 0) > 0
+  );
+
+  if (!hasFinanc) {
+    return {
+      tacBruto: 0,
+      descontoIla: 0,
+      tacLiquidoPrevisto: 0,
+      tacLiquidoPendente: 0,
+      tacLiquidoRecebido: 0,
+      impactoLucroProjetado: 0,
+      impactoLucroApurado: 0,
+      impactoFluxoCaixa: 0,
+      statusLiquidacaoTac: 'Nao_Aplicavel',
+      isTacRecebido: false,
+    };
+  }
+
+  const statusLiquidacaoTac = (fin?.statusLiquidacaoTac as 'Pendente' | 'Recebido') || 'Pendente';
+  const isTacRecebido = statusLiquidacaoTac === 'Recebido';
+
+  const tacBrutoRaw = Number(
+    fin?.tacBruto ??
+    fin?.retornoComissaoBanco ??
+    venda.retornoFinanciamentoTac ??
+    0
+  );
+  const tacBruto = Number(Math.max(0, tacBrutoRaw).toFixed(2));
+
+  let descontoIla = 0;
+  if (fin?.descontoIla !== undefined) {
+    descontoIla = Number(fin.descontoIla) || 0;
+  } else if (
+    isTacRecebido &&
+    venda.retornoFinanciamentoTac !== undefined &&
+    tacBruto > venda.retornoFinanciamentoTac
+  ) {
+    descontoIla = Number((tacBruto - venda.retornoFinanciamentoTac).toFixed(2));
+  }
+
+  const tacLiquidoPrevisto = Number(
+    (fin?.tacLiquido !== undefined
+      ? Number(fin.tacLiquido)
+      : Math.max(0, tacBruto - descontoIla)
+    ).toFixed(2)
+  );
+
+  const tacLiquidoRecebido = isTacRecebido ? tacLiquidoPrevisto : 0;
+  const tacLiquidoPendente = !isTacRecebido ? tacLiquidoPrevisto : 0;
+
+  // O impacto no lucro projetado abrange todo o TAC previsto contratado
+  const impactoLucroProjetado = tacLiquidoPrevisto;
+  // O impacto no lucro apurado SOMENTE contabiliza o TAC efetivamente recebido
+  const impactoLucroApurado = tacLiquidoRecebido;
+  // O impacto no fluxo de caixa é o valor que efetivamente transitou pelas contas bancárias
+  const impactoFluxoCaixa = tacLiquidoRecebido;
+
+  return {
+    tacBruto,
+    descontoIla,
+    tacLiquidoPrevisto,
+    tacLiquidoPendente,
+    tacLiquidoRecebido,
+    impactoLucroProjetado,
+    impactoLucroApurado,
+    impactoFluxoCaixa,
+    statusLiquidacaoTac,
+    isTacRecebido,
+    bancoParceiroNome:
+      fin?.bancoParceiroNome ||
+      (typeof fin?.bancoParceiro === 'string' ? fin.bancoParceiro : undefined),
+    dataLiquidacaoTac: fin?.dataLiquidacaoTac,
+    contaBancariaTacNome: fin?.contaBancariaTacNome,
   };
 };
 
@@ -359,26 +664,36 @@ export interface DemonstrativoLucroChassi {
 
   // 1. Receitas
   valorVenda: number;
-  retornoTac: number;
+  retornoTac: number; // APENAS TAC LÍQUIDO RECEBIDO (não infla lucro apurado com valores pendentes)
+  retornoTacPrevisto: number; // TAC líquido total previsto
+  tac: DemonstrativoTacChassi; // Detalhamento completo do TAC
   taxasMaquininhas: number;
-  receitaLiquidaVenda: number;
+  receitaLiquidaVenda: number; // Receita líquida apurada (com TAC recebido)
+  receitaLiquidaProjetada: number; // Receita líquida projetada (com TAC previsto)
 
   // 2. Custos do Veículo (CMV)
   custoCompra: number;
-  despesasOperacionais: number; // Apenas preparação, peças, oficina, laudos - SEM comissões, SEM repasses, SEM canceladas/estornadas
+  despesasOperacionais: number; // Apenas preparação, peças, oficina, laudos - SEM comissões, SEM repasses
   custoTotalChassi: number; // custoCompra + despesasOperacionais
 
   // 3. Lucro Bruto
   lucroBruto: number; // receitaLiquidaVenda - custoTotalChassi
+  lucroBrutoProjetado: number; // receitaLiquidaProjetada - custoTotalChassi
   margemBrutaPercent: number;
 
-  // 4. Deduções Comerciais e de Marketing Pós-Margem
-  comissoesVenda: number;
-  detalhesComissoes: Array<{ nome: string; papel?: string; valor: number }>;
+  // 4. Deduções Comerciais Segregadas e de Marketing Pós-Margem
+  comissoesVenda: number; // Total consolidado
+  comissaoVendedor: number;
+  comissaoGestao: number;
+  comissaoFinanciamentoTac: number;
+  comissaoParceiroIntermediador: number;
+  outrasComissoes: number;
+  detalhesComissoes: ItemComissaoDetalhadaResumo[];
   despesasMarketingPosVenda: number;
 
-  // 5. Lucro Líquido Real Recalculado
-  lucroLiquidoRecalculado: number;
+  // 5. Lucro Líquido Real Recalculado (Apurado vs Projetado)
+  lucroLiquidoRecalculado: number; // Lucro líquido apurado (com TAC recebido e sem dupla dedução)
+  lucroLiquidoProjetado: number; // Lucro líquido projetado (com TAC previsto)
   margemLiquidaRecalculadaPercent: number;
 
   // 6. Auditoria de Lucro Histórico vs Recalculado
@@ -391,7 +706,7 @@ export interface DemonstrativoLucroChassi {
 /**
  * Motor canônico de apuração de Lucro por Chassi (DRE Unitário).
  * Segrega custos operacionais de preparação de comissões comerciais,
- * eliminando duplicidade de dedução e permitindo conciliação entre lucro histórico original e recalculado.
+ * elimina duplicidade de dedução e não soma TAC pendente à receita apurada.
  */
 export const calcularLucroPorChassi = (
   veiculo: Veiculo,
@@ -401,31 +716,48 @@ export const calcularLucroPorChassi = (
   const venda = vendaOverride || veiculo.venda;
   const isVendido = veiculo.status === 'Vendido' || Boolean(venda);
 
+  const tac = calcularDemonstrativoTacVenda(venda);
   const valorVenda = Number(venda?.valorVenda ?? (precoVendaAtualDefault || veiculo.valorVendaSugerido || 0));
-  const retornoTac = Number(
-    venda?.financiamentoDetalhes?.retornoComissaoBanco ??
-    venda?.retornoFinanciamentoTac ??
-    0
-  );
+  
+  // REGRA CONTÁBIL: Somente o TAC efetivamente recebido compõe o lucro apurado / receita líquida apurada
+  const retornoTac = tac.impactoLucroApurado;
+  const retornoTacPrevisto = tac.impactoLucroProjetado;
+
   const taxasMaquininhas = Number(
     venda?.taxasMaquininhaTotal ??
     venda?.composicaoPagamento?.reduce((acc, p) => acc + (Number(p.taxaValor) || 0), 0) ??
     0
   );
+  
   const receitaLiquidaVenda = Number((valorVenda + retornoTac - taxasMaquininhas).toFixed(2));
+  const receitaLiquidaProjetada = Number((valorVenda + retornoTacPrevisto - taxasMaquininhas).toFixed(2));
 
   const custoCompra = Number(venda?.valorCompra ?? veiculo.custoAquisicao ?? 0);
   const despesasOperacionais = calculateTotalDespesas(veiculo);
   const custoTotalChassi = Number((custoCompra + despesasOperacionais).toFixed(2));
 
   const lucroBruto = Number((receitaLiquidaVenda - custoTotalChassi).toFixed(2));
+  const lucroBrutoProjetado = Number((receitaLiquidaProjetada - custoTotalChassi).toFixed(2));
   const margemBrutaPercent = custoTotalChassi > 0 ? Number(((lucroBruto / custoTotalChassi) * 100).toFixed(2)) : 0;
 
-  const { totalComissoes, itensDetalhados } = calculateComissoesVeiculo(veiculo, venda);
+  const resComissoes = calculateComissoesVeiculo(veiculo, venda);
+  const { 
+    totalComissoes, 
+    comissaoVendedor, 
+    comissaoGestao, 
+    comissaoFinanciamentoTac, 
+    comissaoParceiroIntermediador, 
+    outrasComissoes, 
+    itensDetalhados 
+  } = resComissoes;
+
   const despesasMarketingPosVenda = Number(venda?.despesaMarketingAplicadaPosVenda || 0);
 
   const lucroLiquidoRecalculado = Number(
     (lucroBruto - totalComissoes - despesasMarketingPosVenda).toFixed(2)
+  );
+  const lucroLiquidoProjetado = Number(
+    (lucroBrutoProjetado - totalComissoes - despesasMarketingPosVenda).toFixed(2)
   );
   const margemLiquidaRecalculadaPercent = custoTotalChassi > 0
     ? Number(((lucroLiquidoRecalculado / custoTotalChassi) * 100).toFixed(2))
@@ -462,17 +794,27 @@ export const calcularLucroPorChassi = (
     isVendido,
     valorVenda,
     retornoTac,
+    retornoTacPrevisto,
+    tac,
     taxasMaquininhas,
     receitaLiquidaVenda,
+    receitaLiquidaProjetada,
     custoCompra,
     despesasOperacionais,
     custoTotalChassi,
     lucroBruto,
+    lucroBrutoProjetado,
     margemBrutaPercent,
     comissoesVenda: totalComissoes,
+    comissaoVendedor,
+    comissaoGestao,
+    comissaoFinanciamentoTac,
+    comissaoParceiroIntermediador,
+    outrasComissoes,
     detalhesComissoes: itensDetalhados,
     despesasMarketingPosVenda,
     lucroLiquidoRecalculado,
+    lucroLiquidoProjetado,
     margemLiquidaRecalculadaPercent,
     lucroHistoricoOriginal,
     diferencaRecalculada,
@@ -667,12 +1009,27 @@ export interface GrupoRepasseDistribuicao {
 }
 
 export interface DRESummaryData {
-  // 1. Receita Bruta
+  // 1. Receita Bruta & TAC Discriminado
   receitaVendas: number;
   receitaLocacoes: number;
   receitaMultasAcessorias: number; // Multas por atraso, excesso de KM e taxas de vistoria (DRE)
-  receitaRetornoTac: number;
-  receitaOperacionalBruta: number;
+  
+  // TAC Discriminado
+  tacBrutoTotal: number;
+  tacDescontoIlaTotal: number;
+  tacLiquidoPrevistoTotal: number;
+  tacLiquidoPendenteTotal: number;
+  tacLiquidoRecebidoTotal: number;
+  impactoLucroProjetadoTacTotal: number;
+  impactoLucroApuradoTacTotal: number;
+  impactoFluxoCaixaTacTotal: number;
+
+  // Receita de TAC Apurada (apenas recebido) vs Pendente
+  receitaRetornoTac: number; // Apenas TAC líquido recebido (apuração definitiva)
+  receitaRetornoTacPendente: number; // TAC líquido previsto que ainda não transitou pelas contas bancárias
+  
+  receitaOperacionalBruta: number; // Receita realizada com TAC recebido
+  receitaOperacionalBrutaProjetada: number; // Receita projetada com TAC previsto total
   
   // Percentuais de Receita (base = receitaOperacionalBruta)
   pctReceitaVendas: number;
@@ -680,19 +1037,32 @@ export interface DRESummaryData {
   pctReceitaMultasAcessorias: number;
   pctReceitaRetornoTac: number;
 
-  // 2. CMV (Custo das Mercadorias Vendidas - Oficina/Peças/Aquisição)
+  // 2. CMV (Custo das Mercadorias Vendidas - Aquisição, Oficina/Peças e Comissões Segregadas)
   cmvCompraVendidos: number;
   cmvRecondicionamentoVendidos: number;
-  cmvComissoesVendidos: number;
-  cmvTotal: number;
+  cmvComissoesVendidos: number; // Total consolidado de comissões comerciais
+  
+  // 5 Categorias Classificadas de Comissões
+  cmvComissaoVendedorVendidos: number;
+  cmvComissaoGestaoVendidos: number;
+  cmvComissaoFinanciamentoTacVendidos: number;
+  cmvComissaoParceiroIntermediadorVendidos: number;
+  cmvOutrasComissoesVendidos: number;
 
   pctCmvCompra: number;
   pctCmvRecondicionamento: number;
   pctCmvComissoes: number;
+  pctCmvComissaoVendedor: number;
+  pctCmvComissaoGestao: number;
+  pctCmvComissaoFinanciamentoTac: number;
+  pctCmvComissaoParceiroIntermediador: number;
+  pctCmvOutrasComissoes: number;
   pctCmvTotal: number;
+  cmvTotal: number;
 
   // Subtotal 1: Lucro Bruto Operacional (Margem Bruta dos Veículos)
   lucroBrutoOperacional: number;
+  lucroBrutoOperacionalProjetado: number;
   margemBrutaPercent: number;
 
   // 3. Despesas Fixas Operacionais da Loja
@@ -724,9 +1094,11 @@ export interface DRESummaryData {
   totalMarketingPosVenda: number;
   pctMarketingPosVenda: number;
 
-  // Resultado Final: Lucro Líquido Real & Margem Líquida
-  lucroLiquidoReal: number;
+  // Resultado Final: Lucro Líquido Real Apurado & Projetado
+  lucroLiquidoReal: number; // Lucro realizado efetivo (com TAC recebido)
+  lucroLiquidoProjetado: number; // Lucro projetado (com TAC previsto total)
   margemLiquidaPercent: number;
+  margemLiquidaProjetadaPercent: number;
 
   // Contadores
   quantidadeVendas: number;
@@ -735,7 +1107,7 @@ export interface DRESummaryData {
 }
 
 /**
- * Motor Contábil de Apuração do DRE em Cascata
+ * Motor Contábil de Apuração do DRE em Cascata com segregação de TAC e comissões
  */
 export const calculateDRESummary = (
   vendas: VendaVeiculo[],
@@ -758,9 +1130,38 @@ export const calculateDRESummary = (
     return true;
   });
 
-  // 3. Receitas de Vendas & Retornos
+  // 3. Receitas de Vendas & Apuração Detalhada de TAC (Bancário)
   const receitaVendas = vendasFiltradas.reduce((sum, v) => sum + (v.valorVenda || 0), 0);
-  const receitaRetornoTac = vendasFiltradas.reduce((sum, v) => sum + (v.retornoFinanciamentoTac || 0), 0);
+
+  let tacBrutoTotal = 0;
+  let tacDescontoIlaTotal = 0;
+  let tacLiquidoPrevistoTotal = 0;
+  let tacLiquidoPendenteTotal = 0;
+  let tacLiquidoRecebidoTotal = 0;
+
+  vendasFiltradas.forEach((v) => {
+    const demTac = calcularDemonstrativoTacVenda(v);
+    tacBrutoTotal += demTac.tacBruto;
+    tacDescontoIlaTotal += demTac.descontoIla;
+    tacLiquidoPrevistoTotal += demTac.tacLiquidoPrevisto;
+    tacLiquidoPendenteTotal += demTac.tacLiquidoPendente;
+    tacLiquidoRecebidoTotal += demTac.tacLiquidoRecebido;
+  });
+
+  tacBrutoTotal = Number(tacBrutoTotal.toFixed(2));
+  tacDescontoIlaTotal = Number(tacDescontoIlaTotal.toFixed(2));
+  tacLiquidoPrevistoTotal = Number(tacLiquidoPrevistoTotal.toFixed(2));
+  tacLiquidoPendenteTotal = Number(tacLiquidoPendenteTotal.toFixed(2));
+  tacLiquidoRecebidoTotal = Number(tacLiquidoRecebidoTotal.toFixed(2));
+
+  // REGRA CONTÁBIL CRÍTICA:
+  // NÃO somar retorno TAC diretamente na receita líquida/lucro apurado quando estiver apenas previsto ou pendente!
+  const receitaRetornoTac = tacLiquidoRecebidoTotal;
+  const receitaRetornoTacPendente = tacLiquidoPendenteTotal;
+
+  const impactoLucroProjetadoTacTotal = tacLiquidoPrevistoTotal;
+  const impactoLucroApuradoTacTotal = tacLiquidoRecebidoTotal;
+  const impactoFluxoCaixaTacTotal = tacLiquidoRecebidoTotal;
 
   // Receitas de Locação (Aluguel Base) e Receitas Acessórias - Multas (Excesso KM, Atrasos e Vistorias)
   let receitaLocacoes = 0;
@@ -805,15 +1206,16 @@ export const calculateDRESummary = (
     });
   });
 
-  // Receita Operacional Bruta
-  const receitaOperacionalBruta = receitaVendas + receitaLocacoes + receitaMultasAcessorias + receitaRetornoTac;
+  // Receita Operacional Bruta Realizada (com TAC recebido) e Projetada (com TAC previsto)
+  const receitaOperacionalBruta = Number((receitaVendas + receitaLocacoes + receitaMultasAcessorias + receitaRetornoTac).toFixed(2));
+  const receitaOperacionalBrutaProjetada = Number((receitaVendas + receitaLocacoes + receitaMultasAcessorias + tacLiquidoPrevistoTotal).toFixed(2));
 
-  const getPct = (val: number) => {
-    if (receitaOperacionalBruta <= 0) return 0;
-    return (val / receitaOperacionalBruta) * 100;
+  const getPct = (val: number, base: number = receitaOperacionalBruta) => {
+    if (base <= 0) return 0;
+    return (val / base) * 100;
   };
 
-  // 4. CMV (Custo das Mercadorias Vendidas - Aquisição, Oficina/Peças e Comissões)
+  // 4. CMV (Custo das Mercadorias Vendidas - Aquisição, Oficina/Peças e Comissões Segregadas)
   const cmvCompraVendidos = vendasFiltradas.reduce((sum, v) => sum + (v.valorCompra || 0), 0);
   
   // Recondicionamento: assegura que repasses/distribuições e comissões NÃO entrem no custo de oficina
@@ -825,16 +1227,44 @@ export const calculateDRESummary = (
     return sum + (v.totalDespesas || 0);
   }, 0);
 
-  // Comissões: totaliza vendas e gerência de forma segregada, garantindo zero sobreposição com oficina
-  const cmvComissoesVendidos = vendasFiltradas.reduce((sum, v) => {
-    const veic = veiculos.find((x) => x.id === v.veiculoId || (x.chassi && v.chassi && x.chassi === v.chassi));
-    const { totalComissoes } = calculateComissoesVeiculo(veic, v);
-    return sum + totalComissoes;
-  }, 0);
-  const cmvTotal = cmvCompraVendidos + cmvRecondicionamentoVendidos + cmvComissoesVendidos;
+  // Comissões: totaliza vendas, gerência, financiamento/TAC, parceiros e outras comissões
+  let cmvComissaoVendedorVendidos = 0;
+  let cmvComissaoGestaoVendidos = 0;
+  let cmvComissaoFinanciamentoTacVendidos = 0;
+  let cmvComissaoParceiroIntermediadorVendidos = 0;
+  let cmvOutrasComissoesVendidos = 0;
 
-  // Lucro Bruto Operacional (Margem Bruta do Veículo)
-  const lucroBrutoOperacional = receitaOperacionalBruta - cmvTotal;
+  vendasFiltradas.forEach((v) => {
+    const veic = veiculos.find((x) => x.id === v.veiculoId || (x.chassi && v.chassi && x.chassi === v.chassi));
+    const resCom = calculateComissoesVeiculo(veic, v);
+    cmvComissaoVendedorVendidos += resCom.comissaoVendedor;
+    cmvComissaoGestaoVendidos += resCom.comissaoGestao;
+    cmvComissaoFinanciamentoTacVendidos += resCom.comissaoFinanciamentoTac;
+    cmvComissaoParceiroIntermediadorVendidos += resCom.comissaoParceiroIntermediador;
+    cmvOutrasComissoesVendidos += resCom.outrasComissoes;
+  });
+
+  cmvComissaoVendedorVendidos = Number(cmvComissaoVendedorVendidos.toFixed(2));
+  cmvComissaoGestaoVendidos = Number(cmvComissaoGestaoVendidos.toFixed(2));
+  cmvComissaoFinanciamentoTacVendidos = Number(cmvComissaoFinanciamentoTacVendidos.toFixed(2));
+  cmvComissaoParceiroIntermediadorVendidos = Number(cmvComissaoParceiroIntermediadorVendidos.toFixed(2));
+  cmvOutrasComissoesVendidos = Number(cmvOutrasComissoesVendidos.toFixed(2));
+
+  const cmvComissoesVendidos = Number(
+    (
+      cmvComissaoVendedorVendidos +
+      cmvComissaoGestaoVendidos +
+      cmvComissaoFinanciamentoTacVendidos +
+      cmvComissaoParceiroIntermediadorVendidos +
+      cmvOutrasComissoesVendidos
+    ).toFixed(2)
+  );
+
+  const cmvTotal = Number((cmvCompraVendidos + cmvRecondicionamentoVendidos + cmvComissoesVendidos).toFixed(2));
+
+  // Lucro Bruto Operacional (Margem Bruta dos Veículos - Realizado vs Projetado)
+  const lucroBrutoOperacional = Number((receitaOperacionalBruta - cmvTotal).toFixed(2));
+  const lucroBrutoOperacionalProjetado = Number((receitaOperacionalBrutaProjetada - cmvTotal).toFixed(2));
   const margemBrutaPercent = getPct(lucroBrutoOperacional);
 
   // 5. Despesas Fixas da Loja (Agrupadas por Categoria)
@@ -861,14 +1291,14 @@ export const calculateDRESummary = (
     };
   }).filter((c) => c.total > 0 || despesasFiltradas.length === 0);
 
-  const totalDespesasFixas = despesasFiltradas.reduce((sum, d) => sum + (d.valor || 0), 0);
-  const totalDespesasPagas = despesasFiltradas.filter((d) => d.status === 'Pago').reduce((sum, d) => sum + (d.valor || 0), 0);
-  const totalDespesasPendentes = despesasFiltradas.filter((d) => d.status === 'Pendente').reduce((sum, d) => sum + (d.valor || 0), 0);
+  const totalDespesasFixas = Number(despesasFiltradas.reduce((sum, d) => sum + (d.valor || 0), 0).toFixed(2));
+  const totalDespesasPagas = Number(despesasFiltradas.filter((d) => d.status === 'Pago').reduce((sum, d) => sum + (d.valor || 0), 0).toFixed(2));
+  const totalDespesasPendentes = Number(despesasFiltradas.filter((d) => d.status === 'Pendente').reduce((sum, d) => sum + (d.valor || 0), 0).toFixed(2));
 
   // 6. Provisões Fiscais e Legais
-  const provisaoTributaria = vendasFiltradas.reduce((sum, v) => sum + (v.impostoMargemEstimado || 0), 0);
-  const provisaoGarantiaCdc = vendasFiltradas.reduce((sum, v) => sum + (v.fundoGarantiaProvisao?.valor || 0), 0);
-  const totalProvisoes = provisaoTributaria + provisaoGarantiaCdc;
+  const provisaoTributaria = Number(vendasFiltradas.reduce((sum, v) => sum + (v.impostoMargemEstimado || 0), 0).toFixed(2));
+  const provisaoGarantiaCdc = Number(vendasFiltradas.reduce((sum, v) => sum + (v.fundoGarantiaProvisao?.valor || 0), 0).toFixed(2));
+  const totalProvisoes = Number((provisaoTributaria + provisaoGarantiaCdc).toFixed(2));
 
   // 7. SEÇÃO SEPARADA: Repasses e Distribuições de Lucro
   // Agrupa todas as despesas vinculadas a Parceiros, Sócios, Pró-labore e Bônus Extras
@@ -932,42 +1362,58 @@ export const calculateDRESummary = (
     };
   });
 
-  const totalRepassesParceiros = repassesItens
+  const totalRepassesParceiros = Number(repassesItens
     .filter((r) => r.categoria === 'Repasse de Lucro - Parceiro')
-    .reduce((sum, r) => sum + r.valor, 0);
+    .reduce((sum, r) => sum + r.valor, 0).toFixed(2));
 
-  const totalDistribuicaoSocios = repassesItens
+  const totalDistribuicaoSocios = Number(repassesItens
     .filter((r) => r.categoria === 'Distribuição de Lucro - Sócio/Dono')
-    .reduce((sum, r) => sum + r.valor, 0);
+    .reduce((sum, r) => sum + r.valor, 0).toFixed(2));
 
-  const totalBonusFuncionarios = repassesItens
+  const totalBonusFuncionarios = Number(repassesItens
     .filter((r) => r.categoria === 'Comissão/Bônus Extra - Funcionário')
-    .reduce((sum, r) => sum + r.valor, 0);
+    .reduce((sum, r) => sum + r.valor, 0).toFixed(2));
 
-  const totalProLabore = repassesItens
+  const totalProLabore = Number(repassesItens
     .filter((r) => r.categoria === 'Pró-labore')
-    .reduce((sum, r) => sum + r.valor, 0);
+    .reduce((sum, r) => sum + r.valor, 0).toFixed(2));
 
-  const totalRepassesEDistribuicoes = totalRepassesParceiros + totalDistribuicaoSocios + totalBonusFuncionarios + totalProLabore;
+  const totalRepassesEDistribuicoes = Number((totalRepassesParceiros + totalDistribuicaoSocios + totalBonusFuncionarios + totalProLabore).toFixed(2));
   const pctRepassesEDistribuicoes = getPct(totalRepassesEDistribuicoes);
 
   // 8. Despesa de Marketing & Tráfego Pago Pós-Venda Atribuído ao Chassi
-  // REGRA CONTÁBIL CRÍTICA:
-  // Este valor é deduzido do lucro líquido final no DRE, mas NÃO recalcula nem altera
-  // a comissão já fixada e salva para os vendedores (cmvComissoesVendidos permanece inalterada).
-  const totalMarketingPosVenda = vendasFiltradas.reduce((sum, v) => sum + (v.despesaMarketingAplicadaPosVenda || 0), 0);
+  const totalMarketingPosVenda = Number(vendasFiltradas.reduce((sum, v) => sum + (v.despesaMarketingAplicadaPosVenda || 0), 0).toFixed(2));
   const pctMarketingPosVenda = getPct(totalMarketingPosVenda);
 
-  // 9. Lucro Líquido Real da Operação (após deduzir Despesas Fixas, Provisões, Repasses/Distribuições e Marketing Pós-Venda)
-  const lucroLiquidoReal = receitaOperacionalBruta - cmvTotal - totalDespesasFixas - totalProvisoes - totalRepassesEDistribuicoes - totalMarketingPosVenda;
+  // 9. Lucro Líquido Real da Operação (Realizado vs Projetado)
+  const lucroLiquidoReal = Number(
+    (receitaOperacionalBruta - cmvTotal - totalDespesasFixas - totalProvisoes - totalRepassesEDistribuicoes - totalMarketingPosVenda).toFixed(2)
+  );
+  const lucroLiquidoProjetado = Number(
+    (receitaOperacionalBrutaProjetada - cmvTotal - totalDespesasFixas - totalProvisoes - totalRepassesEDistribuicoes - totalMarketingPosVenda).toFixed(2)
+  );
   const margemLiquidaPercent = getPct(lucroLiquidoReal);
+  const margemLiquidaProjetadaPercent = getPct(lucroLiquidoProjetado, receitaOperacionalBrutaProjetada);
 
   return {
     receitaVendas,
     receitaLocacoes,
     receitaMultasAcessorias,
+    
+    // TAC Discriminado
+    tacBrutoTotal,
+    tacDescontoIlaTotal,
+    tacLiquidoPrevistoTotal,
+    tacLiquidoPendenteTotal,
+    tacLiquidoRecebidoTotal,
+    impactoLucroProjetadoTacTotal,
+    impactoLucroApuradoTacTotal,
+    impactoFluxoCaixaTacTotal,
     receitaRetornoTac,
+    receitaRetornoTacPendente,
+
     receitaOperacionalBruta,
+    receitaOperacionalBrutaProjetada,
     pctReceitaVendas: getPct(receitaVendas),
     pctReceitaLocacoes: getPct(receitaLocacoes),
     pctReceitaMultasAcessorias: getPct(receitaMultasAcessorias),
@@ -976,13 +1422,27 @@ export const calculateDRESummary = (
     cmvCompraVendidos,
     cmvRecondicionamentoVendidos,
     cmvComissoesVendidos,
-    cmvTotal,
+    
+    // Comissões segregadas por categoria
+    cmvComissaoVendedorVendidos,
+    cmvComissaoGestaoVendidos,
+    cmvComissaoFinanciamentoTacVendidos,
+    cmvComissaoParceiroIntermediadorVendidos,
+    cmvOutrasComissoesVendidos,
+
     pctCmvCompra: getPct(cmvCompraVendidos),
     pctCmvRecondicionamento: getPct(cmvRecondicionamentoVendidos),
     pctCmvComissoes: getPct(cmvComissoesVendidos),
+    pctCmvComissaoVendedor: getPct(cmvComissaoVendedorVendidos),
+    pctCmvComissaoGestao: getPct(cmvComissaoGestaoVendidos),
+    pctCmvComissaoFinanciamentoTac: getPct(cmvComissaoFinanciamentoTacVendidos),
+    pctCmvComissaoParceiroIntermediador: getPct(cmvComissaoParceiroIntermediadorVendidos),
+    pctCmvOutrasComissoes: getPct(cmvOutrasComissoesVendidos),
     pctCmvTotal: getPct(cmvTotal),
+    cmvTotal,
 
     lucroBrutoOperacional,
+    lucroBrutoOperacionalProjetado,
     margemBrutaPercent,
 
     despesasPorCategoria,
@@ -1011,7 +1471,9 @@ export const calculateDRESummary = (
     pctMarketingPosVenda,
 
     lucroLiquidoReal,
+    lucroLiquidoProjetado,
     margemLiquidaPercent,
+    margemLiquidaProjetadaPercent,
 
     quantidadeVendas: vendasFiltradas.length,
     quantidadeLocacoesAtivas: qtdLocacoesAtivas,

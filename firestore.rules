@@ -1,81 +1,94 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper function to check if user is authenticated
+
+    // Função auxiliar: usuário está autenticado?
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Connection validation test document
+    // Função auxiliar: usuário é admin?
+    function isAdmin() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Documento de teste (pode deixar)
     match /test/{testId} {
       allow read: if true;
     }
 
-    // User profiles collection
+    // USUÁRIOS - AGORA PROTEGIDO
+    // Leitura: qualquer autenticado pode ler perfis (o app precisa disso)
+    // Escrita: só o próprio usuário OU um admin
+    // Criação inicial do próprio usuário: permitida (primeiro login)
     match /users/{userId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+
+      allow update, delete: if isAdmin() || request.auth.uid == userId;
     }
 
-    // Vehicles collection
+    // VEÍCULOS
     match /veiculos/{veiculoId} {
       allow read, write: if isAuthenticated();
     }
-    
-    // Sales collection
+
+    // VENDAS
     match /vendas/{vendaId} {
       allow read, write: if isAuthenticated();
     }
-    
-    // Fixed expenses collection
+
+    // DESPESAS FIXAS
     match /despesasFixas/{despesaId} {
       allow read, write: if isAuthenticated();
     }
 
-    // Shared professions collection
+    // PROFISSÕES
     match /profissoes/{profissaoId} {
       allow read, write: if isAuthenticated();
     }
 
-    // Global store settings collection (logo, enterprise info)
+    // CONFIGURAÇÕES DA LOJA
     match /configuracoes_loja/{configId} {
       allow read: if true;
       allow write: if isAuthenticated();
     }
 
-    // Brands and Colors catalogues
+    // MARCAS
     match /marcas/{marcaId} {
       allow read: if true;
       allow write: if isAuthenticated();
     }
 
+    // CORES
     match /cores/{corId} {
       allow read: if true;
       allow write: if isAuthenticated();
     }
 
-    // Bank accounts collection
+    // CONTAS BANCÁRIAS
     match /contas_bancarias/{contaId} {
       allow read, write: if isAuthenticated();
     }
 
-    // Account transactions / bank statement collection
+    // MOVIMENTAÇÕES DE CONTAS
     match /movimentacoes_contas/{movId} {
       allow read, write: if isAuthenticated();
     }
 
-    // Suppliers and partners
+    // FORNECEDORES
     match /fornecedores/{fornecedorId} {
       allow read, write: if isAuthenticated();
     }
 
-    // Partner banks
+    // BANCOS PARCEIROS
     match /bancos/{bancoId} {
       allow read, write: if isAuthenticated();
     }
 
-    // General fallback
-    match /{document=**} {
-      allow read, write: if isAuthenticated();
-    }
+    // ⚠️ SEM FALLBACK AQUI. Antes tinha "match /{document=**}" que abria TUDO.
+    // Foi removido de propósito.
   }
 }

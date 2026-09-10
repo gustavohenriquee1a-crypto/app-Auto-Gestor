@@ -17,7 +17,8 @@ import {
   Sparkles, 
   Briefcase, 
   Building,
-  HelpCircle
+  HelpCircle,
+  AlertCircle
 } from 'lucide-react';
 import { DespesaFixa, FornecedorPrestador, ContaBancariaCaixa } from '../types';
 import { subscribeFornecedores, subscribeContasBancarias } from '../services/firestoreService';
@@ -134,7 +135,16 @@ export const ModalNovaDespesaFixa: React.FC<ModalNovaDespesaFixaProps> = ({
   const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().split('T')[0]);
   const [selectedContaBancariaId, setSelectedContaBancariaId] = useState<string>('');
   const [formaPagamento, setFormaPagamento] = useState<string>('PIX');
+  
+  // Informações de Nota Fiscal / Auditoria Fiscal
+  const [temNotaFiscal, setTemNotaFiscal] = useState<boolean>(false);
   const [nfNumero, setNfNumero] = useState('');
+  const [nfSerie, setNfSerie] = useState('');
+  const [nfChaveAcesso, setNfChaveAcesso] = useState('');
+  const [nfDataEmissao, setNfDataEmissao] = useState('');
+  const [nfEmitente, setNfEmitente] = useState('');
+  const [nfCnpjEmitente, setNfCnpjEmitente] = useState('');
+  const [nfObservacao, setNfObservacao] = useState('');
   const [observacoes, setObservacoes] = useState('');
 
   // Categorias personalizadas criadas dinamicamente
@@ -190,7 +200,15 @@ export const ModalNovaDespesaFixa: React.FC<ModalNovaDespesaFixaProps> = ({
       setDataPagamento(despesaToEdit.dataPagamento || despesaToEdit.dataVencimento || new Date().toISOString().split('T')[0]);
       setSelectedContaBancariaId(despesaToEdit.contaBancariaId || '');
       setFormaPagamento(despesaToEdit.formaPagamento || 'PIX');
+      const hasNF = Boolean(despesaToEdit.temNotaFiscal || (despesaToEdit.nfNumero && despesaToEdit.nfNumero.trim()));
+      setTemNotaFiscal(hasNF);
       setNfNumero(despesaToEdit.nfNumero || '');
+      setNfSerie(despesaToEdit.nfSerie || '');
+      setNfChaveAcesso(despesaToEdit.nfChaveAcesso || '');
+      setNfDataEmissao(despesaToEdit.nfDataEmissao || '');
+      setNfEmitente(despesaToEdit.nfEmitente || despesaToEdit.fornecedorNome || '');
+      setNfCnpjEmitente(despesaToEdit.nfCnpjEmitente || '');
+      setNfObservacao(despesaToEdit.nfObservacao || '');
       setObservacoes(despesaToEdit.observacoes || '');
     } else {
       setCategoria('Estruturais & Fiscais - Aluguel Pátio / Loja');
@@ -205,7 +223,14 @@ export const ModalNovaDespesaFixa: React.FC<ModalNovaDespesaFixaProps> = ({
       setFornecedorNome('');
       setSelectedContaBancariaId('');
       setFormaPagamento('PIX');
+      setTemNotaFiscal(false);
       setNfNumero('');
+      setNfSerie('');
+      setNfChaveAcesso('');
+      setNfDataEmissao('');
+      setNfEmitente('');
+      setNfCnpjEmitente('');
+      setNfObservacao('');
       setObservacoes('');
     }
     setIsCriandoCategoria(false);
@@ -284,7 +309,14 @@ export const ModalNovaDespesaFixa: React.FC<ModalNovaDespesaFixaProps> = ({
       formaPagamento: status === 'Pago' ? formaPagamento : undefined,
       contaBancariaId: status === 'Pago' && selectedContaBancariaId ? selectedContaBancariaId : undefined,
       contaBancariaNome: status === 'Pago' && selectedConta ? selectedConta.nome : undefined,
+      temNotaFiscal: Boolean(temNotaFiscal || (nfNumero && nfNumero.trim())),
       nfNumero: nfNumero.trim() || undefined,
+      nfSerie: nfSerie.trim() || undefined,
+      nfChaveAcesso: nfChaveAcesso.trim() || undefined,
+      nfDataEmissao: nfDataEmissao || undefined,
+      nfEmitente: nfEmitente.trim() || fornecedorNome.trim() || undefined,
+      nfCnpjEmitente: nfCnpjEmitente.trim() || undefined,
+      nfObservacao: nfObservacao.trim() || undefined,
       observacoes: observacoes.trim() || undefined,
     };
 
@@ -638,34 +670,138 @@ export const ModalNovaDespesaFixa: React.FC<ModalNovaDespesaFixaProps> = ({
               )}
             </div>
 
-            {/* NF / Recibo e Observações */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-slate-300 font-bold mb-1 flex items-center gap-1.5">
-                  <Receipt size={14} className="text-slate-400" />
-                  Nº Documento / Nota Fiscal (Opcional)
+            {/* Bloco de Auditoria e Informações de Nota Fiscal */}
+            <div className="p-4 bg-white/[0.02] border border-white/10 rounded-2xl space-y-3.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <label className="block text-slate-200 font-bold text-xs flex items-center gap-1.5">
+                  <Receipt size={16} className="text-emerald-400" />
+                  Possui Nota Fiscal Gerada? (Identificação & Cobrança)
                 </label>
-                <input
-                  type="text"
-                  value={nfNumero}
-                  onChange={(e) => setNfNumero(e.target.value)}
-                  placeholder="Ex: NF-e 88392 ou Código de Barras"
-                  className="w-full p-2.5 rounded-xl border border-white/10 font-mono bg-[#16171f] text-slate-200 outline-none focus:border-blue-500 text-xs"
-                />
+                <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setTemNotaFiscal(true)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                      temNotaFiscal
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <CheckCircle2 size={13} />
+                    Sim (NF Emitida)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTemNotaFiscal(false)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                      !temNotaFiscal
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <AlertCircle size={13} />
+                    Não / Pendente
+                  </button>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-slate-300 font-bold mb-1">
-                  Observações Adicionais (Opcional)
-                </label>
-                <input
-                  type="text"
-                  value={observacoes}
-                  onChange={(e) => setObservacoes(e.target.value)}
-                  placeholder="Ex: Refaturado c/ desconto, parcelamento 1/3..."
-                  className="w-full p-2.5 rounded-xl border border-white/10 font-medium bg-[#16171f] text-slate-200 outline-none focus:border-blue-500 text-xs"
-                />
-              </div>
+              {temNotaFiscal ? (
+                <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl space-y-3 animate-fadeIn">
+                  <div className="flex items-center justify-between text-xs font-semibold text-emerald-300">
+                    <span>Dados Básicos da Nota Fiscal</span>
+                    <span className="text-[10px] text-emerald-400/80">Aparecerá no Livro Caixa & Planilha</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        Número da NF *
+                      </label>
+                      <input
+                        type="text"
+                        value={nfNumero}
+                        onChange={(e) => setNfNumero(e.target.value)}
+                        placeholder="Ex: 88392 ou NF-e 124"
+                        className="w-full p-2.5 rounded-lg border border-white/10 font-mono bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        Série / Chave de Acesso
+                      </label>
+                      <input
+                        type="text"
+                        value={nfSerie}
+                        onChange={(e) => setNfSerie(e.target.value)}
+                        placeholder="Ex: Série 1 / Mod 55"
+                        className="w-full p-2.5 rounded-lg border border-white/10 font-mono bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        Data de Emissão da NF
+                      </label>
+                      <input
+                        type="date"
+                        value={nfDataEmissao || dataPagamento || dataVencimento}
+                        onChange={(e) => setNfDataEmissao(e.target.value)}
+                        className="w-full p-2.5 rounded-lg border border-white/10 bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        Razão Social / Nome do Emitente
+                      </label>
+                      <input
+                        type="text"
+                        value={nfEmitente || fornecedorNome}
+                        onChange={(e) => setNfEmitente(e.target.value)}
+                        placeholder="Ex: Imobiliária Pátio Central Ltda"
+                        className="w-full p-2.5 rounded-lg border border-white/10 bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        CNPJ do Emitente
+                      </label>
+                      <input
+                        type="text"
+                        value={nfCnpjEmitente}
+                        onChange={(e) => setNfCnpjEmitente(e.target.value)}
+                        placeholder="Ex: 00.000.000/0001-00"
+                        className="w-full p-2.5 rounded-lg border border-white/10 font-mono bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-start gap-2.5 text-amber-200 text-xs">
+                  <AlertCircle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="text-amber-300 font-semibold">Gasto sem Nota Fiscal emitida:</strong>
+                    <p className="text-[11px] text-amber-200/80 mt-0.5">
+                      Ficará identificado como <strong>"Não"</strong> no Livro Caixa e extrato 360º para cobrança posterior junto ao prestador ou fornecedor.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Observações */}
+            <div>
+              <label className="block text-slate-300 font-bold mb-1">
+                Observações Adicionais (Opcional)
+              </label>
+              <input
+                type="text"
+                value={observacoes}
+                onChange={(e) => setObservacoes(e.target.value)}
+                placeholder="Ex: Refaturado c/ desconto, parcelamento 1/3..."
+                className="w-full p-2.5 rounded-xl border border-white/10 font-medium bg-[#16171f] text-slate-200 outline-none focus:border-blue-500 text-xs"
+              />
             </div>
 
           </div>

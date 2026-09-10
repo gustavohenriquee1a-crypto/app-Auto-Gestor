@@ -2533,6 +2533,14 @@ export interface ParametrosLancamentoExpresso {
   descricao: string;
   formaPagamento?: string;
   comprovanteNumero?: string;
+  temNotaFiscal?: boolean;
+  nfNumero?: string;
+  nfSerie?: string;
+  nfChaveAcesso?: string;
+  nfDataEmissao?: string;
+  nfEmitente?: string;
+  nfCnpjEmitente?: string;
+  nfObservacao?: string;
   observacoes?: string;
   usuarioNome?: string;
   // Extensões para Frota, Pátio, Múltiplos Veículos e Pré-cadastro de Pagadores
@@ -2584,6 +2592,14 @@ export async function salvarLancamentoExpressoFirestore(
     descricao,
     formaPagamento = 'PIX / Transf.',
     comprovanteNumero,
+    temNotaFiscal,
+    nfNumero,
+    nfSerie,
+    nfChaveAcesso,
+    nfDataEmissao,
+    nfEmitente,
+    nfCnpjEmitente,
+    nfObservacao,
     observacoes,
     usuarioNome = 'Sistema',
     modoRateioMultiplos,
@@ -2607,6 +2623,7 @@ export async function salvarLancamentoExpressoFirestore(
   const isSaida = (tipo as string) === 'Saída' || (tipo as string) === 'Saida' || tipo === 'Despesa';
   const dataLancamento = data || new Date().toISOString().split('T')[0];
   const descricaoFinal = (descricao || '').trim() || (isSaida ? `Despesa - ${pagadorRecebedor || 'Avulso'}` : `Receita - ${pagadorRecebedor || 'Avulso'}`);
+  const hasNF = Boolean(temNotaFiscal || (nfNumero && nfNumero.trim()));
 
   // 1. Pré-cadastro de novo Fornecedor/Parceiro caso selecionado
   let novoFornecedorCriado: FornecedorPrestador | undefined;
@@ -2697,6 +2714,14 @@ export async function salvarLancamentoExpressoFirestore(
         contaBancariaNome: contaNome,
         fornecedorNome: pagadorRecebedor?.trim() || undefined,
         formaPagamento: formaPagamento,
+        temNotaFiscal: hasNF,
+        nfNumero: nfNumero?.trim() || undefined,
+        nfSerie: nfSerie?.trim() || undefined,
+        nfChaveAcesso: nfChaveAcesso?.trim() || undefined,
+        nfDataEmissao: nfDataEmissao || undefined,
+        nfEmitente: nfEmitente?.trim() || pagadorRecebedor?.trim() || undefined,
+        nfCnpjEmitente: nfCnpjEmitente?.trim() || undefined,
+        nfObservacao: nfObservacao?.trim() || undefined,
         observacoes: observacoes?.trim() || `Lançamento Expresso (${usuarioNome})`,
       };
       await saveDespesaFixaFirestore(despesaFixaCriada);
@@ -2763,6 +2788,14 @@ export async function salvarLancamentoExpressoFirestore(
             contaBancariaId: contaId,
             contaBancariaNome: contaNome,
             formaPagamento: formaPagamento,
+            temNotaFiscal: hasNF,
+            nfNumero: nfNumero?.trim() || undefined,
+            nfSerie: nfSerie?.trim() || undefined,
+            nfChaveAcesso: nfChaveAcesso?.trim() || undefined,
+            nfDataEmissao: nfDataEmissao || undefined,
+            nfEmitente: nfEmitente?.trim() || fornecedorStr || undefined,
+            nfCnpjEmitente: nfCnpjEmitente?.trim() || undefined,
+            nfObservacao: nfObservacao?.trim() || undefined,
             observacoes: `Rateio pátio/frota (${usuarioNome}). Categorias: ${categoriasStr}. Veículos: ${veiculosMultiplos.map((v) => v.placa).join(', ')}`,
           };
 
@@ -2809,6 +2842,14 @@ export async function salvarLancamentoExpressoFirestore(
             contaBancariaId: contaId,
             contaBancariaNome: contaNome,
             formaPagamento: formaPagamento,
+            temNotaFiscal: hasNF,
+            nfNumero: nfNumero?.trim() || undefined,
+            nfSerie: nfSerie?.trim() || undefined,
+            nfChaveAcesso: nfChaveAcesso?.trim() || undefined,
+            nfDataEmissao: nfDataEmissao || undefined,
+            nfEmitente: nfEmitente?.trim() || fornecedorStr || undefined,
+            nfCnpjEmitente: nfCnpjEmitente?.trim() || undefined,
+            nfObservacao: nfObservacao?.trim() || undefined,
             observacoes: observacoes?.trim() || `Lançamento Expresso (${usuarioNome})`,
           };
 
@@ -3115,6 +3156,14 @@ export async function salvarLancamentoExpressoFirestore(
       categoriaCusto: catCustoFinal,
       formaPagamento: formaPagamento,
       comprovanteNumero: comprovanteNumero?.trim() || undefined,
+      temNotaFiscal: hasNF,
+      nfNumero: nfNumero?.trim() || undefined,
+      nfSerie: nfSerie?.trim() || undefined,
+      nfChaveAcesso: nfChaveAcesso?.trim() || undefined,
+      nfDataEmissao: nfDataEmissao || undefined,
+      nfEmitente: nfEmitente?.trim() || pagadorRecebedor?.trim() || undefined,
+      nfCnpjEmitente: nfCnpjEmitente?.trim() || undefined,
+      nfObservacao: nfObservacao?.trim() || undefined,
       observacoes: observacoes?.trim() || undefined,
       criadoPor: usuarioNome,
       createdAt: nowIso,

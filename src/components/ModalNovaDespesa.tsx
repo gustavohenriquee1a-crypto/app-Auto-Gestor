@@ -98,7 +98,16 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
   // Fornecedor / Parceiro
   const [selectedFornecedorId, setSelectedFornecedorId] = useState<string>('');
   const [fornecedor, setFornecedor] = useState('');
+  
+  // Informações de Nota Fiscal / Documento Fiscal
+  const [temNotaFiscal, setTemNotaFiscal] = useState<boolean>(false);
   const [nfNumero, setNfNumero] = useState('');
+  const [nfSerie, setNfSerie] = useState('');
+  const [nfChaveAcesso, setNfChaveAcesso] = useState('');
+  const [nfDataEmissao, setNfDataEmissao] = useState('');
+  const [nfEmitente, setNfEmitente] = useState('');
+  const [nfCnpjEmitente, setNfCnpjEmitente] = useState('');
+  const [nfObservacao, setNfObservacao] = useState('');
   
   // Status de Pagamento, Exigibilidade e Liquidação Bancária
   const [statusPagamento, setStatusPagamento] = useState<'Pago' | 'Pendente'>('Pago');
@@ -226,7 +235,15 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
       setData(despesaToEdit.data || new Date().toISOString().split('T')[0]);
       setFornecedor(despesaToEdit.fornecedor || '');
       setSelectedFornecedorId(despesaToEdit.fornecedorId || '');
+      const hasNF = Boolean(despesaToEdit.temNotaFiscal || (despesaToEdit.nfNumero && despesaToEdit.nfNumero.trim()));
+      setTemNotaFiscal(hasNF);
       setNfNumero(despesaToEdit.nfNumero || '');
+      setNfSerie(despesaToEdit.nfSerie || '');
+      setNfChaveAcesso(despesaToEdit.nfChaveAcesso || '');
+      setNfDataEmissao(despesaToEdit.nfDataEmissao || '');
+      setNfEmitente(despesaToEdit.nfEmitente || despesaToEdit.fornecedor || '');
+      setNfCnpjEmitente(despesaToEdit.nfCnpjEmitente || '');
+      setNfObservacao(despesaToEdit.nfObservacao || '');
       const editExig =
         despesaToEdit.exigibilidade ||
         (['Cartório / Serviços Notariais', 'Documentação / Despachante', 'Comissão'].includes(despesaToEdit.categoria)
@@ -288,7 +305,14 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
       setExigibilidade('imediata');
       setSelectedFornecedorId('');
       setFornecedor('');
+      setTemNotaFiscal(false);
       setNfNumero('');
+      setNfSerie('');
+      setNfChaveAcesso('');
+      setNfDataEmissao('');
+      setNfEmitente('');
+      setNfCnpjEmitente('');
+      setNfObservacao('');
       setStatusPagamento('Pago');
       setSelectedContaBancariaId('');
       setFormaPagamento('PIX');
@@ -420,7 +444,14 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
       dataVencimento: dataVencimento || undefined,
       fornecedor: (categoria === 'Comissão' ? (beneficiarioNome || fornecedor) : fornecedor) || 'Oficina / Fornecedor Parceiro',
       fornecedorId: selectedFornecedorId && selectedFornecedorId !== '__manual__' ? selectedFornecedorId : undefined,
+      temNotaFiscal: Boolean(temNotaFiscal || (nfNumero && nfNumero.trim())),
       nfNumero: nfNumero.trim() || undefined,
+      nfSerie: nfSerie.trim() || undefined,
+      nfChaveAcesso: nfChaveAcesso.trim() || undefined,
+      nfDataEmissao: nfDataEmissao || undefined,
+      nfEmitente: nfEmitente.trim() || fornecedor.trim() || undefined,
+      nfCnpjEmitente: nfCnpjEmitente.trim() || undefined,
+      nfObservacao: nfObservacao.trim() || undefined,
       statusPagamento,
       dataPagamento: statusPagamento === 'Pago' ? (dataPagamento || data) : undefined,
       contaBancariaId: statusPagamento === 'Pago' && selectedContaBancariaId ? selectedContaBancariaId : undefined,
@@ -1467,35 +1498,139 @@ export const ModalNovaDespesa: React.FC<ModalNovaDespesaProps> = ({
               </div>
             )}
 
-            {/* Nota Fiscal / Recibo e Data da Despesa */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              <div>
-                <label className="block text-slate-300 font-bold mb-1 flex items-center gap-1.5">
-                  <Receipt size={14} className="text-slate-400" />
-                  Nota Fiscal / Recibo (Opcional)
+            {/* Bloco de Auditoria e Informações de Nota Fiscal */}
+            <div className="p-4 bg-white/[0.02] border border-white/10 rounded-2xl space-y-3.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <label className="block text-slate-200 font-bold text-xs flex items-center gap-1.5">
+                  <Receipt size={16} className="text-emerald-400" />
+                  Possui Nota Fiscal Gerada? (Identificação & Cobrança)
                 </label>
-                <input
-                  type="text"
-                  value={nfNumero}
-                  onChange={(e) => setNfNumero(e.target.value)}
-                  placeholder="Ex: NF-10492 ou Nº Recibo"
-                  className="w-full p-2.5 rounded-xl border border-white/10 font-mono bg-[#16171f] text-slate-200 outline-none focus:border-blue-500 text-xs"
-                />
+                <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setTemNotaFiscal(true)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                      temNotaFiscal
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <CheckCircle2 size={13} />
+                    Sim (NF Emitida)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTemNotaFiscal(false)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                      !temNotaFiscal
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <AlertCircle size={13} />
+                    Não / Pendente
+                  </button>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-slate-300 font-bold mb-1 flex items-center gap-1.5">
-                  <Calendar size={14} className="text-slate-400" />
-                  Data da Despesa / Competência *
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={data}
-                  onChange={(e) => setData(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-white/10 font-medium bg-[#16171f] text-slate-200 outline-none focus:border-blue-500 text-xs"
-                />
-              </div>
+              {temNotaFiscal ? (
+                <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl space-y-3 animate-fadeIn">
+                  <div className="flex items-center justify-between text-xs font-semibold text-emerald-300">
+                    <span>Dados Básicos da Nota Fiscal</span>
+                    <span className="text-[10px] text-emerald-400/80">Aparecerá no Extrato & Planilha</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        Número da NF *
+                      </label>
+                      <input
+                        type="text"
+                        value={nfNumero}
+                        onChange={(e) => setNfNumero(e.target.value)}
+                        placeholder="Ex: 10492 ou NF-00129"
+                        className="w-full p-2.5 rounded-lg border border-white/10 font-mono bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        Série / Chave de Acesso
+                      </label>
+                      <input
+                        type="text"
+                        value={nfSerie}
+                        onChange={(e) => setNfSerie(e.target.value)}
+                        placeholder="Ex: Série 1 / Mod 55"
+                        className="w-full p-2.5 rounded-lg border border-white/10 font-mono bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        Data de Emissão da NF
+                      </label>
+                      <input
+                        type="date"
+                        value={nfDataEmissao || data}
+                        onChange={(e) => setNfDataEmissao(e.target.value)}
+                        className="w-full p-2.5 rounded-lg border border-white/10 bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        Razão Social / Nome do Emitente
+                      </label>
+                      <input
+                        type="text"
+                        value={nfEmitente || fornecedor}
+                        onChange={(e) => setNfEmitente(e.target.value)}
+                        placeholder="Ex: Auto Peças São José Ltda"
+                        className="w-full p-2.5 rounded-lg border border-white/10 bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 text-[11px] mb-1 font-semibold">
+                        CNPJ do Emitente
+                      </label>
+                      <input
+                        type="text"
+                        value={nfCnpjEmitente}
+                        onChange={(e) => setNfCnpjEmitente(e.target.value)}
+                        placeholder="Ex: 00.000.000/0001-00"
+                        className="w-full p-2.5 rounded-lg border border-white/10 font-mono bg-[#16171f] text-slate-200 text-xs outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-start gap-2.5 text-amber-200 text-xs">
+                  <AlertCircle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="text-amber-300 font-semibold">Gasto sem Nota Fiscal emitida:</strong>
+                    <p className="text-[11px] text-amber-200/80 mt-0.5">
+                      Ficará identificado como <strong>"Não"</strong> no Livro Caixa e extrato 360º para cobrança posterior junto ao parceiro/oficina prestadora.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Data da Despesa / Competência */}
+            <div>
+              <label className="block text-slate-300 font-bold mb-1 flex items-center gap-1.5">
+                <Calendar size={14} className="text-slate-400" />
+                Data da Despesa / Competência *
+              </label>
+              <input
+                type="date"
+                required
+                value={data}
+                onChange={(e) => setData(e.target.value)}
+                className="w-full p-2.5 rounded-xl border border-white/10 font-medium bg-[#16171f] text-slate-200 outline-none focus:border-blue-500 text-xs"
+              />
             </div>
 
             {/* Seletor de Status de Pagamento (Pendente vs Pago) */}

@@ -271,6 +271,16 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
   const [descricao, setDescricao] = useState<string>('');
   const [observacoes, setObservacoes] = useState<string>('');
 
+  // Informações de Nota Fiscal / Auditoria Fiscal
+  const [temNotaFiscal, setTemNotaFiscal] = useState<boolean>(false);
+  const [nfNumero, setNfNumero] = useState<string>('');
+  const [nfSerie, setNfSerie] = useState<string>('');
+  const [nfChaveAcesso, setNfChaveAcesso] = useState<string>('');
+  const [nfDataEmissao, setNfDataEmissao] = useState<string>('');
+  const [nfEmitente, setNfEmitente] = useState<string>('');
+  const [nfCnpjEmitente, setNfCnpjEmitente] = useState<string>('');
+  const [nfObservacao, setNfObservacao] = useState<string>('');
+
   // Status de Envio
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -441,6 +451,16 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
         const lista = mapa[destFinal] || [];
         setCategoria(lista[0] || (isSaida ? 'Despesa Operacional' : 'Receita da Loja'));
       }
+
+      const hasNF = Boolean(movimentacaoToEdit.temNotaFiscal || (movimentacaoToEdit.nfNumero && movimentacaoToEdit.nfNumero.trim()));
+      setTemNotaFiscal(hasNF);
+      setNfNumero(movimentacaoToEdit.nfNumero || '');
+      setNfSerie(movimentacaoToEdit.nfSerie || '');
+      setNfChaveAcesso(movimentacaoToEdit.nfChaveAcesso || '');
+      setNfDataEmissao(movimentacaoToEdit.nfDataEmissao || '');
+      setNfEmitente(movimentacaoToEdit.nfEmitente || movimentacaoToEdit.pagadorRecebedor || '');
+      setNfCnpjEmitente(movimentacaoToEdit.nfCnpjEmitente || '');
+      setNfObservacao(movimentacaoToEdit.nfObservacao || '');
     } else {
       // Criação limpa
       const initialT = initialTipo || 'Saída';
@@ -461,6 +481,14 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
       setDespesaFixaExistenteId('');
       setCategoriaDespesaFixa(CATEGORIAS_SAIDA.despesa_fixa[0]);
       setVeiculoEstoqueId(veiculos.filter((v) => v.status !== 'Vendido')[0]?.id || '');
+      setTemNotaFiscal(false);
+      setNfNumero('');
+      setNfSerie('');
+      setNfChaveAcesso('');
+      setNfDataEmissao('');
+      setNfEmitente('');
+      setNfCnpjEmitente('');
+      setNfObservacao('');
       setCategoriaDespesaVeiculo('Mecânica / Mão de Obra');
       setVeiculoLocacaoPlaca(initialPlaca || '');
       setVeiculoLocacaoModelo('');
@@ -688,6 +716,14 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
               ? `Despesa - ${pagadorRecebedor || 'Avulso'}`
               : `Receita - ${pagadorRecebedor || 'Avulso'}`),
           formaPagamento: formaPagamento,
+          temNotaFiscal: Boolean(temNotaFiscal || (nfNumero && nfNumero.trim())),
+          nfNumero: nfNumero.trim() || undefined,
+          nfSerie: nfSerie.trim() || undefined,
+          nfChaveAcesso: nfChaveAcesso.trim() || undefined,
+          nfDataEmissao: nfDataEmissao || undefined,
+          nfEmitente: nfEmitente.trim() || pagadorRecebedor.trim() || undefined,
+          nfCnpjEmitente: nfCnpjEmitente.trim() || undefined,
+          nfObservacao: nfObservacao.trim() || undefined,
           observacoes: observacoes.trim() || undefined,
           usuarioNome: currentUser?.displayName || currentUser?.email || 'Operador',
           // Novos parâmetros de Frota e Pátio
@@ -2017,7 +2053,119 @@ export const ModalLancamentoExpresso: React.FC<ModalLancamentoExpressoProps> = (
             </div>
           </div>
 
-          {/* 5. Descrição Detalhada & Observações */}
+          {/* 5. Bloco de Nota Fiscal (Identificação & Cobrança) */}
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Receipt size={15} className="text-emerald-500" />
+                Possui Nota Fiscal Gerada? (Identificação Visual & Cobrança)
+              </label>
+              <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setTemNotaFiscal(true)}
+                  className={`px-3 py-1 rounded-md text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                    temNotaFiscal
+                      ? 'bg-emerald-500 text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  <CheckCircle2 size={12} />
+                  Sim (NF Gerada)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTemNotaFiscal(false)}
+                  className={`px-3 py-1 rounded-md text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                    !temNotaFiscal
+                      ? 'bg-amber-500 text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  <AlertCircle size={12} />
+                  Não / A Cobrar
+                </button>
+              </div>
+            </div>
+
+            {temNotaFiscal ? (
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40 rounded-lg space-y-2.5 animate-fadeIn">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Número da NF *
+                    </label>
+                    <input
+                      type="text"
+                      value={nfNumero}
+                      onChange={(e) => setNfNumero(e.target.value)}
+                      placeholder="Ex: NF-12903"
+                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Série / Chave NF
+                    </label>
+                    <input
+                      type="text"
+                      value={nfSerie}
+                      onChange={(e) => setNfSerie(e.target.value)}
+                      placeholder="Ex: Série 1"
+                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Data de Emissão
+                    </label>
+                    <input
+                      type="date"
+                      value={nfDataEmissao || data}
+                      onChange={(e) => setNfDataEmissao(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Razão Social / Emitente
+                    </label>
+                    <input
+                      type="text"
+                      value={nfEmitente || pagadorRecebedor}
+                      onChange={(e) => setNfEmitente(e.target.value)}
+                      placeholder="Nome do parceiro ou fornecedor emitente"
+                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      CNPJ / CPF Emitente
+                    </label>
+                    <input
+                      type="text"
+                      value={nfCnpjEmitente}
+                      onChange={(e) => setNfCnpjEmitente(e.target.value)}
+                      placeholder="Ex: 00.000.000/0001-00"
+                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-2.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-lg text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                <AlertCircle size={14} className="shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                <span>
+                  <strong>Gasto sem NF gerada:</strong> O lançamento aparecerá como <strong>"Não"</strong> no Extrato Detalhado para cobrança rápida do prestador de serviço/empresa parceira.
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* 6. Descrição Detalhada & Observações */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">

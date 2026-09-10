@@ -86,6 +86,14 @@ export function exportarExtratoExcel(
       'Tipo de Pessoa': item.tipoPessoa,
       'Categoria Contábil': item.categoria || 'Geral',
       'Status': item.statusPagamento || 'Efetivado',
+      'Nota Fiscal (Sim/Não)': item.tipo === 'Entrada' && !item.temNotaFiscal ? '—' : (item.temNotaFiscal ? 'Sim' : 'Não'),
+      'Nº Nota Fiscal': item.nfNumero || '—',
+      'Série NF': item.nfSerie || '—',
+      'Data Emissão NF': item.nfDataEmissao ? formatDatePtBr(item.nfDataEmissao) : '—',
+      'Emitente NF': item.nfEmitente || '—',
+      'CNPJ Emitente': item.nfCnpjEmitente || '—',
+      'Chave de Acesso NF': item.nfChaveAcesso || '—',
+      'Obs NF': item.nfObservacao || '—',
     };
   });
 
@@ -109,6 +117,14 @@ export function exportarExtratoExcel(
     { wch: 18 }, // Pessoa
     { wch: 22 }, // Categoria
     { wch: 14 }, // Status
+    { wch: 18 }, // Nota Fiscal (Sim/Não)
+    { wch: 16 }, // Nº Nota Fiscal
+    { wch: 12 }, // Série NF
+    { wch: 16 }, // Data Emissão NF
+    { wch: 25 }, // Emitente NF
+    { wch: 20 }, // CNPJ Emitente
+    { wch: 30 }, // Chave de Acesso NF
+    { wch: 25 }, // Obs NF
   ];
 
   XLSX.utils.book_append_sheet(wb, wsLancamentos, 'Extrato 360 Lançamentos');
@@ -168,6 +184,12 @@ export function exportarExtratoCsv(
     'Pessoa',
     'Categoria',
     'Status',
+    'Nota Fiscal (Sim/Não)',
+    'Nº Nota Fiscal',
+    'Série NF',
+    'Data Emissão NF',
+    'Emitente NF',
+    'CNPJ Emitente',
   ];
 
   const rows = itens.map((item) => {
@@ -212,6 +234,12 @@ export function exportarExtratoCsv(
       item.tipoPessoa,
       item.categoria || 'Geral',
       item.statusPagamento || 'Efetivado',
+      item.tipo === 'Entrada' && !item.temNotaFiscal ? '—' : (item.temNotaFiscal ? 'Sim' : 'Não'),
+      item.nfNumero || '—',
+      item.nfSerie || '—',
+      item.nfDataEmissao ? formatDatePtBr(item.nfDataEmissao) : '—',
+      (item.nfEmitente || '').replace(/;/g, ' ') || '—',
+      item.nfCnpjEmitente || '—',
     ];
   });
 
@@ -494,6 +522,12 @@ export function exportarExtratoPdf(
       descLinha = `[${origem} ➔ ${destino}] - ${item.descricao || 'Transf. Interna'}`;
     } else if (item.referencia) {
       descLinha = `${item.descricao} (${item.referencia})`;
+    }
+
+    if (item.temNotaFiscal) {
+      descLinha += ` [NF: ${item.nfNumero || 'Sim'}]`;
+    } else if (item.tipo === 'Saída' && !isTransf) {
+      descLinha += ` [S/ NF]`;
     }
 
     const descSplit = doc.splitTextToSize(descLinha, cols[3].width - 2);

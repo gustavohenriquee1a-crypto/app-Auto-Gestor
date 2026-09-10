@@ -122,6 +122,13 @@ export interface DespesaVeiculo {
   fornecedor: string;
   fornecedorId?: string;
   nfNumero?: string;
+  temNotaFiscal?: boolean;
+  nfSerie?: string;
+  nfChaveAcesso?: string;
+  nfDataEmissao?: string;
+  nfEmitente?: string;
+  nfCnpjEmitente?: string;
+  nfObservacao?: string;
   comprovanteUrl?: string;
   statusPagamento: 'Pago' | 'Pendente' | 'Cancelada' | 'Estornada';
   statusEstorno?: 'Nao_Estornado' | 'Estornado';
@@ -1118,6 +1125,13 @@ export interface DespesaFixa {
   beneficiarioUsuarioId?: string;
   beneficiarioNome?: string;
   nfNumero?: string;
+  temNotaFiscal?: boolean;
+  nfSerie?: string;
+  nfChaveAcesso?: string;
+  nfDataEmissao?: string;
+  nfEmitente?: string;
+  nfCnpjEmitente?: string;
+  nfObservacao?: string;
   observacoes?: string;
 }
 
@@ -1236,6 +1250,14 @@ export interface MovimentacaoConta {
   terceiroNome?: string;
   motivo?: string;
   comprovanteNumero?: string;
+  temNotaFiscal?: boolean;
+  nfNumero?: string;
+  nfSerie?: string;
+  nfChaveAcesso?: string;
+  nfDataEmissao?: string;
+  nfEmitente?: string;
+  nfCnpjEmitente?: string;
+  nfObservacao?: string;
   observacoes?: string;
   // Roteamento contábil e referências do Lançamento Expresso
   destinoRoteamento?: 'despesa_fixa' | 'veiculo_estoque' | 'veiculo_locacao' | 'retirada_socio' | 'avulso' | 'venda_realizada' | 'receita_loja';

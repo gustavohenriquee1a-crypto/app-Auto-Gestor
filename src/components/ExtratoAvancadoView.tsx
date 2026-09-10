@@ -38,8 +38,21 @@ import {
   Percent,
   Trash2,
   Edit3,
-  Scale
+  Scale,
+  Receipt,
+  BarChart3,
+  PieChart as PieChartIcon
 } from 'lucide-react';
+import { 
+  ResponsiveContainer, 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  Tooltip, 
+  Cell, 
+  Legend 
+} from 'recharts';
 import { 
   MovimentacaoConta, 
   DespesaFixa, 
@@ -61,6 +74,7 @@ export type UnidadeNegocioFiltro = 'Todas' | 'Vendas/Repasse' | 'Locação/Frota
 export type CategoriaCustoFiltro = 'Todos' | 'Fixos' | 'Variáveis';
 export type MetodoTransacaoFiltro = 'Todos' | 'PIX' | 'Financiamento/TAC' | 'Dinheiro' | 'TED';
 export type TipoPessoaFiltro = 'Todos' | 'Pessoa Física' | 'Fornecedor/Parceiro' | 'Sócio';
+export type NotaFiscalFiltro = 'Todos' | 'Com_NF' | 'Sem_NF';
 
 export interface ItemExtrato360 {
   id: string;
@@ -84,6 +98,14 @@ export interface ItemExtrato360 {
   contaDestinoNome?: string;
   terceiroNome?: string;
   statusPagamento?: string;
+  temNotaFiscal?: boolean;
+  nfNumero?: string;
+  nfSerie?: string;
+  nfChaveAcesso?: string;
+  nfDataEmissao?: string;
+  nfEmitente?: string;
+  nfCnpjEmitente?: string;
+  nfObservacao?: string;
   movimentacaoOriginal?: MovimentacaoConta;
   despesaFixaOriginal?: DespesaFixa;
 }
@@ -129,6 +151,8 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
   const [categoriaCusto, setCategoriaCusto] = useState<CategoriaCustoFiltro>('Todos');
   const [metodoTransacao, setMetodoTransacao] = useState<MetodoTransacaoFiltro>('Todos');
   const [tipoPessoa, setTipoPessoa] = useState<TipoPessoaFiltro>('Todos');
+  const [filtroNotaFiscal, setFiltroNotaFiscal] = useState<NotaFiscalFiltro>('Todos');
+  const [mostrarGrafoNF, setMostrarGrafoNF] = useState<boolean>(true);
   const [buscaTexto, setBuscaTexto] = useState<string>('');
   
   // Modal de Detalhe de Transação
@@ -380,6 +404,31 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
         ref = 'Loja AutoGestor';
       }
 
+      // Extrair Informações de Nota Fiscal
+      let temNF = Boolean(mov.temNotaFiscal || (mov.nfNumero && mov.nfNumero.trim()));
+      let nfNum = mov.nfNumero;
+      let nfSer = mov.nfSerie;
+      let nfChave = mov.nfChaveAcesso;
+      let nfDt = mov.nfDataEmissao;
+      let nfEmit = mov.nfEmitente;
+      let nfCnpj = mov.nfCnpjEmitente;
+      let nfObs = mov.nfObservacao;
+
+      // Se despesa de veículo vinculada, buscar dados de NF do veículo caso não esteja na movimentação
+      if (!temNF && mov.despesaVeiculoId && veiculoRef?.despesas) {
+        const dVeic = veiculoRef.despesas.find((d: any) => d.id === mov.despesaVeiculoId);
+        if (dVeic) {
+          temNF = Boolean(dVeic.temNotaFiscal || (dVeic.nfNumero && dVeic.nfNumero.trim()));
+          nfNum = dVeic.nfNumero;
+          nfSer = dVeic.nfSerie;
+          nfChave = dVeic.nfChaveAcesso;
+          nfDt = dVeic.nfDataEmissao;
+          nfEmit = dVeic.nfEmitente || dVeic.fornecedor;
+          nfCnpj = dVeic.nfCnpjEmitente;
+          nfObs = dVeic.nfObservacao;
+        }
+      }
+
       itens.push({
         id: mov.id,
         origem: 'movimentacao_bancaria',
@@ -402,6 +451,14 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
         contaDestinoNome: cDestinoNome,
         terceiroNome: mov.terceiroNome,
         statusPagamento: 'Efetivado',
+        temNotaFiscal: temNF,
+        nfNumero: nfNum,
+        nfSerie: nfSer,
+        nfChaveAcesso: nfChave,
+        nfDataEmissao: nfDt,
+        nfEmitente: nfEmit,
+        nfCnpjEmitente: nfCnpj,
+        nfObservacao: nfObs,
         movimentacaoOriginal: mov,
       });
     });
@@ -433,6 +490,8 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
         pessoa = 'Pessoa Física';
       }
 
+      const temNF = Boolean(df.temNotaFiscal || (df.nfNumero && df.nfNumero.trim()));
+
       itens.push({
         id: `df_${df.id}`,
         origem: 'despesa_fixa',
@@ -451,6 +510,14 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
         pagadorRecebedor: df.fornecedorNome || df.beneficiarioNome,
         isTransferenciaInterna: false,
         statusPagamento: df.status,
+        temNotaFiscal: temNF,
+        nfNumero: df.nfNumero,
+        nfSerie: df.nfSerie,
+        nfChaveAcesso: df.nfChaveAcesso,
+        nfDataEmissao: df.nfDataEmissao,
+        nfEmitente: df.nfEmitente || df.fornecedorNome,
+        nfCnpjEmitente: df.nfCnpjEmitente,
+        nfObservacao: df.nfObservacao,
         despesaFixaOriginal: df,
       });
     });
@@ -494,7 +561,15 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
         return false;
       }
 
-      // Busca Textual Livre (Descrição, Referência, Conta, Pagador/Recebedor, Categoria)
+      // Filtro de Nota Fiscal (Auditoria & Cobrança de Prestadores)
+      if (filtroNotaFiscal === 'Com_NF' && !item.temNotaFiscal) {
+        return false;
+      }
+      if (filtroNotaFiscal === 'Sem_NF' && (item.temNotaFiscal || item.tipo === 'Entrada')) {
+        return false;
+      }
+
+      // Busca Textual Livre (Descrição, Referência, Conta, Pagador/Recebedor, Categoria, Nota Fiscal)
       if (buscaTexto.trim()) {
         const q = buscaTexto.trim().toLowerCase();
         const matchDesc = item.descricao.toLowerCase().includes(q);
@@ -502,7 +577,11 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
         const matchConta = item.contaNome.toLowerCase().includes(q);
         const matchPagRec = (item.pagadorRecebedor || '').toLowerCase().includes(q);
         const matchCat = item.categoria.toLowerCase().includes(q);
-        if (!matchDesc && !matchRef && !matchConta && !matchPagRec && !matchCat) {
+        const matchNF = (item.nfNumero || '').toLowerCase().includes(q) ||
+          (item.nfEmitente || '').toLowerCase().includes(q) ||
+          (item.nfCnpjEmitente || '').toLowerCase().includes(q) ||
+          (item.nfChaveAcesso || '').toLowerCase().includes(q);
+        if (!matchDesc && !matchRef && !matchConta && !matchPagRec && !matchCat && !matchNF) {
           return false;
         }
       }
@@ -518,6 +597,7 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
     categoriaCusto,
     metodoTransacao,
     tipoPessoa,
+    filtroNotaFiscal,
     buscaTexto,
   ]);
 
@@ -629,6 +709,65 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
     };
   }, [itensFiltrados]);
 
+  // 5. INTELIGÊNCIA DE AUDITORIA FISCAL & COBRANÇA (GRAFO DE NOTAS FISCAIS)
+  const analiseNotaFiscal = useMemo(() => {
+    const saidas = itensFiltrados.filter(item => item.tipo === 'Saída' && !item.isTransferenciaInterna);
+    
+    let totalComNF = 0;
+    let qtdComNF = 0;
+    let totalSemNF = 0;
+    let qtdSemNF = 0;
+
+    const porCategoriaMap: Record<string, { categoria: string; comNF: number; semNF: number }> = {};
+    const cobrancaPrestadoresMap: Record<string, { nome: string; valor: number; qtd: number }> = {};
+
+    saidas.forEach(item => {
+      const cat = item.categoria || item.categoriaCusto || 'Geral';
+      if (!porCategoriaMap[cat]) {
+        porCategoriaMap[cat] = { categoria: cat, comNF: 0, semNF: 0 };
+      }
+
+      if (item.temNotaFiscal) {
+        totalComNF += item.valor;
+        qtdComNF++;
+        porCategoriaMap[cat].comNF += item.valor;
+      } else {
+        totalSemNF += item.valor;
+        qtdSemNF++;
+        porCategoriaMap[cat].semNF += item.valor;
+
+        const prestador = item.pagadorRecebedor || item.referencia || 'Prestador / Parceiro';
+        if (!cobrancaPrestadoresMap[prestador]) {
+          cobrancaPrestadoresMap[prestador] = { nome: prestador, valor: 0, qtd: 0 };
+        }
+        cobrancaPrestadoresMap[prestador].valor += item.valor;
+        cobrancaPrestadoresMap[prestador].qtd++;
+      }
+    });
+
+    const totalSaidasAnalisadas = totalComNF + totalSemNF;
+    const taxaConformidade = totalSaidasAnalisadas > 0 ? (totalComNF / totalSaidasAnalisadas) * 100 : 100;
+
+    const dadosGrafico = Object.values(porCategoriaMap)
+      .sort((a, b) => (b.comNF + b.semNF) - (a.comNF + a.semNF))
+      .slice(0, 6);
+
+    const rankingCobranca = Object.values(cobrancaPrestadoresMap)
+      .sort((a, b) => b.valor - a.valor)
+      .slice(0, 6);
+
+    return {
+      totalSaidasAnalisadas,
+      totalComNF,
+      qtdComNF,
+      totalSemNF,
+      qtdSemNF,
+      taxaConformidade,
+      dadosGrafico,
+      rankingCobranca,
+    };
+  }, [itensFiltrados]);
+
   // Presets Rápidos de Data
   const aplicarPresetData = (preset: 'hoje' | '7d' | 'mes_atual' | 'mes_anterior' | '90d' | 'ano' | 'tudo') => {
     const hoje = new Date();
@@ -673,6 +812,7 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
     setCategoriaCusto('Todos');
     setMetodoTransacao('Todos');
     setTipoPessoa('Todos');
+    setFiltroNotaFiscal('Todos');
     setBuscaTexto('');
   };
 
@@ -1068,8 +1208,8 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
           </div>
         </div>
 
-        {/* Linha Secundária: Tipo de Pessoa & Busca Rápida */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 pt-1">
+        {/* Linha Secundária: Tipo de Pessoa, Filtro de Nota Fiscal & Busca Rápida */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5 pt-1">
           {/* Tipo de Pessoa */}
           <div>
             <label className="block text-[11px] font-bold text-slate-400 mb-1 flex items-center gap-1">
@@ -1087,8 +1227,24 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
             </select>
           </div>
 
+          {/* Filtro de Nota Fiscal (Auditoria & Cobrança de Prestadores) */}
+          <div>
+            <label className="block text-[11px] font-bold text-slate-400 mb-1 flex items-center gap-1">
+              <Receipt size={12} className="text-purple-400" /> Nota Fiscal (Auditoria)
+            </label>
+            <select
+              value={filtroNotaFiscal}
+              onChange={(e) => setFiltroNotaFiscal(e.target.value as NotaFiscalFiltro)}
+              className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-slate-200 focus:border-purple-500 outline-none cursor-pointer font-medium"
+            >
+              <option value="Todos">📑 Todas as Transações</option>
+              <option value="Com_NF">✅ Com Nota Fiscal Gerada (Sim)</option>
+              <option value="Sem_NF">⚠️ Sem Nota Fiscal / A Cobrar (Não)</option>
+            </select>
+          </div>
+
           {/* Campo de Busca Rápida */}
-          <div className="md:col-span-2">
+          <div className="sm:col-span-2 md:col-span-2">
             <label className="block text-[11px] font-bold text-slate-400 mb-1 flex items-center gap-1">
               <Search size={12} className="text-purple-400" /> Busca Textual Inteligente
             </label>
@@ -1096,7 +1252,7 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
-                placeholder="Buscar por placa (ex: ABC1D23), fornecedor, cliente, motivo ou categoria..."
+                placeholder="Buscar por placa, fornecedor, nº NF, chave de acesso, cliente ou categoria..."
                 value={buscaTexto}
                 onChange={(e) => setBuscaTexto(e.target.value)}
                 className="w-full pl-9 pr-8 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-white placeholder:text-slate-500 outline-none focus:border-purple-500"
@@ -1326,7 +1482,242 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
         </div>
       )}
 
-      {/* ================= 3. TABELA DE MOVIMENTAÇÕES AVANÇADA ================= */}
+      {/* ================= 3. GRAFO & AUDITORIA FISCAL DE GASTOS E SERVIÇOS ================= */}
+      <div className="bg-[#111116] rounded-3xl border border-white/5 p-5 sm:p-6 space-y-5 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-purple-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-sm">
+              <Receipt size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-extrabold text-white text-base">Auditoria Fiscal & Grafo de Serviços</h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  Conformidade: {analiseNotaFiscal.taxaConformidade.toFixed(1)}%
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Rastreabilidade de Nota Fiscal em vendas, estoque/chassis e manutenção de locação para cobrança de prestadores.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMostrarGrafoNF(!mostrarGrafoNF)}
+              className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <BarChart3 size={14} className="text-purple-400" />
+              <span>{mostrarGrafoNF ? 'Ocultar Grafo' : 'Expandir Grafo & Cobrança'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Mini-Cards de Conformidade Fiscal */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Com Nota Fiscal (Sim) */}
+          <div 
+            onClick={() => setFiltroNotaFiscal(filtroNotaFiscal === 'Com_NF' ? 'Todos' : 'Com_NF')}
+            className={`p-4 rounded-2xl border transition cursor-pointer ${
+              filtroNotaFiscal === 'Com_NF'
+                ? 'bg-emerald-500/15 border-emerald-500/50 shadow-lg ring-1 ring-emerald-500/30'
+                : 'bg-emerald-950/10 border-emerald-500/20 hover:border-emerald-500/40'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-emerald-400 uppercase flex items-center gap-1.5">
+                <CheckCircle2 size={13} /> Com Nota Fiscal (Sim)
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                {analiseNotaFiscal.qtdComNF} conferidos
+              </span>
+            </div>
+            <div className="text-xl font-black font-mono text-emerald-400 mt-2">
+              {formatCurrencyDetailed(analiseNotaFiscal.totalComNF)}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Despesas com documento fiscal regularizado
+            </p>
+          </div>
+
+          {/* Sem Nota Fiscal (Não / A Cobrar) */}
+          <div 
+            onClick={() => setFiltroNotaFiscal(filtroNotaFiscal === 'Sem_NF' ? 'Todos' : 'Sem_NF')}
+            className={`p-4 rounded-2xl border transition cursor-pointer ${
+              filtroNotaFiscal === 'Sem_NF'
+                ? 'bg-amber-500/15 border-amber-500/50 shadow-lg ring-1 ring-amber-500/30'
+                : 'bg-amber-950/10 border-amber-500/20 hover:border-amber-500/40'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-amber-400 uppercase flex items-center gap-1.5">
+                <AlertCircle size={13} /> Sem Nota Fiscal (Não)
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                {analiseNotaFiscal.qtdSemNF} a cobrar
+              </span>
+            </div>
+            <div className="text-xl font-black font-mono text-amber-400 mt-2">
+              {formatCurrencyDetailed(analiseNotaFiscal.totalSemNF)}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+              <span>Gastos pendentes de NF para cobrança</span>
+              <span className="text-amber-400 font-bold underline text-[10px]">Filtrar</span>
+            </p>
+          </div>
+
+          {/* Indicador de Conformidade e Total */}
+          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-bold text-slate-400 uppercase">Grau de Conformidade</span>
+                <span className="font-mono font-bold text-purple-300">{analiseNotaFiscal.taxaConformidade.toFixed(1)}%</span>
+              </div>
+              {/* Barra de Progresso */}
+              <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden flex">
+                <div 
+                  className="bg-emerald-500 h-full transition-all duration-500" 
+                  style={{ width: `${analiseNotaFiscal.taxaConformidade}%` }} 
+                  title={`Com NF: ${analiseNotaFiscal.taxaConformidade.toFixed(1)}%`}
+                />
+                <div 
+                  className="bg-amber-500 h-full transition-all duration-500" 
+                  style={{ width: `${100 - analiseNotaFiscal.taxaConformidade}%` }} 
+                  title={`Sem NF: ${(100 - analiseNotaFiscal.taxaConformidade).toFixed(1)}%`}
+                />
+              </div>
+            </div>
+            <div className="text-[11px] text-slate-400 pt-2 flex items-center justify-between border-t border-white/5">
+              <span>Total de Saídas Auditadas:</span>
+              <span className="font-mono font-bold text-white">{formatCurrency(analiseNotaFiscal.totalSaidasAnalisadas)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Visualização Expandida: Grafo Comparativo & Painel de Cobrança */}
+        {mostrarGrafoNF && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-2 border-t border-white/5">
+            {/* Gráfico de Barras: Com NF vs Sem NF por Categoria */}
+            <div className="lg:col-span-7 bg-black/30 p-4 rounded-2xl border border-white/5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BarChart3 size={15} className="text-purple-400" />
+                  <h4 className="text-xs font-bold text-white">Com NF vs Sem NF por Categoria</h4>
+                </div>
+                <div className="flex items-center gap-3 text-[11px]">
+                  <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                    <span className="w-2.5 h-2.5 rounded bg-emerald-500" /> Com NF
+                  </span>
+                  <span className="flex items-center gap-1 text-amber-400 font-semibold">
+                    <span className="w-2.5 h-2.5 rounded bg-amber-500" /> Sem NF (Cobrar)
+                  </span>
+                </div>
+              </div>
+
+              {analiseNotaFiscal.dadosGrafico.length === 0 ? (
+                <div className="h-52 flex items-center justify-center text-xs text-slate-500">
+                  Nenhuma despesa ou custo no período filtrado.
+                </div>
+              ) : (
+                <div className="h-52 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart 
+                      data={analiseNotaFiscal.dadosGrafico} 
+                      margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                    >
+                      <XAxis 
+                        dataKey="categoria" 
+                        stroke="#94a3b8" 
+                        fontSize={10} 
+                        tickLine={false} 
+                        interval={0}
+                      />
+                      <YAxis 
+                        stroke="#94a3b8" 
+                        fontSize={10} 
+                        tickLine={false}
+                        tickFormatter={(val) => `R$${val >= 1000 ? `${(val/1000).toFixed(0)}k` : val}`}
+                      />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#181822', borderColor: '#334155', borderRadius: '12px', fontSize: '11px', color: '#fff' }}
+                        formatter={(val: number) => [formatCurrencyDetailed(val), '']}
+                      />
+                      <Bar dataKey="comNF" name="Com Nota Fiscal" fill="#10b981" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="semNF" name="Sem Nota Fiscal" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Painel de Cobrança Imediata de Prestadores / Parceiros */}
+            <div className="lg:col-span-5 bg-black/30 p-4 rounded-2xl border border-white/5 space-y-3 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={15} className="text-amber-400" />
+                    <h4 className="text-xs font-bold text-white">Prestadores para Cobrança de NF</h4>
+                  </div>
+                  <span className="text-[10px] text-amber-300 font-bold bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                    {analiseNotaFiscal.rankingCobranca.length} pendentes
+                  </span>
+                </div>
+
+                <div className="space-y-2 mt-3 max-h-52 overflow-y-auto pr-1">
+                  {analiseNotaFiscal.rankingCobranca.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-slate-500 flex flex-col items-center gap-1.5">
+                      <CheckCircle2 size={24} className="text-emerald-400/50" />
+                      <span>Todas as despesas possuem Nota Fiscal! Excelente conformidade.</span>
+                    </div>
+                  ) : (
+                    analiseNotaFiscal.rankingCobranca.map((prest, idx) => (
+                      <div 
+                        key={idx}
+                        className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.02] hover:bg-amber-500/10 border border-white/5 hover:border-amber-500/30 transition group"
+                      >
+                        <div className="space-y-0.5 truncate max-w-[180px]">
+                          <p className="text-xs font-bold text-slate-200 truncate group-hover:text-amber-300 transition">
+                            {prest.nome}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {prest.qtd} {prest.qtd === 1 ? 'despesa sem nota' : 'despesas sem nota'}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="font-mono font-bold text-xs text-amber-400">
+                            {formatCurrency(prest.valor)}
+                          </p>
+                          <button
+                            onClick={() => {
+                              setBuscaTexto(prest.nome);
+                              setFiltroNotaFiscal('Sem_NF');
+                            }}
+                            className="text-[10px] text-purple-400 hover:text-purple-300 underline font-semibold cursor-pointer"
+                          >
+                            Cobrar / Ver
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {analiseNotaFiscal.rankingCobranca.length > 0 && (
+                <button
+                  onClick={() => setFiltroNotaFiscal('Sem_NF')}
+                  className="w-full py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer mt-2"
+                >
+                  <Receipt size={14} />
+                  <span>Listar Todas as Despesas Sem Nota para Cobrança</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ================= 4. TABELA DE MOVIMENTAÇÕES AVANÇADA ================= */}
       <div className="bg-[#111116] rounded-3xl border border-white/5 p-5 sm:p-6 space-y-4 shadow-xl">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
           <div>
@@ -1406,6 +1797,7 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
                   <th className="py-3 px-3.5">Categoria</th>
                   <th className="py-3 px-3.5">Método</th>
                   <th className="py-3 px-3.5">Pessoa</th>
+                  <th className="py-3 px-3.5 text-center">NF</th>
                   <th className="py-3 px-3.5 text-right">Valor</th>
                   <th className="py-3 px-3.5 text-center">Ações</th>
                 </tr>
@@ -1569,6 +1961,29 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
                         {item.tipoPessoa === 'Pessoa Física' && (
                           <span className="text-slate-300">
                             👤 Físico
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Indicador Visual Nota Fiscal (Sim/Não) */}
+                      <td className="py-3 px-3.5 whitespace-nowrap text-center">
+                        {isEntrada && !item.temNotaFiscal ? (
+                          <span className="text-[11px] text-slate-600 font-mono">—</span>
+                        ) : item.temNotaFiscal ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm"
+                            title={`Nota Fiscal Nº ${item.nfNumero || 'S/N'}${item.nfEmitente ? ` • ${item.nfEmitente}` : ''}`}
+                          >
+                            <CheckCircle2 size={11} className="text-emerald-400 shrink-0" />
+                            Sim
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-sm"
+                            title="Sem Nota Fiscal gerada — Cobrar prestador de serviço / parceiro"
+                          >
+                            <AlertCircle size={11} className="text-amber-400 shrink-0" />
+                            Não
                           </span>
                         )}
                       </td>
@@ -1780,6 +2195,81 @@ export const ExtratoAvancadoView: React.FC<ExtratoAvancadoViewProps> = ({
                 <p className="text-slate-400 text-[11px] pt-1">
                   Referência: <strong className="text-slate-300">{transacaoDetalhe.referencia}</strong>
                 </p>
+              )}
+            </div>
+
+            {/* Bloco de Auditoria & Detalhes da Nota Fiscal */}
+            <div className={`p-3.5 rounded-2xl border text-xs space-y-2.5 ${
+              transacaoDetalhe.temNotaFiscal
+                ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
+                : 'bg-amber-950/20 border-amber-500/30 text-amber-200'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <Receipt size={15} className={transacaoDetalhe.temNotaFiscal ? 'text-emerald-400' : 'text-amber-400'} />
+                  <span>Documento Fiscal (Nota Fiscal)</span>
+                </div>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase border ${
+                  transacaoDetalhe.temNotaFiscal
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                }`}>
+                  {transacaoDetalhe.temNotaFiscal ? 'Nota Fiscal Emitida (Sim)' : 'Sem Nota Fiscal (Não / A Cobrar)'}
+                </span>
+              </div>
+
+              {transacaoDetalhe.temNotaFiscal ? (
+                <div className="space-y-2 pt-1 text-[11px] text-slate-300 border-t border-emerald-500/20">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Número da NF:</span>
+                      <span className="font-mono font-bold text-white text-xs">{transacaoDetalhe.nfNumero || 'Não informado'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Série:</span>
+                      <span className="font-mono text-white text-xs">{transacaoDetalhe.nfSerie || '—'}</span>
+                    </div>
+                  </div>
+
+                  {(transacaoDetalhe.nfEmitente || transacaoDetalhe.nfCnpjEmitente) && (
+                    <div className="pt-1 border-t border-emerald-500/10">
+                      <span className="text-slate-400 block text-[10px]">Emitente / Prestador / Razão Social:</span>
+                      <span className="text-white font-medium">
+                        {transacaoDetalhe.nfEmitente || '—'}
+                        {transacaoDetalhe.nfCnpjEmitente ? ` (CNPJ: ${transacaoDetalhe.nfCnpjEmitente})` : ''}
+                      </span>
+                    </div>
+                  )}
+
+                  {transacaoDetalhe.nfChaveAcesso && (
+                    <div className="pt-1 border-t border-emerald-500/10">
+                      <span className="text-slate-400 block text-[10px]">Chave de Acesso (44 dígitos):</span>
+                      <span className="font-mono text-[10px] text-emerald-300 break-all select-all">{transacaoDetalhe.nfChaveAcesso}</span>
+                    </div>
+                  )}
+
+                  {transacaoDetalhe.nfDataEmissao && (
+                    <div className="pt-1 border-t border-emerald-500/10">
+                      <span className="text-slate-400 block text-[10px]">Data de Emissão da NF:</span>
+                      <span className="font-mono text-white">{formatDate(transacaoDetalhe.nfDataEmissao)}</span>
+                    </div>
+                  )}
+
+                  {transacaoDetalhe.nfObservacao && (
+                    <div className="pt-1 border-t border-emerald-500/10 text-[10px] text-slate-400 italic">
+                      Obs: {transacaoDetalhe.nfObservacao}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1.5 pt-1 text-[11px] border-t border-amber-500/20 text-amber-300/90 leading-relaxed">
+                  <p>
+                    Esta transação / gasto não possui Nota Fiscal cadastrada.
+                  </p>
+                  <p className="text-[10px] text-amber-200 font-semibold">
+                    💡 Dica: Ao cobrar o prestador de serviço ou fornecedor parceiro, você pode clicar em &quot;Editar Lançamento&quot; abaixo para anexar o número, série e chave da nota emitida.
+                  </p>
+                </div>
               )}
             </div>
 

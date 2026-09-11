@@ -364,12 +364,18 @@ export async function syncUserProfileInFirestore(
   // Check if this is the Master Admin
   const isMasterAdmin = userEmail === MASTER_ADMIN_EMAIL.toLowerCase();
 
+  let existingData: Usuario | null = null;
   try {
     const userSnap = await getDoc(userDocRef);
-
     if (userSnap.exists()) {
-      const existingData = userSnap.data() as Usuario;
-      
+      existingData = userSnap.data() as Usuario;
+    }
+  } catch (readErr) {
+    console.warn('Could not read user profile from Firestore (network slow or offline):', readErr);
+  }
+
+  try {
+    if (existingData) {
       // Master admin is always approved as admin.
       // Other users KEEP whatever status was established in Firestore.
       const statusAprovacao: StatusAprovacao = isMasterAdmin ? 'aprovado' : (existingData.statusAprovacao || 'pendente');
@@ -381,7 +387,7 @@ export async function syncUserProfileInFirestore(
       const updatedProfile: Usuario = {
         ...existingData,
         email: fbUser.email || existingData.email,
-        displayName: fbUser.displayName || customInitData?.displayName || existingData.displayName || 'Membro da Equipe',
+        displayName: fbUser.displayName || customInitData?.displayName || existingData.displayName || (isMasterAdmin ? 'Gustavo Henrique (Admin Master)' : 'Membro da Equipe'),
         photoURL: fbUser.photoURL || existingData.photoURL || '',
         statusAprovacao,
         role,
@@ -390,10 +396,14 @@ export async function syncUserProfileInFirestore(
         lastLoginAt: now,
       };
 
-      await setDoc(userDocRef, cleanFirestoreData(updatedProfile), { merge: true });
+      try {
+        await setDoc(userDocRef, cleanFirestoreData(updatedProfile), { merge: true });
+      } catch (writeErr) {
+        console.warn('Profile write queued or deferred (offline):', writeErr);
+      }
       return updatedProfile;
     } else {
-      // NEW USER: Unless it's the master admin, status is strictly 'pendente'
+      // NEW USER: Master admin is automatically 'admin' and 'aprovado'
       const assignedRole: RoleUsuario = isMasterAdmin ? 'admin' : (customInitData?.role || 'vendedor');
       const statusAprovacao: StatusAprovacao = isMasterAdmin ? 'aprovado' : 'pendente';
       const permissoes: PermissoesUsuario = getDefaultPermissionsForRole(assignedRole);
@@ -401,7 +411,7 @@ export async function syncUserProfileInFirestore(
       const newProfile: Usuario = {
         uid: fbUser.uid,
         email: fbUser.email || '',
-        displayName: fbUser.displayName || customInitData?.displayName || 'Novo Usuário',
+        displayName: fbUser.displayName || customInitData?.displayName || (isMasterAdmin ? 'Gustavo Henrique (Admin Master)' : 'Novo Usuário'),
         photoURL: fbUser.photoURL || '',
         role: assignedRole,
         statusAprovacao,
@@ -415,7 +425,11 @@ export async function syncUserProfileInFirestore(
         lastLoginAt: now,
       };
 
-      await setDoc(userDocRef, cleanFirestoreData(newProfile));
+      try {
+        await setDoc(userDocRef, cleanFirestoreData(newProfile));
+      } catch (writeErr) {
+        console.warn('New profile write queued or deferred (offline):', writeErr);
+      }
       return newProfile;
     }
   } catch (error) {

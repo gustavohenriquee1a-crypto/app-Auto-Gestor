@@ -50,7 +50,7 @@ const COLLECTIONS = {
   CONTAS_BANCARIAS: 'contas_bancarias',
   MOVIMENTACOES_CONTAS: 'movimentacoes_contas',
   PAGADORES: 'pagadores',
-  USUARIOS: 'usuarios',
+  USUARIOS: 'users',
 };
 
 /**

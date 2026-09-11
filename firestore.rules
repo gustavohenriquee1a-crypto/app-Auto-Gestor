@@ -8,26 +8,34 @@ service cloud.firestore {
     }
 
     // Função auxiliar: usuário é admin?
+    // Inclui verificação segura de existência do documento e fallback para o email do admin master
     function isAdmin() {
-      return isAuthenticated() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return isAuthenticated() && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'gustavohenriquee1a@gmail.com') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
     }
 
-    // Documento de teste (pode deixar)
+    // Documento de teste de conexão
     match /test/{testId} {
       allow read: if true;
     }
 
-    // USUÁRIOS - AGORA PROTEGIDO
-    // Leitura: qualquer autenticado pode ler perfis (o app precisa disso)
-    // Escrita: só o próprio usuário OU um admin
-    // Criação inicial do próprio usuário: permitida (primeiro login)
+    // USUÁRIOS - PROTEGIDO
+    // Leitura: qualquer autenticado pode ler perfis para equipe e permissões
+    // Criação: permitida para o próprio usuário autenticado
+    // Atualização/Exclusão: permitido para o próprio usuário ou administradores
     match /users/{userId} {
       allow read: if isAuthenticated();
-
       allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update, delete: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
 
-      allow update, delete: if isAdmin() || request.auth.uid == userId;
+    match /usuarios/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update, delete: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
     }
 
     // VEÍCULOS
@@ -88,7 +96,9 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
-    // ⚠️ SEM FALLBACK AQUI. Antes tinha "match /{document=**}" que abria TUDO.
-    // Foi removido de propósito.
+    // CLIENTES / PAGADORES PRÉ-CADASTRADOS
+    match /pagadores/{pagadorId} {
+      allow read, write: if isAuthenticated();
+    }
   }
 }
